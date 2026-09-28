@@ -265,8 +265,10 @@ function renderAssignment(item, withStatus) {
   // pending_actual: done 但未填实耗时 (设计文档 §9 坑 2)
   const isPendingActual = item.status === 'done' && item.actual_minutes == null;
   const confClass = `confidence-${item.confidence}`; // 给整行加边条 / 底色
+  // 选做行加暖色底 + 左侧竖线, 与必做行区分 (2026-09-28)
+  const optClass = item.is_optional ? 'is-optional' : '';
   const row = el(`
-    <div class="assignment-row ${item.status} ${confClass} ${isPendingActual ? 'pending-actual' : ''}" data-id="${item.id}">
+    <div class="assignment-row ${item.status} ${confClass} ${optClass} ${isPendingActual ? 'pending-actual' : ''}" data-id="${item.id}">
       <div class="row-main">
         <span class="subject-tag ${item.subject}">${item.subject}</span>
         <div style="flex:1;">
@@ -793,9 +795,9 @@ async function loadList() {
     }
     const table = el('<table><tr><th>科目</th><th>任务</th><th>预估</th><th>实耗</th><th>状态</th><th>置信</th><th>原文</th></tr></table>');
     r.items.forEach(it => {
-      const tr = el(`<tr class="confidence-${it.confidence}">
+      const tr = el(`<tr class="confidence-${it.confidence} ${it.is_optional ? 'is-optional' : ''}">
         <td><span class="subject-tag ${it.subject}">${it.subject}</span></td>
-        <td>${escapeAttr(it.task_name)}${it.is_optional ? '<span class="optional-tag">选</span>' : ''}</td>
+        <td>${escapeAttr(it.task_name)}${it.is_optional ? '<span class="optional-tag">选做</span>' : ''}</td>
         <td>${fmtMin(it.est_minutes)}</td>
         <td>${fmtMin(it.actual_minutes)}</td>
         <td>${statusLabel(it.status)}</td>

@@ -18,12 +18,14 @@
   --text-2: #8A6F5C;
   --text-3: #BFA894;
 
-  /* 科目色 (实底色 + 白字) */
-  --c-语: #E07A4E;
+  /* 科目色 (实底色 + 白字). 三个值均已压暗到白字对比度 >= 4.5:1 (WCAG AA):
+     语 #B85A34 / 数 #2E7A9E / 英 #4A7C42。原先的亮色版本
+     (橘 E07A4E 等) 白字只有 ~3:1, 小字号下不达标。 */
+  --c-语: #B85A34;
   --c-语-soft: #FBE7DC;
-  --c-数: #3E9CC4;
+  --c-数: #2E7A9E;
   --c-数-soft: #E2EEF6;
-  --c-英: #5FA055;
+  --c-英: #4A7C42;
   --c-英-soft: #E8F0E2;
 
   /* 状态色 */
@@ -38,6 +40,15 @@
   --accent: #FF6B9D;
   --warn-soft: #FFF0F4;
   --warn-ink: #C2185B;
+
+  /* 选做作业 (is_optional) 行底色, 与必做的白卡片区分.
+     琥珀系刻意避开语(橘)/数(蓝)/英(绿), 避免"这是选做"被读成"这是某科"。
+     #FFF3D6 与白卡片仅 1.10:1 肉眼难辨, 加浓到 #F7DFA0 (1.45:1)。
+     代价: --text-2/3 在此底上不足 4.5:1, 故 .is-optional 内部
+     统一改用 --text-1 与 --row-opt-ink, 保证可读性 (见 11.8 节)。 */
+  --row-opt-bg: #F7DFA0;
+  --row-opt-bar: #8A6A0A;
+  --row-opt-ink: #5A4200;
 
   /* 间距 (4 倍数) */
   --space-1: 4px;
@@ -373,16 +384,53 @@ tr:last-child td { border-bottom: none; }
   border-radius: var(--radius-sm);
 }
 
-/* ===== 12. 选做徽章 ===== */
+/* ===== 11.8 选做 / 必做 底色区分 (2026-09-28) =====
+ * 需求: 家长要一眼看出"这项是必须做的, 还是有空再做的"。
+ * 看板已把选做放进独立分区, 但展开后与必做行长得一样; 列表页
+ * 更是把两者混在同一张表里, 只有任务名后一个小小的"选"字。
+ *
+ * 配色取舍: 最初想复用 --surface-2 (#FFF1E4), 但它和卡片白 #FFFFFF
+ * 差异太小, 实测难以分辨, 且与表头底色撞车。改为独立的琥珀色,
+ * 与语(橘)/数(蓝)/英(绿) 三个科目色都不接近, 不会被误认成某科。
+ * 完成态的 opacity 叠加在底色之上, 两个维度可同时读出。
+ */
+.assignment-row.is-optional {
+  background: var(--row-opt-bg);
+  border-radius: var(--radius-sm);
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+  /* 左侧竖线: 底色在低对比屏上可能被弱化, 竖线保证任何背景下都可见 */
+  box-shadow: inset 3px 0 0 var(--row-opt-bar);
+}
+
+/* 列表页表格行: 同一套语言 */
+tr.is-optional td {
+  background: var(--row-opt-bg);
+}
+tr.is-optional td:first-child {
+  box-shadow: inset 3px 0 0 var(--row-opt-bar);
+}
+
+/* 选做徽章: 描边式而非填充, 避免与新底色糊在一起 */
 .optional-tag {
   display: inline-block;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   font-size: var(--fs-caption);
   font-weight: 600;
-  background: var(--c-语-soft);
-  color: var(--c-语);
+  background: transparent;
+  border: 1px solid var(--row-opt-bar);
+  color: var(--row-opt-ink);
   margin-left: var(--space-1);
+}
+
+/* 深色底上的文字补偿: --text-2 (4.66:1 on white) 落到 1.45:1 的琥珀底上
+   只剩 ~3.3:1, 小字读不清。这里把选做行内的次要/弱化文字统一提到
+   --text-1 (7.98:1), 视觉上仍是"弱于标题", 但可读性达标。 */
+.assignment-row.is-optional .muted,
+.assignment-row.is-optional .est-min,
+tr.is-optional .muted {
+  color: var(--text-1);
 }
 
 /* ===== 11.5 看板分区 (2026-09-28) ===== */
