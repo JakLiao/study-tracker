@@ -1135,15 +1135,32 @@ async function loadWeekly(week) {
 }
 
 // ====== 设置 ======
+// 配置键名对家长毫无意义 (school_dismiss_time 读不出是"放学时间"),
+// 这里给常见项配中文名。原始键仍以小字 code 显示在下方, 便于对照与排错。
+const SETTING_LABELS = {
+  ai_model_version: 'AI 模型版本',
+  dinner_time: '晚餐时间',
+  grade: '年级',
+  school_dismiss_time: '放学时间',
+  subject_baseline_minutes: '各科预估用时（分钟）',
+  task_type_baseline_minutes: '各作业类型预估用时（分钟）',
+};
+
 async function loadSettings() {
   const root = document.getElementById('settings-content');
   root.innerHTML = '<p class="muted">加载中…</p>';
   try {
     const r = await api('GET', '/settings');
-    const wrap = el('<div></div>');
+    const wrap = el('<div class="settings-list"></div>');
     r.items.forEach(it => {
-      const card = el('<div class="card"></div>');
-      card.appendChild(el(`<strong>${it.key}</strong>`));
+      // 短值走紧凑的"标签 + 输入 + 保存"同一行布局(见 .setting-row);
+      // JSON 字典内容多, 仍用整块的键值表。
+      const card = el(`<div class="card setting-card">
+        <label class="setting-label" for="set-${escapeAttr(it.key)}">
+          <span class="setting-name">${escapeAttr(SETTING_LABELS[it.key] || it.key)}</span>
+          ${SETTING_LABELS[it.key] ? `<code class="setting-key">${escapeAttr(it.key)}</code>` : ''}
+        </label>
+      </div>`);
 
       // 尝试把 value 解析为 JSON object; 成功 → 编辑键值表, 失败 → 文本框兜底
       // 修 P1: 之前 escapeAttr(it.value) 直接显示 \uXXXX, 家长看不懂中文
@@ -1158,6 +1175,9 @@ async function loadSettings() {
 
       if (parseOk) {
         // JSON object → 键值编辑表 (替代原文本框)
+        // 加 is-block 类让卡片转为纵向整块排布。不用 :has() 兜底 ——
+        // 那依赖父级选择器, 老浏览器会整条规则失效, 布局就散掉了。
+        card.classList.add('is-block');
         const kvWrap = el('<div class="settings-kv"></div>');
         const tbl = el('<table class="settings-kv-table"><thead><tr><th>键</th><th>值</th><th></th></tr></thead><tbody></tbody></table>');
         const tbody = tbl.querySelector('tbody');
@@ -1205,17 +1225,32 @@ async function loadSettings() {
         kvWrap.appendChild(saveBtn);
         card.appendChild(kvWrap);
       } else {
-        // 非 JSON object (字符串/数字/数组/解析失败) → 文本框兜底
-        const ta = el(`<textarea data-key="${it.key}" rows="3">${escapeAttr(it.value)}</textarea>`);
-        card.appendChild(ta);
+        // 非 JSON object (字符串/数字/数组/解析失败) → 按内容选控件并紧凑排列。
+        //
+        // 之前一律用 rows="3" 的 textarea 竖着堆, 但实际值里
+        // "ai_model_version" / "dinner_time" / "grade" /
+        // "school_dismiss_time" 全是单行短值 (最长 9 字符),
+        // 却各占 120px 高, 四个设置项就撑满两屏还多。
+        // 改为: 短值用单行 input 与标签同行, 长文本才用 textarea。
+        const isMultiline = /\r?\n/.test(it.value);
+        const isShort = !isMultiline && it.value.length <= 60;
+
+        const row = el('<div class="setting-row"></div>');
+        const field = isShort
+          ? el(`<input type="text" id="set-${escapeAttr(it.key)}" class="setting-input" data-key="${it.key}" value="${escapeAttr(it.value)}" />`)
+          : el(`<textarea id="set-${escapeAttr(it.key)}" class="setting-input setting-textarea" data-key="${it.key}" rows="3">${escapeAttr(it.value)}</textarea>`);
+        row.appendChild(field);
+
         const saveBtn = el('<button class="primary save-btn" type="button">保存</button>');
+        row.appendChild(saveBtn);
+        card.appendChild(row);
+
         saveBtn.addEventListener('click', async () => {
           try {
-            await api('PATCH', `/settings/${it.key}`, { value: ta.value });
+            await api('PATCH', `/settings/${it.key}`, { value: field.value });
             toast('已保存');
           } catch (e) { alert('保存失败: ' + e.message); }
         });
-        card.appendChild(saveBtn);
       }
 
       wrap.appendChild(card);

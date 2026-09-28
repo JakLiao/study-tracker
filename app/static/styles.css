@@ -872,6 +872,103 @@ tr.is-optional .muted {
   border-left: 3px solid var(--status-overdue);
 }
 
+/* ===== 18b. 设置页紧凑布局 (2026-09-28) =====
+   反馈: 设置项的输入框太高, 四个设置就占两屏还多。
+   根因是短值(模型名/时间/年级, 最长 9 字符)也用 rows="3" 的 textarea。
+   这里配合 JS 的控件自适应(短值用 input), 把它们排成「标签 + 输入 + 保存」
+   一行一项, 目标是常用设置一屏看完。
+
+   与 JSON 字典项(.settings-kv)区分: 字典内容多, 仍占整块。 */
+#settings-content .settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.setting-card {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* 字典项内容多, 改为整块纵向排布, 标签独占一行。
+   用 .is-block (由 JS 在 JSON 分支加上) 而不是 :has(.settings-kv) ——
+   :has() 在老浏览器里整条规则失效, 卡片会退回错乱的横向排列。 */
+.setting-card.is-block {
+  display: block;
+}
+
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 150px;
+  flex: 0 0 auto;
+  cursor: default;
+}
+.setting-name {
+  font-size: var(--fs-body-s);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.3;
+}
+/* 原始配置键: 弱化但保留, 家长可对照, 排障时也有据可查 */
+.setting-key {
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+/* 短值: 单行输入。固定高度是紧凑的关键 —— 不给 height 的话
+   浏览器默认高度 + padding 仍会比同行按钮高一截。 */
+.setting-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--space-3);
+  font-size: var(--fs-body-s);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-1);
+}
+.setting-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--warn-soft);
+}
+/* 长文本才给 textarea, 高度按内容给, 不默认 3 行 */
+.setting-textarea {
+  height: auto;
+  min-height: 64px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.setting-card .save-btn {
+  flex: 0 0 auto;
+  min-height: 34px;
+}
+
+/* 窄屏: 标签独占一行, 输入框与按钮仍在同一行 */
+@media (max-width: 480px) {
+  .setting-card { gap: var(--space-2); }
+  .setting-label { min-width: 100%; }
+  .setting-row { flex: 1 1 100%; }
+}
+
 /* ===== 19. 底部 Tab Bar (移动端, 设计文档 §6) ===== */
 @media (max-width: 639px) {
   main { padding: var(--space-3); }
