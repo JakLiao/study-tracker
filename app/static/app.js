@@ -74,33 +74,6 @@ function toast(msg, ms = 3000) {
   toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
-// ====== 深色模式 (设计文档 §8) ======
-function applyTheme(mode) {
-  if (mode === 'dark' || (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  } else {
-    document.documentElement.removeAttribute('data-theme');
-  }
-}
-(function initTheme() {
-  const saved = localStorage.getItem('st-theme') || 'auto';
-  applyTheme(saved);
-  const btn = document.getElementById('theme-toggle');
-  if (btn) {
-    btn.addEventListener('click', () => {
-      const cur = localStorage.getItem('st-theme') || 'auto';
-      const next = cur === 'dark' ? 'light' : cur === 'light' ? 'auto' : 'dark';
-      localStorage.setItem('st-theme', next);
-      applyTheme(next);
-      toast(next === 'dark' ? '深色' : next === 'light' ? '浅色' : '跟随系统');
-    });
-  }
-  // 跟随系统时, 系统切换也跟着切
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if ((localStorage.getItem('st-theme') || 'auto') === 'auto') applyTheme('auto');
-  });
-})();
-
 // ====== Tab 切换 ======
 function switchTab(name) {
   document.querySelectorAll('#tabs button').forEach(b => {

@@ -2,6 +2,7 @@
  * study-tracker 视觉对齐 v1 (2026-09-28 缪斯设计文档)
  * 配套: docs/02-页面设计.md
  * 设计基调: 「给家长看的家长会备忘录」 — 不卡通不渐变, 数字对齐, 置信度显眼
+ * 仅浅色主题 (v1 不做深色模式, 所有颜色只在 :root 定义一次)
  * =====================================================================
  */
 
@@ -59,29 +60,6 @@
   --fs-number-s: 14px;
 }
 
-[data-theme="dark"] {
-  --bg: #0F1419;
-  --surface: #1A2027;
-  --surface-2: #222A33;
-  --border: #2D3742;
-  --text-1: #E8ECF1;
-  --text-2: #A5B1BD;
-  --text-3: #6B7785;
-  --c-语: #D17A5C;
-  --c-语-soft: #2B1F1A;
-  --c-数: #6B9DD0;
-  --c-数-soft: #1A2330;
-  --c-英: #85B098;
-  --c-英-soft: #1A2521;
-  --status-todo: #9CA3AF;
-  --status-doing: #F59E0B;
-  --status-done: #34D399;
-  --status-optional: #6B7785;
-  --status-overdue: #F87171;
-  --status-overdue-soft: #2A1818;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
-}
-
 /* ===== 2. 全局重置 ===== */
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -100,7 +78,6 @@ body {
   color: var(--text-1);
   font-size: var(--fs-body);
   line-height: 1.5;
-  transition: background-color 0.15s, color 0.15s;
 }
 
 /* ===== 3. 顶部 Header + Tab Bar ===== */
@@ -485,7 +462,7 @@ tr:last-child td { border-bottom: none; }
 }
 .deadline-warn strong { color: var(--status-overdue); margin-right: var(--space-2); }
 
-/* ===== 14.5 Spinner (AI 解析加载态 · P1 返工 2026-09-28) ===== */
+/* ===== 15. Spinner (AI 解析加载态 · P1 返工 2026-09-28) ===== */
 .spinner {
   display: inline-block;
   width: 14px;
@@ -501,7 +478,7 @@ tr:last-child td { border-bottom: none; }
   to { transform: rotate(360deg); }
 }
 
-/* ===== 15. 错误 / 成功 Banner ===== */
+/* ===== 16. 错误 / 成功 Banner ===== */
 .error-banner {
   background: var(--status-overdue-soft);
   border: 1px solid rgba(220, 38, 38, 0.3);
@@ -526,7 +503,7 @@ tr:last-child td { border-bottom: none; }
   font-size: var(--fs-body-s);
 }
 
-/* ===== 16. Modal ===== */
+/* ===== 17. Modal ===== */
 .modal {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -551,7 +528,7 @@ tr:last-child td { border-bottom: none; }
 .modal-body h3 { margin-top: 0; }
 .modal-body .row:last-child { margin-top: var(--space-4); }
 
-/* ===== 17. 预览表 (解析页) ===== */
+/* ===== 18. 预览表 (解析页) ===== */
 .preview-table input, .preview-table select { width: auto; min-width: 80px; }
 .preview-table tr.confidence-low {
   background: var(--status-overdue-soft);
@@ -595,18 +572,7 @@ footer {
 .diff-pos { color: var(--status-overdue); font-weight: 600; }
 .diff-neg { color: var(--status-done); font-weight: 600; }
 
-/* ===== 22. 深色模式开关 (Footer 旁) ===== */
-.theme-toggle {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  padding: var(--space-1) var(--space-2);
-  min-height: 28px;
-  margin-left: var(--space-2);
-}
-
-/* ===== 23. 字符计数 ===== */
+/* ===== 22. 字符计数 ===== */
 .char-count {
   font-size: var(--fs-caption);
   color: var(--text-3);
@@ -615,7 +581,7 @@ footer {
 }
 .char-count.warn { color: var(--status-overdue); }
 
-/* ===== 24. Toast (设计文档 §9 坑 2 兜底) ===== */
+/* ===== 23. Toast (设计文档 §9 坑 2 兜底) ===== */
 .toast {
   position: fixed;
   bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0));
