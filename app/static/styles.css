@@ -320,7 +320,60 @@ tr:last-child td { border-bottom: none; }
 .confidence-medium { color: var(--status-doing); }
 .confidence-low { color: var(--status-overdue); font-weight: 600; }
 
-/* ===== 11. 选做徽章 ===== */
+/* ===== 11.7 看板日期 Tab (2026-09-28) ===== */
+.date-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.date-tabs:empty {
+  display: none;   /* 只有一天数据时不占空间 */
+}
+.date-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 84px;
+  transition: border-color .12s, background .12s;
+}
+.date-tab:hover {
+  border-color: var(--c-语);
+}
+.date-tab.active {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.date-tab .dt-label {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.date-tab .dt-count {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.date-tab.active .dt-label,
+.date-tab.active .dt-count {
+  color: #fff;   /* 选中态用白字, 与胶囊按钮的语言保持一致 */
+}
+.date-tab-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  background: var(--surface-2);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+/* ===== 12. 选做徽章 ===== */
 .optional-tag {
   display: inline-block;
   padding: 1px 6px;

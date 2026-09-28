@@ -85,7 +85,13 @@ function switchTab(name) {
     b.setAttribute('aria-selected', active ? 'true' : 'false');
   });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  if (name === 'board') loadBoard();
+  if (name === 'board') {
+    // 回到看板时重置到最新一天, 否则家长会停在几天前的那天上,
+    // 以为"今天的作业怎么不见了"。
+    _boardDate = null;
+    _boardScroll = 0;
+    loadBoard();
+  }
   if (name === 'list') loadList();
   if (name === 'weekly') loadWeekly('current');
   if (name === 'settings') loadSettings();
@@ -122,13 +128,59 @@ async function loadHealth() {
 // 全量重建 DOM 会把滚动位置弹回顶部, 家长点一下状态就得重新往下滚。
 // 重建前后记住 scrollTop 并还原。
 let _boardScroll = 0;
+// 当前看的是哪一天 (null = 最近一个有作业的日期, 由后端决定)。
+// 记录它是为了让"录入后跳回看板"仍然落在用户刚看的那一天上。
+let _boardDate = null;
+
+async function loadBoardDateTabs() {
+  const box = document.getElementById('board-date-tabs');
+  try {
+    const r = await api('GET', '/board/dates?limit=3');
+    const dates = r.dates || [];
+    if (!dates.length) { box.innerHTML = ''; return []; }
+    // 只有一个日期时不必显示 Tab —— 没有可切换的余地, 反而占视觉空间
+    if (dates.length < 2) { box.innerHTML = ''; return dates; }
+
+    const active = _boardDate || dates[0].date;
+    box.innerHTML = '';
+    dates.forEach(d => {
+      const b = el(`
+        <button class="date-tab ${d.date === active ? 'active' : ''}" data-date="${d.date}">
+          <span class="dt-label">${d.label}</span>
+          <span class="dt-count">${d.done}/${d.total}</span>
+        </button>
+      `);
+      b.addEventListener('click', () => {
+        if (d.date === _boardDate) return;
+        _boardDate = d.date;
+        _boardScroll = 0;      // 换日期后回到顶部, 否则会停在新日期的半截位置
+        loadBoard();
+      });
+      box.appendChild(b);
+    });
+
+    // 假期提示: 最新有作业的日期不是今天, 说明这几天是假期/无作业。
+    // 否则家长会困惑"明明今天有课, 怎么一条作业都没有"。
+    if (dates[0].date !== todayStr()) {
+      box.appendChild(el(`<span class="date-tab-hint">今天没有作业, 下面是最近有记录的日子</span>`));
+    }
+    return dates;
+  } catch (e) {
+    box.innerHTML = '';
+    return [];
+  }
+}
+
 async function loadBoard() {
   const root = document.getElementById('board-content');
   const scroller = root.closest('.view.active') || document.scrollingElement;
   _boardScroll = scroller ? scroller.scrollTop : 0;
   root.innerHTML = '<p class="muted">加载中…</p>';
   try {
-    const b = await api('GET', '/board/today');
+    await loadBoardDateTabs();
+    const b = await api('GET', _boardDate ? `/board?date=${_boardDate}` : '/board/today');
+    // 首次进入时锁定到后端返回的实际日期, 避免重复请求同一天
+    if (!_boardDate) _boardDate = b.date;
     root.innerHTML = '';
     if (b.is_late_night) {
       root.appendChild(el('<p class="muted">已是凌晨, 注意休息</p>'));
@@ -138,12 +190,13 @@ async function loadBoard() {
       root.appendChild(el(`
         <div class="empty">
           <div class="empty-icon">📋</div>
-          <p>今天还没有作业</p>
-          <button class="primary" data-action="goto-entry">去录入</button>
-          <p class="muted">或者手动添加一条作业</p>
+          <p>${b.is_today ? '今天还没有作业' : '这天没有作业记录'}</p>
+          ${b.is_today ? '<button class="primary" data-action="goto-entry">去录入</button>' : ''}
+          <p class="muted">${b.is_today ? '或者手动添加一条作业' : '可以在「列表」页查看其他日期'}</p>
         </div>
       `));
-      root.querySelector('[data-action="goto-entry"]').addEventListener('click', () => switchTab('entry'));
+      const go = root.querySelector('[data-action="goto-entry"]');
+      if (go) go.addEventListener('click', () => switchTab('entry'));
       return;
     }
     // 进度条 (2026-09-28 口径: 跳过算已收尾, 分母排除选做)
@@ -154,7 +207,7 @@ async function loadBoard() {
     root.appendChild(el(`
       <div class="progress-bar">
         <div class="progress-text">
-          <span>已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
+          <span>${b.label === '今天' ? '' : b.label + ' · '}已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
           <span class="muted">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</span>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>

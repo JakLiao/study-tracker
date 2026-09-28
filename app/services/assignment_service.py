@@ -409,9 +409,68 @@ def delete_assignment(assignment_id: int) -> dict:
 
 # ====== 看板 ======
 
-def build_today_board(today: date) -> dict:
+def list_recent_dates(limit: int = 3, today: date | None = None) -> list[dict]:
+    """最近 N 个"有作业"的日期, 倒序 (最新在前).
+
+    为什么取"有作业的日期"而不是日历日 (2026-09-28 用户确认):
+    长假期间 (国庆、春节) 连续多天没有作业, 若按日历日取, 看板会连着
+    几天空白, 白白占掉 3 个位置里的 2 个。改成只取有数据的日期, 这样
+    无论是否放假, 打开看板永远能看到最近 3 天的实际记录。
+
+    每项含轻量统计, 供前端直接渲染 Tab 徽标, 不必再为每一天单独请求看板。
+    """
+    if limit < 1:
+        return []
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT due_date,
+                   COUNT(*)          AS total,
+                   SUM(status = 'done')    AS done,
+                   SUM(status = 'skipped') AS skipped,
+                   SUM(is_optional = 1)    AS optional
+            FROM assignments
+            GROUP BY due_date
+            ORDER BY due_date DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    today = today or datetime.now().astimezone().date()
+    out: list[dict] = []
+    for r in rows:
+        d = date.fromisoformat(r["due_date"])
+        out.append({
+            "date": r["due_date"],
+            "label": _date_label(d, today),
+            "total": r["total"] or 0,
+            "done": r["done"] or 0,
+            "skipped": r["skipped"] or 0,
+            "optional": r["optional"] or 0,
+            "is_today": d == today,
+        })
+    return out
+
+
+_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _date_label(d: date, today: date) -> str:
+    """Tab 上的日期标签: 今天 / 昨天 / 9月22日 周二."""
+    delta = (today - d).days
+    if delta == 0:
+        return "今天"
+    if delta == 1:
+        return "昨天"
+    if 1 < delta <= 6:
+        return f"前天" if delta == 2 else f"{delta} 天前"
+    return f"{d.month}月{d.day}日"
+
+
+def build_board_for(d: date, today: date | None = None) -> dict:
+    """指定日期的看板. 与 build_today_board 同结构, 供历史日期 Tab 复用."""
     is_late_night = datetime.now().hour < 5
-    rows = list_by_date(today)
+    rows = list_by_date(d)
     by_subject: dict[str, list[AssignmentDTO]] = {s: [] for s in config.SUBJECTS}
     optional_items: list[AssignmentDTO] = []
     done = 0
@@ -433,9 +492,13 @@ def build_today_board(today: date) -> dict:
     required = len(rows) - len(optional_items)
     settled = done + skipped
     pct = 100 if required <= 0 else round(settled * 100 / required)
-    upcoming = list_upcoming_deadlines(today, days=7)
+    today = today or datetime.now().astimezone().date()
+    # 截止时间提醒只对"今天/未来"有意义, 看历史日期时不显示
+    upcoming = list_upcoming_deadlines(today, days=7) if d >= today else []
     return {
-        "date": today,
+        "date": d,
+        "label": _date_label(d, today),
+        "is_today": d == today,
         "is_late_night": is_late_night,
         "progress": {
             "done": done,
@@ -452,6 +515,11 @@ def build_today_board(today: date) -> dict:
         "upcoming_deadlines": upcoming,
         "has_data": len(rows) > 0,
     }
+
+
+def build_today_board(today: date) -> dict:
+    """今天的看板. 保留此函数以兼容既有调用方."""
+    return build_board_for(today, today)
 
 
 def parse_date_param(s: str) -> date:

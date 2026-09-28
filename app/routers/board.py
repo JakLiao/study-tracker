@@ -1,26 +1,60 @@
-"""/api/board/today."""
+"""看板 API.
+
+/board/today  今天的看板 (默认, 无参数)
+/board?date=   指定日期的看板, 供看板顶部日期 Tab 切换
+/board/dates   最近 N 个"有作业"的日期 + 轻量统计, 供 Tab 渲染
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from ..services import assignment_service
 
 router = APIRouter(prefix="/api", tags=["board"])
 
 
-@router.get("/board/today")
-def board_today() -> dict:
-    today = datetime.now(timezone.utc).astimezone().date()
-    board = assignment_service.build_today_board(today)
-    # 把 datetime 转 ISO
+def _local_today():
+    # 用本地日期而非 UTC。toISOString/getdate 取 UTC 时, 在凌晨时段
+    # 会退到前一天, 家长早上打开看板会看到"今天没有作业"。
+    return datetime.now(timezone.utc).astimezone().date()
+
+
+def _serialize(board: dict) -> dict:
     return {
         "date": board["date"].isoformat(),
+        "label": board["label"],
+        "is_today": board["is_today"],
         "is_late_night": board["is_late_night"],
         "progress": board["progress"],
-        "by_subject": {s: [x.model_dump(mode="json") for x in lst] for s, lst in board["by_subject"].items()},
+        "by_subject": {
+            s: [x.model_dump(mode="json") for x in lst]
+            for s, lst in board["by_subject"].items()
+        },
         "optional_items": [x.model_dump(mode="json") for x in board["optional_items"]],
         "upcoming_deadlines": [x.model_dump(mode="json") for x in board["upcoming_deadlines"]],
         "has_data": board["has_data"],
     }
+
+
+@router.get("/board/today")
+def board_today() -> dict:
+    today = _local_today()
+    return _serialize(assignment_service.build_board_for(today, today))
+
+
+@router.get("/board")
+def board_by_date(date: str = Query(...)) -> dict:
+    d = assignment_service.parse_date_param(date)
+    return _serialize(assignment_service.build_board_for(d, _local_today()))
+
+
+@router.get("/board/dates")
+def board_dates(limit: int = Query(3, ge=1, le=30)) -> dict:
+    """最近 N 个有作业的日期, 最新在前.
+
+    只返回"有作业"的日期而非日历日: 长假期间连续多天无作业,
+    按日历日取会让 3 个 Tab 里有一半是空的。
+    """
+    return {"dates": assignment_service.list_recent_dates(limit, _local_today())}
