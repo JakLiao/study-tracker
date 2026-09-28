@@ -291,9 +291,10 @@ function renderAssignment(item, withStatus) {
 
   const actions = row.querySelector('.row-actions');
 
-  // 三个动作: 开始(推进) / 完成(收尾) / 选做(可来回切换)
-  // 不再平铺 todo/doing/done/skipped 四个互斥按钮 —— 那会让一行塞进 4+ 个控件,
-  // 且"跳过"与"选做"语义重叠, 家长分不清该点哪个。
+  // 两个终结动作: 完成 / 今天不做
+  // 2026-09-28 用户反馈: "开始"按钮是多余的 —— 家长不会特意去点"开始",
+  // 直接点"完成"即可。故移除 doing 的入口, doing 状态仅可能来自历史数据,
+  // 下面的"完成"分支仍兼容它, 保证老数据可被正常收尾。
   const patchStatus = async (s, btn) => {
     btn.disabled = true;                       // 请求锁: 防快速连点产生并发 PATCH
     try {
@@ -310,25 +311,19 @@ function renderAssignment(item, withStatus) {
     }
   };
 
-  // 开始: todo -> doing
-  if (item.status === 'todo') {
-    const b = el(`<button class="status-btn doing" aria-label="标记为进行中">开始</button>`);
-    b.addEventListener('click', () => patchStatus('doing', b));
-    actions.appendChild(b);
-  }
   // 完成: todo/doing -> done
   if (item.status === 'todo' || item.status === 'doing') {
     const b = el(`<button class="status-btn done" aria-label="标记为已完成">完成</button>`);
     b.addEventListener('click', () => patchStatus('done', b));
     actions.appendChild(b);
   }
-  // 跳过: 未收尾的项才需要; 已跳过的项给"撤销"
+  // 今天不做: 未收尾的项才需要; 已跳过的项给"撤销"
   if (item.status === 'todo' || item.status === 'doing') {
     const b = el(`<button class="status-btn skipped" aria-label="今天不做这条">今天不做</button>`);
     b.addEventListener('click', () => patchStatus('skipped', b));
     actions.appendChild(b);
   } else if (item.status === 'skipped') {
-    const b = el(`<button class="status-btn todo" aria-label="撤销跳过">撤销跳过</button>`);
+    const b = el(`<button class="status-btn undo" aria-label="撤销跳过">撤销跳过</button>`);
     b.addEventListener('click', () => patchStatus('todo', b));
     actions.appendChild(b);
   }

@@ -585,22 +585,59 @@ tr.is-optional .muted {
   font-weight: 500;
 }
 
-/* 状态按钮 */
+/* ===== 12.5 作业操作按钮 (2026-09-28 重写) =====
+ * 上一版遗留问题: 这里还留着四按钮时代的 .active.todo/.active.doing 等规则,
+ * 但按钮早已改为语义化(完成/今天不做/选做)且不再带 active 类, 导致那批
+ * 规则全部失效, 所有按钮长得一模一样。
+ *
+ * 现在的语义 (2026-09-28 用户确认):
+ *   完成   -> 绿底白字, 唯一的"好结果"动作, 视觉最重
+ *   今天不做 -> 红底白字, 唯一的"坏结果"动作, 明确是负向操作
+ *   选做   -> 中性描边, 它只是个属性标记, 不是状态的终结
+ *   撤销   -> 反色描边, 表示可逆
+ * "开始"(doing) 按钮已移除: 家长不会特意点"开始", 直接点完成即可。
+ * doing 状态后端保留(历史数据可能有), 但前端不再提供进入它的入口。
+ */
 .status-btn {
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   background: var(--surface);
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
   cursor: pointer;
   font-size: var(--fs-caption);
+  font-weight: 600;
   color: var(--text-2);
-  min-height: 28px;
+  min-height: 30px;
+  white-space: nowrap;
+  transition: filter .12s, background .12s, border-color .12s;
 }
-.status-btn:hover { background: var(--surface-2); }
-.status-btn.active.todo { background: var(--status-todo); color: var(--surface); border-color: var(--status-todo); }
-.status-btn.active.doing { background: var(--status-doing); color: var(--surface); border-color: var(--status-doing); }
-.status-btn.active.done { background: var(--status-done); color: var(--surface); border-color: var(--status-done); }
-.status-btn.active.skipped { background: var(--status-optional); color: var(--surface); border-color: var(--status-optional); }
+.status-btn:hover { filter: brightness(.96); }
+.status-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+/* 完成: 绿底白字。#2A7D38 与白字 5.16:1, 达 WCAG AA
+   (初版用的 #2F8F3E 只有 4.10:1, 小字不达标, 已压暗) */
+.status-btn.done {
+  background: #2A7D38;
+  border-color: #2A7D38;
+  color: #fff;
+}
+.status-btn.done:hover { background: #226B2F; border-color: #226B2F; }
+
+/* 今天不做: 红底白字。#C0392B 与白字 4.8:1 */
+.status-btn.skipped {
+  background: #C0392B;
+  border-color: #C0392B;
+  color: #fff;
+}
+.status-btn.skipped:hover { background: #A93226; border-color: #A93226; }
+
+/* 撤销跳过: 反色描边, 弱于正向动作, 避免与"完成"抢注意力 */
+.status-btn.undo {
+  background: var(--surface);
+  border-color: #C0392B;
+  color: #A93226;
+}
+.status-btn.undo:hover { background: #FDEDEC; }
 
 /* ===== 13. 进度条 (设计文档 §5.5) ===== */
 .progress-bar {
