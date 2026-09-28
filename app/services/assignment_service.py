@@ -538,23 +538,44 @@ def build_board_for(d: date, today: date | None = None) -> dict:
     optional_items: list[AssignmentDTO] = []
     done = 0
     skipped = 0
+    opt_done = 0
+    opt_skipped = 0
     est_total = 0
     for r in rows:
         est_total += r.est_minutes or 0
         if r.is_optional:
             optional_items.append(r)
+            if r.status == "done":
+                opt_done += 1
+            elif r.status == "skipped":
+                opt_skipped += 1
         else:
             by_subject[r.subject].append(r)
-        if r.status == "done":
-            done += 1
-        elif r.status == "skipped":
-            skipped += 1
+            # 进度分子只数必做。原实现在这里统计全部 rows, 而下方分母
+            # required 却减掉了选做 —— 分子分母不同源, 于是选做一旦完成
+            # 就会把进度凭空抬高: 必做还剩 1 项没做时显示 7/7 = 100%。
+            # 月历 daily_summary 一直是按 is_optional 分流的(见 L265-268),
+            # 这里对齐它, 两个界面的进度才会一致。
+            if r.status == "done":
+                done += 1
+            elif r.status == "skipped":
+                skipped += 1
     # 进度口径 (2026-09-28 用户确认): 跳过算"已收尾"但不当"完成",
     # 分母排除选做 —— 家长点过"选做"就不再是今天必须完成的事,
     # 不该让它把进度条永久压住走不满。
+    # 分子 done/skipped 同样只数必做(见上方循环), 与分母同源。
     required = len(rows) - len(optional_items)
     settled = done + skipped
-    pct = 100 if required <= 0 else round(settled * 100 / required)
+    # 三种情况要分开, 不能一律按 required<=0 给 100:
+    #   有必做   -> 正常算, 并用 min 封顶防溢出(前端 width 撑破会变空条)
+    #   全是选做 -> 没有必做可收尾, 算作已走完
+    #   当天没作业 -> 不该报 100%, 否则调用方会以为进度已满
+    # 目前空看板会提前 return 不渲染进度条, 所以后两种在界面上看不到,
+    # 但接口语义必须正确 —— 它已经是 /api/board 的公开返回值。
+    if required > 0:
+        pct = min(100, round(settled * 100 / required))
+    else:
+        pct = 100 if rows else 0
     today = today or datetime.now().astimezone().date()
     # 截止时间提醒只对"今天/未来"有意义, 看历史日期时不显示
     upcoming = list_upcoming_deadlines(today, days=7) if d >= today else []
@@ -564,11 +585,15 @@ def build_board_for(d: date, today: date | None = None) -> dict:
         "is_today": d == today,
         "is_late_night": is_late_night,
         "progress": {
+            # done/skipped 是必做的完成与跳过数, 与 required 同源。
+            # 选做的完成情况另计 —— 它不参与进度, 但副行要显示"选做 1/1"。
             "done": done,
             "skipped": skipped,
             "settled": settled,
             "total": len(rows),
             "optional": len(optional_items),
+            "optional_done": opt_done,
+            "optional_skipped": opt_skipped,
             "required": required,
             "pct": pct,
             "est_total": est_total,

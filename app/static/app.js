@@ -286,7 +286,11 @@ async function loadBoard() {
     const p = b.progress;
     const pct = p.pct != null ? p.pct : 0;
     const skippedNote = p.skipped ? ` · 跳过 ${p.skipped}` : '';
-    const optNote = p.optional ? ` · 选做 ${p.optional}` : '';
+    // 选做写成 x/y 而不是光一个总数: "选做 1" 到底是 1 项还是 1 项做完,
+    // 原来分不清, 家长只能自己数下面的卡片。分母是选做总数, 与必做
+    // 那侧的 "已收尾 x / 必做 y" 读法保持一致。
+    const optDone = p.optional_done || 0;
+    const optNote = p.optional ? ` · 选做 ${optDone}/${p.optional}` : '';
     root.appendChild(el(`
       <div class="progress-bar">
         <div class="progress-text">
