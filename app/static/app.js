@@ -276,7 +276,9 @@ function renderAssignment(item, withStatus, onChange) {
         <div style="flex:1;">
           <div class="task-name">${escapeAttr(item.task_name)}${item.is_optional ? '<span class="optional-tag">选做</span>' : ''}</div>
         </div>
-        ${item.est_minutes != null ? `<div class="est-min">${item.est_minutes}</div>` : '<div class="est-min muted">—</div>'}
+        ${item.est_minutes != null
+          ? `<div class="est-min"><span class="est-label">预估</span>${item.est_minutes}</div>`
+          : '<div class="est-min muted">—</div>'}
       </div>
       <div class="row-foot">
         <div class="row-meta">
@@ -284,7 +286,7 @@ function renderAssignment(item, withStatus, onChange) {
           ${item.task_type ? `<span>类型: ${item.task_type}</span>` : ''}
           ${confidencePill(item.confidence)}
           ${item.source_span ? `<span class="source-link" data-action="show-source">原文</span>` : ''}
-          ${item.actual_minutes != null ? `<span>实际 <strong>${item.actual_minutes}</strong> 分</span>` : ''}
+          ${item.actual_minutes != null ? `<span class="actual-tag">实际用时 <strong>${item.actual_minutes}</strong> 分</span>` : ''}
         </div>
         ${withStatus ? '<div class="row-actions"></div>' : ''}
       </div>
@@ -306,7 +308,7 @@ function renderAssignment(item, withStatus, onChange) {
     try {
       await api('PATCH', `/assignments/${item.id}/status`, { status: s });
       if (s === 'done' && item.actual_minutes == null) {
-        toast('已标记完成, 请补填实际耗时 (不填不影响, 但周复盘不计)');
+        toast('已标记完成, 建议补填实际用时 (不填不影响, 但周复盘不计)');
       } else if (s === 'skipped') {
         toast('已跳过, 不计入完成数');
       }
@@ -321,6 +323,21 @@ function renderAssignment(item, withStatus, onChange) {
   if (item.status === 'todo' || item.status === 'doing') {
     const b = el(`<button class="status-btn done" aria-label="标记为已完成">完成</button>`);
     b.addEventListener('click', () => patchStatus('done', b));
+    actions.appendChild(b);
+  } else if (item.status === 'done') {
+    // 重做: done -> todo。
+    // 点错一次就必须能改, 否则家长只能去数据库里手改。
+    // 注意后端在 done -> 非 done 时会清空 actual_minutes,
+    // 所以这项会退回"待补实际用时"状态, 属预期行为。
+    const b = el(`<button class="status-btn redo" aria-label="撤销完成, 重新标记为待完成">重做</button>`);
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await api('PATCH', `/assignments/${item.id}/status`, { status: 'todo' });
+        toast('已撤销完成, 这条回到待完成');
+        await refresh();
+      } catch (e) { b.disabled = false; toast('操作失败: ' + e.message); }
+    });
     actions.appendChild(b);
   }
   // 今天不做: 未收尾的项才需要; 已跳过的项给"撤销"
@@ -358,17 +375,17 @@ function renderAssignment(item, withStatus, onChange) {
     actions.appendChild(b);
   }
 
-  // pending_actual 实耗时输入 (设计文档 §9 坑 2 — 高亮 + 自动 focus)
+  // pending_actual 实际用时输入 (设计文档 §9 坑 2 — 高亮 + 自动 focus)
   if (isPendingActual) {
     const inputWrap = el('<div class="row" style="margin:0;"></div>');
-    const input = el(`<input type="number" class="actual-input" placeholder="填实际分钟" min="0" max="240" style="width:90px;" inputmode="numeric" />`);
-    const saveBtn = el('<button class="primary">保存实耗</button>');
+    const input = el(`<input type="number" class="actual-input" placeholder="填实际用时" min="0" max="240" style="width:90px;" inputmode="numeric" />`);
+    const saveBtn = el('<button class="primary">保存用时</button>');
     const skipBtn = el('<button class="ghost">跳过</button>');
     saveBtn.addEventListener('click', async () => {
       const v = parseInt(input.value, 10);
       if (isNaN(v) || v < 0 || v > 240) {
         input.classList.add('error');
-        toast('实际分钟 0~240');
+        toast('用时需在 0~240 分钟之间');
         return;
       }
       try {
@@ -381,7 +398,7 @@ function renderAssignment(item, withStatus, onChange) {
       input.classList.remove('error');
       input.value = '';
       input.placeholder = '不填则不计入周复盘';
-      toast('本次不记录实耗, 之后仍可补填');
+      toast('本次不记录用时, 之后仍可补填');
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
     inputWrap.append(input, saveBtn, skipBtn);
@@ -389,13 +406,13 @@ function renderAssignment(item, withStatus, onChange) {
     // 进入视口自动 focus (设计文档 §9 坑 2)
     setTimeout(() => input.focus(), 50);
   } else if (item.actual_minutes != null) {
-    // 已填, 给改实耗
-    const editBtn = el('<button class="ghost">改实耗</button>');
+    // 已填, 给修改入口
+    const editBtn = el('<button class="ghost">改用时</button>');
     editBtn.addEventListener('click', async () => {
-      const v = prompt('改实际分钟 (0~240)', item.actual_minutes);
+      const v = prompt('改成实际用时多少分钟 (0~240)', item.actual_minutes);
       if (v == null) return;
       const n = parseInt(v, 10);
-      if (isNaN(n) || n < 0 || n > 240) { toast('0~240'); return; }
+      if (isNaN(n) || n < 0 || n > 240) { toast('用时需在 0~240 分钟之间'); return; }
       try {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: n });
         refresh();
@@ -407,7 +424,9 @@ function renderAssignment(item, withStatus, onChange) {
   // 删除 —— 已完成的作业后端强制禁止删除 (4010), 所以这里直接不渲染,
   // 否则就是给用户一个"点了必然报错"的按钮。
   if (item.status !== 'done') {
-    const delBtn = el('<button class="danger">删除</button>');
+    // 带 status-btn 让它跟随次操作档的小尺寸。删除是低频且不可逆的
+    // 操作, 不该和"完成"抢视觉权重。
+    const delBtn = el('<button class="status-btn danger">删除</button>');
     delBtn.addEventListener('click', async () => {
       if (!confirm(`确定删除 "${item.task_name}"?`)) return;
       try {
@@ -439,7 +458,8 @@ function openSourceModal(item) {
     <p class="muted">置信度: ${confidencePill(conf)}</p>
     <blockquote style="background:var(--surface-2); padding:var(--space-3); border-radius:var(--radius-md); margin:var(--space-2) 0; font-size:var(--fs-body-s);">${escapeAttr(item.source_span)}</blockquote>
     ${item.deadline_time ? `<p>⏰ 截止: ${fmtDateTime(item.deadline_time)}</p>` : ''}
-    ${item.est_minutes != null ? `<p>预估: ${item.est_minutes} 分钟</p>` : ''}
+    ${item.est_minutes != null ? `<p>预估用时: ${item.est_minutes} 分钟</p>` : ''}
+    ${item.actual_minutes != null ? `<p>实际用时: ${item.actual_minutes} 分钟</p>` : ''}
   `;
   document.getElementById('modal-ok').onclick = () => m.classList.add('hidden');
 }

@@ -88,6 +88,7 @@
   --fs-body: 15px;
   --fs-body-s: 14px;
   --fs-caption: 13px;
+  --fs-caption-sm: 11px;      /* 次操作按钮与"预估"标签, 刻意弱于正文 */
   --fs-number-l: 22px;
   --fs-number-s: 14px;
 }
@@ -592,6 +593,33 @@ tr.is-optional .muted {
   margin-left: 2px;
 }
 
+/* "预估"二字 (2026-09-28 用户反馈: 数字没有标签, 分不清是估的还是实际的)。
+   之前行内只有一个光秃秃的 30, 现在成对出现"预估 30 / 实际用时 32"。
+   标签用 block 排在数字上方, 弱于数字本身 —— 家长扫的是时长,
+   标签只负责消歧。"分"字仍由父级 ::after 补, 不重复输出。 */
+.assignment-row .est-label {
+  display: block;
+  font-size: var(--fs-caption-sm);
+  font-weight: 500;
+  color: var(--text-3);
+  letter-spacing: .02em;
+  line-height: 1.2;
+}
+
+.assignment-row .actual-tag {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  font-weight: 500;
+}
+.assignment-row .actual-tag strong {
+  color: var(--text-1);
+  font-weight: 700;
+}
+
 .assignment-row .source-link {
   font-size: var(--fs-caption);
   color: var(--text-3);
@@ -634,38 +662,73 @@ tr.is-optional .muted {
  * "开始"(doing) 按钮已移除: 家长不会特意点"开始", 直接点完成即可。
  * doing 状态后端保留(历史数据可能有), 但前端不再提供进入它的入口。
  */
+/* ===== 12. 状态按钮 (2026-09-28 按操作频率分档) =====
+   用户反馈"完成按钮太小, 其余按钮太抢眼"。于是把按钮分成两档:
+
+   主操作 (done)   —— 90% 的点击量, 做成大号实心按钮, 视觉重心明确
+   次操作 (其余)   —— 低频例外 (今天不做/选做/重做/删除), 缩小让位
+
+   缩小的下限是 22px 而不是更小: 小于 22px 在触屏和低视力场景下
+   很难稳定命中, WCAG 2.5.8 (Target Size Minimum) 也要求 24x24。
+   留出的空间让给了"完成"按钮, 不会让整行变高。 */
 .status-btn {
   border: 1.5px solid var(--border);
   background: var(--surface);
-  padding: 2px var(--space-2);
   border-radius: var(--radius-pill);
   cursor: pointer;
-  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
-  min-height: 26px;
+  /* 次操作档: 比主操作小一号, 但守住 22px 下限 */
+  min-height: 22px;
+  padding: 1px var(--space-2);
+  font-size: var(--fs-caption-sm);
   white-space: nowrap;
   transition: filter .12s, background .12s, border-color .12s;
 }
 .status-btn:hover { filter: brightness(.96); }
 .status-btn:disabled { opacity: .55; cursor: not-allowed; }
 
-/* 完成: 绿底白字。#2A7D38 与白字 5.16:1, 达 WCAG AA
+/* 完成: 绿底白字, 唯一的主操作。放大到 34px 高 + 15px 字。
+   #2A7D38 与白字 5.16:1, 达 WCAG AA
    (初版用的 #2F8F3E 只有 4.10:1, 小字不达标, 已压暗) */
 .status-btn.done {
   background: #2A7D38;
   border-color: #2A7D38;
   color: #fff;
+  min-height: 34px;
+  padding: 4px var(--space-4);
+  font-size: var(--fs-body-s, 14px);
+  font-weight: 700;
+  /* 主操作要能一眼锁定, 轻阴影让它从平面按钮里浮起来 */
+  box-shadow: 0 1px 3px rgba(42, 125, 56, .28);
 }
 .status-btn.done:hover { background: #226B2F; border-color: #226B2F; }
+.status-btn.done:active { transform: translateY(1px); box-shadow: none; }
 
-/* 今天不做: 红底白字。#C0392B 与白字 4.8:1 */
+/* 今天不做: 低频操作, 改为描边式而非实心。
+   早先是红底白字大色块, 和"完成"的绿块正面竞争, 两个实心按钮
+   并排会让家长犹豫点哪个。描边+红字保留了警示语义, 但视觉权重
+   明显低于主操作。#C0392B 与白字 4.8:1, #A93226 在白底上 6.0:1。 */
 .status-btn.skipped {
-  background: #C0392B;
+  background: var(--surface);
   border-color: #C0392B;
-  color: #fff;
+  color: #A93226;
 }
-.status-btn.skipped:hover { background: #A93226; border-color: #A93226; }
+.status-btn.skipped:hover { background: #FDEDEC; }
+
+/* 重做: 撤销"完成"。用中性灰描边, 不与"完成"的绿抢视觉 ——
+   它是补救操作, 不该被当成第二个主按钮。 */
+.status-btn.redo {
+  background: var(--surface);
+  border-color: var(--border);
+  border-style: dashed;
+  color: var(--text-2);
+}
+.status-btn.redo:hover {
+  background: var(--surface-2);
+  border-color: var(--text-3);
+  color: var(--text-1);
+}
 
 /* 撤销跳过: 反色描边, 弱于正向动作, 避免与"完成"抢注意力 */
 .status-btn.undo {
@@ -674,6 +737,16 @@ tr.is-optional .muted {
   color: #A93226;
 }
 .status-btn.undo:hover { background: #FDEDEC; }
+
+/* 删除: 用次操作档尺寸 + danger 的红色语义。
+   显式写出来而不是靠"button.danger 在前、.status-btn 在后"的顺序 ——
+   两者特异性相同(0,1,1), 顺序一变颜色就会被 .status-btn 覆盖掉。 */
+.status-btn.danger {
+  color: var(--status-overdue);
+  border-color: var(--status-overdue);
+  background: transparent;
+}
+.status-btn.danger:hover { background: var(--status-overdue-soft); }
 
 /* ===== 13. 进度条 (设计文档 §5.5) ===== */
 .progress-bar {
