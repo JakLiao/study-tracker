@@ -31,6 +31,9 @@ data/study.db*
 # 服务运行时产物 (PID / 日志 / 元信息)
 run/
 
+# 测试产物 / 过程留档 (artifacts 整个目录不入库)
+artifacts/
+
 # pytest 临时目录 (每轮测试会生成上百个 test_study.db)
 tmp/
 .pytest_tmp/
