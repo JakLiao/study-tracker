@@ -75,10 +75,17 @@ def call_minimax(raw_text: str) -> dict:
 
     # 注意: M3 不支持 OpenAI 的 response_format={type:json_object} 协议 (实测会忽略且自动包 ```json 围栏),
     # ai_client 的 _strip_fences 已能处理围栏, 这里不传 response_format 让模型自由输出, 靠客户端兜底解析.
+    #
+    # thinking: 本项目这一环节只是"把老师通知原文拆成结构化作业条目", 不需要多步推理,
+    # 而 M3 省略 thinking 时默认开启 adaptive thinking (会额外产出 reasoning_content, 更慢更贵,
+    # 且让模型有机会在正文里写出非 JSON 的铺垫). 这里显式关闭, 对应"最低思考深度".
+    # 注意: OpenAI 那套 reasoning_effort=low|medium|high 是 M3.1-Flash-Preview 等模型的能力,
+    # MiniMax-M3 的 Chat Completions 不认这个字段, 传了也不会降档, 别照搬.
     payload = {
         "model": config.MINIMAX_MODEL,
         "messages": build_messages(raw_text),
         "temperature": 0.2,
+        "thinking": {"type": "disabled"},
     }
 
     headers = {
