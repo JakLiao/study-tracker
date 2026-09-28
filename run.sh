@@ -26,7 +26,7 @@ if [ -f ".env" ]; then
 fi
 
 HOST="${HOST:-127.0.0.1}"
-PORT="${PORT:-8765}"
+PORT="${PORT:-8876}"
 
 # 数据目录
 mkdir -p data
@@ -35,7 +35,7 @@ mkdir -p data
 for arg in "$@"; do
   case "$arg" in
     --port=*) PORT="${arg#*=}" ;;
-    --port) shift; PORT="${1:-8765}" ;;
+    --port) shift; PORT="${1:-8876}" ;;
     --host=*) HOST="${arg#*=}" ;;
   esac
 done

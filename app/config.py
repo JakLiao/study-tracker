@@ -53,7 +53,9 @@ def ai_configured() -> bool:
 
 # ====== 服务监听 ======
 HOST: str = os.environ.get("HOST", "127.0.0.1").strip()
-PORT: int = int(os.environ.get("PORT", "8765"))
+# 默认 8876: 8765 已被 serve_gallery.py 占用, 回落会 address already in use.
+# 与 run.sh / service.sh / .env.example 保持一致, 勿单独改.
+PORT: int = int(os.environ.get("PORT", "8876"))
 
 
 # ====== 数据库 ======
