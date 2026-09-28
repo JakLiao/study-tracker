@@ -89,15 +89,46 @@ function toast(msg, ms = 3000) {
   toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
-// ====== Tab 切换 ======
-function switchTab(name) {
+// ====== Tab 切换 + hash 路由 (2026-09-28) ======
+// 每个菜单页有独立 URI, 方便直接打开/收藏/分享:
+//   #/board 看板  #/entry 登记  #/list 日历
+//   #/weekly 复盘  #/settings 设置
+// 用 hash 而非 /board 真实路径: 无需后端配合、刷新不会 404,
+// 且不会与将来的 /api/* 路由抢前缀。
+const TABS = ['board', 'entry', 'list', 'weekly', 'settings'];
+const DEFAULT_TAB = 'board';
+
+// 抑制 hashchange 回调里的再次写回, 否则 switchTab <-> hashchange
+// 会互相触发形成死循环(表现是点菜单后页面瞬间白屏)。
+let _syncingHash = false;
+
+function tabFromHash() {
+  const raw = String(location.hash || '').replace(/^#\/?/, '').trim();
+  return TABS.includes(raw) ? raw : DEFAULT_TAB;
+}
+
+function switchTab(name, opts) {
+  const tab = TABS.includes(name) ? name : DEFAULT_TAB;
+  const updateUrl = !opts || opts.updateUrl !== false;
+  // 浏览器前进/后退触发的调用不再写回 hash, 否则会把历史记录钉死,
+  // 用户按返回键看似回到上一页, 实际又被我们推回同一个 tab。
+  const syncUrl = updateUrl && !_syncingHash;
+  if (syncUrl && tabFromHash() !== tab) {
+    _syncingHash = true;
+    try {
+      history.pushState({ tab }, '', '#/' + tab);
+    } finally {
+      _syncingHash = false;
+    }
+  }
+
   document.querySelectorAll('#tabs button').forEach(b => {
-    const active = b.dataset.tab === name;
+    const active = b.dataset.tab === tab;
     b.classList.toggle('active', active);
     b.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  if (name === 'board') {
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
+  if (tab === 'board') {
     // 回到看板时重置到最新一天, 否则家长会停在几天前的那天上,
     // 以为"今天的作业怎么不见了"。
     _boardDate = null;
@@ -106,16 +137,28 @@ function switchTab(name) {
   }
   // 日历与详情一起加载。保留 _calYear/_calMonth, 切走再切回时
   // 家长仍停在上次翻到的那个月, 而不是被强行弹回本月。
-  if (name === 'list') {
+  if (tab === 'list') {
     loadCalendar();
     if (_calSelected) loadList(_calSelected);
   }
-  if (name === 'weekly') loadWeekly('current');
-  if (name === 'settings') loadSettings();
+  if (tab === 'weekly') loadWeekly('current');
+  if (tab === 'settings') loadSettings();
 }
 document.querySelectorAll('#tabs button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+// 前进/后退: 只切视图, 不写回 URL(见 switchTab 里 syncUrl 的说明)
+function applyHashRoute() {
+  _syncingHash = true;
+  try {
+    switchTab(tabFromHash(), { updateUrl: false });
+  } finally {
+    _syncingHash = false;
+  }
+}
+window.addEventListener('hashchange', applyHashRoute);
+window.addEventListener('popstate', applyHashRoute);
 window.switchTab = switchTab;
 
 // ====== Health ======
@@ -286,11 +329,15 @@ async function loadBoard() {
     section('待完成', pending, 'sec-pending');
     section('已收尾', settled, 'sec-settled');
 
-    // 选做分组 (默认收起 —— 低优先级内容不该稀释主任务视觉权重)
+    // 选做分组 (2026-09-28 用户反馈: 改为默认展开)
+    // 原先默认收起, 理由是"低优先级不该稀释主任务视觉权重"。但收起后
+    // 家长根本看不到自己还欠着几件选做, 反复要点开才安心 —— 隐藏在这里
+    // 换来的不是"聚焦", 而是"不确定"。既然底色已改为浅灰(不再抢焦点),
+    // 默认展开就不再有稀释问题, 收起与不收起的信息成本对比很明确。
     if (b.optional_items && b.optional_items.length) {
       const opt = b.optional_items;
       const optDone = opt.filter(i => i.status === 'done').length;
-      const card = el(`<details class="card optional-card"><summary class="card-title">选做 (${opt.length})<span class="count">${optDone}/${opt.length}</span></summary><div class="card-body"></div></details>`);
+      const card = el(`<details class="card optional-card" open><summary class="card-title">选做 (${opt.length})<span class="count">${optDone}/${opt.length}</span></summary><div class="card-body"></div></details>`);
       opt.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
       root.appendChild(card);
     }
@@ -833,20 +880,35 @@ function openManualAddModal() {
   m.classList.remove('hidden');
   document.getElementById('modal-title').textContent = '手动添加作业';
   document.getElementById('modal-content').innerHTML = `
-    <div class="row">
-      <label>科目
+    <div class="form-grid">
+      <label>
+        <span class="form-label">科目</span>
         <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
       </label>
-      <label>预计用时
-        <input id="m-est" type="number" value="15" min="1" max="180" style="width:80px;" inputmode="numeric" />
+      <label>
+        <span class="form-label">预计用时</span>
+        <input id="m-est" type="number" value="15" min="1" max="180" inputmode="numeric" />
+      </label>
+      <label>
+        <span class="form-label">任务名</span>
+        <input id="m-name" placeholder="如: 完成知能 P14" />
+      </label>
+      <label>
+        <span class="form-label">归属日</span>
+        <input id="m-due" type="date" class="js-datepicker" value="${todayStr()}" />
+      </label>
+      <label>
+        <span class="form-label">截止时间</span>
+        <input id="m-dl" type="datetime-local" class="js-datetimepicker" />
+      </label>
+      <label>
+        <span class="form-label">类型</span>
+        <span class="form-check">
+          <input id="m-opt" type="checkbox" /> <span>选做</span>
+        </span>
       </label>
     </div>
-    <div class="row" style="flex-direction:column; align-items:stretch;">
-      <label>任务名 <input id="m-name" placeholder="如: 完成知能 P14" /></label>
-      <label>归属日 <input id="m-due" type="date" class="js-datepicker" value="${todayStr()}" /></label>
-      <label>截止时间 (可选) <input id="m-dl" type="datetime-local" class="js-datetimepicker" /></label>
-      <label><input id="m-opt" type="checkbox" /> 选做</label>
-    </div>
+    <p class="muted" style="margin:0">截止时间可以不填。</p>
   `;
   // modal-content 每次打开都是新 DOM, 所以在这里绑定而不是页面启动时
   initDatePickersIn(document.getElementById('modal-content'));
@@ -1099,7 +1161,9 @@ function renderDayDetail(root, d, items) {
 
   if (optional.length) {
     const optDone = optional.filter(i => i.status === 'done').length;
-    const c = el(`<details class="card optional-card"><summary class="card-title">选做 (${optional.length})<span class="count">${optDone}/${optional.length}</span></summary><div class="card-body"></div></details>`);
+    // open: 与看板选做分组保持一致 —— 同一份数据在两个界面表现不同,
+    // 家长会怀疑其中一边显示错了。
+    const c = el(`<details class="card optional-card" open><summary class="card-title">选做 (${optional.length})<span class="count">${optDone}/${optional.length}</span></summary><div class="card-body"></div></details>`);
     optional.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail)));
     root.appendChild(c);
   }
@@ -1341,5 +1405,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
 
 // ====== 启动 ======
 loadHealth();
-loadBoard();
+// 直接打开 /#/settings 时必须先按 hash 切好页, 否则会先渲染看板再切,
+// 家长会看到一次无意义的看板请求和一闪而过的内容。
+switchTab(tabFromHash(), { updateUrl: false });
 setInterval(loadHealth, 60000);

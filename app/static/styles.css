@@ -42,13 +42,14 @@
   --warn-ink: #C2185B;
 
   /* 选做作业 (is_optional) 行底色, 与必做的白卡片区分.
-     琥珀系刻意避开语(橘)/数(蓝)/英(绿), 避免"这是选做"被读成"这是某科"。
-     #FFF3D6 与白卡片仅 1.10:1 肉眼难辨, 加浓到 #F7DFA0 (1.45:1)。
-     代价: --text-2/3 在此底上不足 4.5:1, 故 .is-optional 内部
-     统一改用 --text-1 与 --row-opt-ink, 保证可读性 (见 11.8 节)。 */
-  --row-opt-bg: #F7DFA0;
-  --row-opt-bar: #8A6A0A;
-  --row-opt-ink: #5A4200;
+     2026-09-28 用户反馈: 原琥珀黄底太显眼 —— 选做的定义就是"优先级低",
+     用高饱和底色反而把它顶到视觉焦点上, 与"必做才要盯"的意图相反。
+     改用中性浅灰: 灰 = 不强调, 同时仍能与白卡片区分(1.07:1 以上),
+     且不与语(橘)/数(蓝)/英(绿)任何一个科目色混淆。
+     灰色上文字对比度高于原琥珀, 11.8 节的补偿规则可以一并收回。 */
+  --row-opt-bg: #F0EFEC;
+  --row-opt-bar: #C4C2BC;
+  --row-opt-ink: #57554F;
 
   /* 日历格子底色。语义 = 必做的收尾情况, 与看板进度条同口径:
      has       有作业但一项没动 (最需要被看见)
@@ -472,13 +473,14 @@ tr:last-child td { border-bottom: none; }
   margin-left: var(--space-1);
 }
 
-/* 深色底上的文字补偿: --text-2 (4.66:1 on white) 落到 1.45:1 的琥珀底上
-   只剩 ~3.3:1, 小字读不清。这里把选做行内的次要/弱化文字统一提到
-   --text-1 (7.98:1), 视觉上仍是"弱于标题", 但可读性达标。 */
+/* 底色改浅灰后, 这条文字补偿已无必要 —— 它当初是为了在深琥珀底
+   (1.45:1) 上保住 --text-2 的对比度。浅灰底接近白卡, --text-2 直接可用。
+   而且保留它反而有害: 选做行的次要文字会比必做行更黑, 与"选做不显眼"
+   的意图相反。 */
 .assignment-row.is-optional .muted,
 .assignment-row.is-optional .est-min,
 tr.is-optional .muted {
-  color: var(--text-1);
+  color: var(--text-2);
 }
 
 /* ===== 11.5 看板分区 (2026-09-28) ===== */
@@ -892,6 +894,59 @@ tr.is-optional .muted {
    不加 min-width 会让单个按钮被 flex 拉成一整条, 看着像输入框。
    这是与系统单按钮对话框一致的做法。 */
 .modal-body .row:last-child .modal-solo-btn { min-width: 96px; }
+
+/* ===== 17b. 弹窗表单 (手动添加作业) =====
+   2026-09-28 用户反馈: 表单内容没对齐。根因是复用了通用的 .row + label,
+   而 .row label 本身是 display:flex, 标签文字和输入框排在同一行且标签
+   没有固定宽度 —— 「科目」被输入框挤到只剩一字宽, 于是竖排成
+   「科/目」, 「截止时间」更被压成三行, 视觉上完全散架。
+
+   改成两列网格: 标签固定一列、控件占其余宽度。网格而非 flex 是因为
+   各行标签宽度天然不等(选做 vs 归属日), 网格列能保证所有控件左边缘
+   严格对齐 —— 这正是"对齐"要的效果。 */
+.form-grid {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-3) 0;
+}
+.form-grid > label {
+  display: contents;   /* 让 label 的子元素直接参与网格, 才有两列 */
+}
+/* 标签文字: 右对齐 + 不换行, 数字/单位与控件左缘对齐 */
+.form-grid .form-label {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  text-align: right;
+  white-space: nowrap;
+}
+/* 选做: 复选框与文字同行, 占第二列 */
+.form-grid .form-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+/* 控件统一铺满所在列; min-width:0 防止 date/datetime-local 的
+   固有宽度把网格撑破(那正是原来输入框过宽的原因)。 */
+.form-grid input:not([type="checkbox"]),
+.form-grid select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+}
+.form-grid .form-check input { margin: 0; }
+
+/* 窄屏下标签列不能占 76px, 否则控件被压得没法用 */
+@media (max-width: 480px) {
+  .form-grid { grid-template-columns: 64px minmax(0, 1fr); }
+}
+
+/* 预计用时是数字, 铺满整列会显得空旷 —— 限宽 96px 够放 3 位数,
+   又不至于让输入框细得难点。任务名/日期这类长文本则保持整列宽。 */
+.form-grid input[type="number"] { max-width: 96px; }
 
 /* ===== 18. 预览表 (登记页) =====
    2026-09-28 用户批注: 表格右侧多出一截没利用, 而「置信」「原文」

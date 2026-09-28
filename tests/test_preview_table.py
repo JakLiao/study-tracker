@@ -195,9 +195,14 @@ def test_preview_header_uses_new_name(app_js):
 
 def test_manual_form_label_uses_new_name(app_js):
     """手动添加弹窗的标签同步 —— 改一处不改另一处会让人以为
-    是两个不同的字段。"""
+    是两个不同的字段。
+
+    2026-09-28 表单改网格布局后, 标签文字从 <label> 直属文本变成
+    <span class="form-label">, 这里跟着改断言形式, 但守的仍是同一个意图:
+    弹窗里必须出现「预计用时」这四个字。
+    """
     code = _code(app_js)
-    assert "<label>预计用时" in code
+    assert '<span class="form-label">预计用时</span>' in code
 
 
 def test_validation_toast_uses_new_name(app_js):

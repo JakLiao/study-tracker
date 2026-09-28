@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("study.main")
+
+# 菜单页面对应的路径(2026-09-28)。前端主路由是 hash(#/board), 这份清单
+# 只用于同路径兜底, 必须显式枚举而不是写 catch-all —— 否则 /api/notfound
+# 之类的真实 404 会被悄悄返回首页, 排障时看到的是首页而不是 404。
+FRONTEND_PAGES = frozenset({"board", "entry", "list", "weekly", "settings"})
 
 
 def create_app() -> FastAPI:
@@ -94,6 +99,16 @@ def create_app() -> FastAPI:
         @app.get("/", include_in_schema=False)
         def index():
             return FileResponse(static_dir / "index.html")
+
+        # 菜单各页的独立路径(2026-09-28): 前端用 hash 路由(#/board 等),
+        # 这里的同路径兜底只是顺手 —— 手输 /board 而漏掉 # 时不至于 404。
+        # 注意放在静态挂载与 API 路由之后, 绝不能写成 catch-all,
+        # 否则会把 /api/* 和 /static/* 的 404 也吞成首页, 掩盖真实错误。
+        @app.get("/{page}", include_in_schema=False)
+        def page_alias(page: str):
+            if page in FRONTEND_PAGES:
+                return FileResponse(static_dir / "index.html")
+            raise HTTPException(status_code=404, detail="Not Found")
 
     return app
 
