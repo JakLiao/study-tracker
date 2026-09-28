@@ -265,13 +265,29 @@ def test_code_does_not_rely_on_nonexistent_api():
 
 
 def test_all_date_inputs_marked():
+    """每个日期输入框都必须带组件类, 漏了就会裸露成难看的原生控件。
+
+    预览表的「截止」列已移除(家长用不上), 但手动添加弹窗仍保留可选的
+    截止时间输入 —— 那里的 datetime-local 仍需初始化, 否则弹窗一打开
+    就是原生外观。
+    """
     js = (ROOT / "app/static/app.js").read_text(encoding="utf-8")
     html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
     assert 'id="entry-date"' in html and "js-datepicker" in html
     assert 'data-field="due_date" type="date" class="js-datepicker' in js
-    assert 'data-field="deadline_time" type="datetime-local" class="js-datetimepicker' in js
     assert 'id="m-due" type="date" class="js-datepicker"' in js
     assert 'id="m-dl" type="datetime-local" class="js-datetimepicker"' in js
+
+
+def test_preview_table_has_no_deadline_input():
+    """预览表不该再有「截止」列 —— 连输入框带 deadline_time 一并去掉。
+
+    只删表头不改 collectRows 的话, 它会读到 null 再取 .value 直接抛错,
+    把整批入库打断; 所以这里连 data-field 也一并断言不存在。
+    """
+    js = (ROOT / "app/static/app.js").read_text(encoding="utf-8")
+    assert 'data-field="deadline_time"' not in js, "预览表仍存在截止时间输入框"
+    assert "<th>截止</th>" not in js, "预览表仍存在「截止」表头"
 
 
 def test_value_assigned_before_init():

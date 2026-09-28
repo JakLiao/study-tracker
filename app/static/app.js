@@ -685,8 +685,8 @@ function renderPreviewTable(items, batchId) {
     <p class="muted">低置信度行会高亮, 默认未勾选 (设计 §9 坑 3)</p>
     <table class="preview-table">
       <thead><tr>
-        <th>勾</th><th>科目</th><th>任务名</th><th>归属日</th><th>截止</th>
-        <th>选做</th><th>预计用时</th><th>置信</th><th>原文</th><th></th>
+        <th>勾</th><th>科目</th><th>任务名</th><th>归属日</th>
+        <th>选做</th><th>预计用时</th><th>置信</th><th>原文</th><th>操作</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -706,6 +706,10 @@ function renderPreviewTable(items, batchId) {
     const noAiDate = !it.due_date;
     // 设计 §9 坑 3: 低置信度默认不勾选, 强制家长过目
     const checkedDefault = it.confidence !== 'low' && !noAiDate;
+    // 表格不再显示/编辑「截止」列, 但 AI 解析出的 deadline_time 不能丢 ——
+    // 「周四早读 8:20 听写」这类信息只有 AI 能提取出来, 家长在表里点不出来的。
+    // 存到 data- 属性, collectRows 原样带进入库请求。
+    tr.dataset.dl = it.deadline_time || '';
     tr.innerHTML = `
       <td><input data-field="checked" type="checkbox" ${checkedDefault ? 'checked' : ''} /></td>
       <td>
@@ -721,7 +725,6 @@ function renderPreviewTable(items, batchId) {
                value="${it.due_date || ''}" placeholder="${batchDate || todayStr()}" />
         ${noAiDate ? '<small class="need-date-hint">AI 未识别归属日, 请确认</small>' : ''}
       </td>
-      <td><input data-field="deadline_time" type="datetime-local" class="js-datetimepicker" value="${it.deadline_time ? it.deadline_time.slice(0,16) : ''}" /></td>
       <td><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
       <td><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || 15}" /></td>
       <td class="col-conf">${confidenceDot(it.confidence)}</td>
@@ -742,12 +745,24 @@ function escapeAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+// AI 给的截止时间格式不统一: 有时带秒(2026-09-30T08:20:00), 有时不带
+// (2026-09-30T08:20)。这里统一补成带秒的 ISO —— 少了会入库失败,
+// 多补则拼出 08:20:00:00 这种畸形串。
+function normalizeDeadline(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s) ? s + ':00' : s;
+}
+
 function collectRows(result) {
   const rows = [...result.querySelectorAll('tbody tr')];
   return rows.map(tr => {
     const get = f => tr.querySelector(`[data-field="${f}"]`);
     const due = get('due_date').value;
-    const dlRaw = get('deadline_time').value;
+    // deadline_time 来自 tr.dataset.dl 而非 DOM —— 表格已无「截止」列,
+    // 若还用 get('deadline_time').value 会拿到 null 再取属性, 直接抛 TypeError
+    // 把整批入库打断, 且报错发生在循环里, 家长只看到"入库失败"。
+    // 格式统一交给 normalizeDeadline 处理。
     // 置信度与原文都从具名单元格取, 不用 querySelector('small') ——
     // 那是"第一个 small", 以后任何一行多出个 small 就会读错字段。
     // 置信度标记从 confidenceDot 换成了 conf-dot, 这里必须同步改,
@@ -764,7 +779,7 @@ function collectRows(result) {
       subject: get('subject').value,
       task_name: get('task_name').value.trim(),
       due_date: due,
-      deadline_time: dlRaw ? dlRaw + ':00' : null,
+      deadline_time: normalizeDeadline(tr.dataset.dl),
       is_optional: get('is_optional').checked,
       est_minutes: parseInt(get('est_minutes').value, 10),
       source_span: (tr.querySelector('.col-src small') || {}).textContent || '',

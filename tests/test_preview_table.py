@@ -101,11 +101,28 @@ def test_table_layout_fixed(styles):
     assert re.search(r"width:\s*100%", b)
 
 
+def _col_widths(styles):
+    """按列号(1-based)返回 {列号: 宽度}, 不依赖数组下标。
+
+    用 re.findall 的顺序列表取下标会被 auto 列坑到: 正则只抓 \\w+ 会把
+    "auto" 也抓进来, 但一旦某列漏写或调序, 下标全部前移, 断言会去检查
+    错误的列并给出误导性的报错。
+    """
+    out = {}
+    for col, w in re.findall(
+            r"\.preview-table th:nth-child\((\d+)\),\s+\.preview-table td:nth-child\(\d+\)\s+\{ width: (\w+)", styles):
+        out[int(col)] = w
+    return out
+
+
 def test_all_columns_have_width(styles):
-    """10 列全部定宽, 任务名列 auto 吃掉剩余空间。"""
+    """9 列全部定宽, 任务名列 auto 吃掉剩余空间。
+
+    「截止」列已移除, 列数从 10 变 9。
+    """
     ws = re.findall(
         r"\.preview-table th:nth-child\(\d+\),\s+\.preview-table td:nth-child\(\d+\)\s+\{ width: (\w+)", styles)
-    assert len(ws) == 10, ws
+    assert len(ws) == 9, ws
     assert ws[2] == "auto", "第 3 列(任务名)应为 auto"
     assert all(re.fullmatch(r"\d+px", w) for i, w in enumerate(ws) if i != 2), ws
 
@@ -132,18 +149,35 @@ def test_est_column_wide_enough(styles):
     """「预计用时」四字 + 单元格内边距, 列宽要放得下。
 
     四字约 56px, 加左右各 12px 内边距约 80px, 故下限取 80px。
-    注意第 3 列(任务名)是 auto, 正则只取 px 值会让索引前移,
-    所以这里按列号(1-based)取值, 不依赖数组下标。
+    「截止」列移除后该列从第 7 位前移到第 6 位, 按列号取值而非下标 ——
+    下标法在调序后会检查到「置信」列(42px)并报出误导性的断言失败。
     """
-    widths = {}
-    for col, w in re.findall(
-            r"\.preview-table th:nth-child\((\d+)\),\s+\.preview-table td:nth-child\(\d+\)\s+\{ width: (\w+)", styles):
-        widths[int(col)] = w
-    assert 7 in widths, widths
+    widths = _col_widths(styles)
+    assert 6 in widths, widths
     # 抓到的值带 px 后缀(如 "82px"), 先剥掉再比数值
-    est = re.sub(r"px$", "", widths[7])
-    assert est.isdigit(), f"第 7 列宽度应为固定像素: {widths[7]}"
-    assert int(est) >= 80, f"第 7 列(预计用时) 宽度 {est}px 不足以容纳四字表头"
+    est = re.sub(r"px$", "", widths[6])
+    assert est.isdigit(), f"第 6 列宽度应为固定像素: {widths[6]}"
+    assert int(est) >= 80, f"第 6 列(预计用时) 宽度 {est}px 不足以容纳四字表头"
+
+
+def test_action_column_header_and_width(styles, app_js):
+    """末列表头是「操作」, 列宽要放得下两个字。
+
+    原来是空表头 + 「删」按钮(40px), 加上「操作」二字后必须加宽,
+    否则表头被 nowrap 截断 —— 表头折行会把行高又顶回来。
+    只在预览表那一段里找, 不能全文搜 "<th></th>": 原文弹窗里另有
+    一张键值表, 它的末列表头本来就是空的, 与预览表无关。
+    """
+    thead = re.search(r"<table class=\"preview-table\">.*?</thead>", app_js, re.S)
+    assert thead, "未找到预览表表头"
+    head = thead.group(0)
+    assert "<th>操作</th>" in head
+    assert "<th></th>" not in head, "预览表末列表头不应为空"
+    widths = _col_widths(styles)
+    w = re.sub(r"px$", "", widths[9])
+    assert w.isdigit(), widths[9]
+    # 「操作」两字约 28px + 左右内边距约 24px
+    assert int(w) >= 52, f"第 9 列(操作) 宽度 {w}px 放不下两字表头"
 
 
 # ====== 3b. 「预估分」->「预计用时」(2026-09-28) ======
@@ -340,7 +374,9 @@ const ITEMS = { items: [
     deadline_time: null, is_optional: false, est_minutes: 25, confidence: 'low',
     source_span: '1、完成课时作业P18-19,订正2题。2.练字10 小(抄写词句)。' },
   { subject: '数学', task_name: '预习卡', due_date: '2026-09-28',
-    deadline_time: null, is_optional: false, est_minutes: 15, confidence: 'high',
+    // 非空: 验证表格已无「截止」列, 但 AI 解析出的 deadline_time 仍原样入库。
+    // 这条是「周四早读8:20听写」这类只有 AI 能提取的信息, 丢了就是丢数据。
+    deadline_time: '2026-09-30T08:20:00', is_optional: false, est_minutes: 15, confidence: 'high',
     source_span: '2.预习卡。' },
   { subject: '英语', task_name: '阅读课外书', due_date: '2026-09-28',
     deadline_time: null, is_optional: true, est_minutes: 20, confidence: 'medium',
@@ -378,6 +414,10 @@ w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__e = () => switchTab
 
   out.hasTable = !!doc.querySelector('.preview-table');
   out.rowCount = doc.querySelectorAll('.preview-table tbody tr').length;
+  out.headers = [...doc.querySelectorAll('.preview-table thead th')].map(t => t.textContent.trim());
+  out.cellCount = doc.querySelectorAll('.preview-table tbody tr')[0].children.length;
+  out.hasDeadlineInput = !!doc.querySelector('[data-field="deadline_time"]');
+  out.datasetDl = [...doc.querySelectorAll('.preview-table tbody tr')].map(tr => tr.dataset.dl);
 
   const dots = [...doc.querySelectorAll('.col-conf .conf-dot')];
   out.dots = dots.map(d => ({
@@ -482,3 +522,43 @@ def test_live_source_span_correct_per_row(live):
     assert len({i["source_span"] for i in items}) == len(items), "各行原文应互不相同"
     high = next(i for i in items if i["confidence"] == "high")
     assert "预习卡" in high["source_span"], "原文与所属行应对应"
+
+
+# ====== 7. 移除「截止」列 (2026-09-28) ======
+
+@needs_jsdom
+def test_live_headers_drop_deadline(live):
+    """表头 9 列, 无「截止」, 末列为「操作」。
+
+    表头与单元格数量必须一致 —— 只删 <th> 不删 <td> 会让最后一行多出
+    一格空白, 视觉上就是表格右边突出一块。
+    """
+    assert "截止" not in live["headers"], live["headers"]
+    assert live["headers"][-1] == "操作", live["headers"]
+    assert len(live["headers"]) == 9, live["headers"]
+    assert live["cellCount"] == len(live["headers"]), \
+        f"单元格数({live['cellCount']})与表头数({len(live['headers'])})不一致"
+
+
+@needs_jsdom
+def test_live_no_deadline_input(live):
+    """表格里不再有截止时间输入框。"""
+    assert live["hasDeadlineInput"] is False
+
+
+@needs_jsdom
+def test_live_deadline_survives_without_input(live):
+    """关键回归: 表里没有截止列, 但 AI 解析出的 deadline_time 不能丢。
+
+    collectRows 若仍读 get('deadline_time').value, 会拿到 null 再取属性
+    抛 TypeError, 整批入库失败; 若简单改成固定 null, 则会静默丢掉
+    「周四早读 8:20 听写」这类只有 AI 能提取的信息。两条路都要防。
+    """
+    items = live["batch"]["items"]
+    assert items, "应至少提交一行"
+    high = next(i for i in items if i["confidence"] == "high")
+    assert high["deadline_time"] == "2026-09-30T08:20:00", \
+        f"AI 解析的截止时间应原样入库, 实际 {high['deadline_time']!r}"
+    others = [i for i in items if i["confidence"] != "high"]
+    assert all(i["deadline_time"] is None for i in others), \
+        "AI 未给出截止时间的行应提交 null, 而不是空串"
