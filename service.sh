@@ -71,10 +71,21 @@ fail() { printf '[FAIL] %s\n' "$*" >&2; }
 
 load_key() {
   if [ -z "${MINIMAX_API_KEY:-}" ] && [ -f "$HOME/.bashrc" ]; then
-    set -a
-    # shellcheck disable=SC1090
-    . "$HOME/.bashrc" >/dev/null 2>&1 || true
-    set +a
+    # 必须在子 shell 里加载, 且临时关掉 set -u/set -e。
+    # 本机 .bashrc 会 source ROS2 的 setup.bash, 它引用了未绑定变量
+    # (AMENT_TRACE_SETUP_FILES 等), 在 set -u 下会让整个脚本静默退出 ——
+    # 曾导致 `start` 无任何输出且服务没起来, 极难排查。
+    # `|| true` 兜不住: 退出发生在 .bashrc 内部, 不是 source 的返回值。
+    MINIMAX_API_KEY="$(
+      set +u
+      set +e
+      set -a
+      # shellcheck disable=SC1090
+      . "$HOME/.bashrc" >/dev/null 2>&1
+      set +a
+      printf '%s' "${MINIMAX_API_KEY:-}"
+    )"
+    export MINIMAX_API_KEY
   fi
 }
 

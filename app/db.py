@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS assignments (
 
 CREATE INDEX IF NOT EXISTS idx_assignments_due_date ON assignments(due_date);
 CREATE INDEX IF NOT EXISTS idx_assignments_subject_due ON assignments(subject, due_date);
+-- 查重用: insert_assignments 按 (subject, due_date) 批量捞已有 task_name。
+-- 现有 idx_assignments_subject_due 前缀已是 (subject, due_date), 本就覆盖该查询,
+-- 不额外加索引, 避免重复索引拖慢写入。
 CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
 
 CREATE TABLE IF NOT EXISTS parsed_batches (

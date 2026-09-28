@@ -640,7 +640,15 @@ async function confirmBatch(batchId, result) {
   }
   try {
     const r = await api('POST', '/assignments/batch', { batch_id: batchId, items });
-    toast(`已入库 ${r.created_ids.length} 条`);
+    const skipped = r.skipped || [];
+    if (skipped.length) {
+      // 去重是静默的, 但必须告诉家长跳过了什么 —— 否则"少了几条"会让人以为丢数据
+      const names = skipped.slice(0, 3).map(s => `${s.subject}·${s.task_name}`).join('、');
+      const more = skipped.length > 3 ? ` 等 ${skipped.length} 条` : '';
+      toast(`已入库 ${r.created_ids.length} 条, 跳过重复 ${skipped.length} 条: ${names}${more}`, 6000);
+    } else {
+      toast(`已入库 ${r.created_ids.length} 条`);
+    }
     result.innerHTML = '';
     rawTextarea.value = '';
     document.getElementById('char-count-num').textContent = '0';

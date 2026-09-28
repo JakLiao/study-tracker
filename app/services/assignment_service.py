@@ -19,6 +19,7 @@ from ..errors import (
     MissingFieldError,
 )
 from ..models import AssignmentCreate, AssignmentDTO, AssignmentEdit, row_to_assignment_dto
+from .normalize import dedup_fingerprint, normalize_task_name
 
 
 # ====== 解析批次 ======
@@ -92,10 +93,23 @@ def _log(conn, assignment_id: int, action: str, from_v: str | None, to_v: str | 
     )
 
 
-def insert_assignments(batch_id: int | None, items: list[AssignmentCreate]) -> list[int]:
-    """批量入库. 返回创建的 id 列表 (顺序与 items 一致)."""
+def insert_assignments(
+    batch_id: int | None, items: list[AssignmentCreate]
+) -> tuple[list[int], list[dict]]:
+    """批量入库, 自动跳过重复作业.
+
+    去重口径 (2026-09-28 用户确认): 同一科目 + 同一归属日 + 归一化后任务名相同
+    即视为重复, 静默跳过不新建。跨天同名不算重复 —— 小学生背课文常常要背好几遍,
+    跨天重复是常态。task_name 归一化能吸收全半角、大小写、空格、连字符、选做后缀的差异。
+
+    Returns:
+        (created_ids, skipped) —— created_ids 顺序与 items 中未被跳过的部分一致;
+        skipped 为被跳过的条目摘要 [{task_name, subject, due_date, reason}, ...],
+        供前端告知家长"跳过了 N 条重复"。
+    """
     now = datetime.now(timezone.utc).isoformat()
     created_ids: list[int] = []
+    skipped: list[dict] = []
     if not items:
         raise MissingFieldError("items 不能为空")
 
@@ -118,7 +132,50 @@ def insert_assignments(batch_id: int | None, items: list[AssignmentCreate]) -> l
         with get_conn() as conn:
             conn.execute("BEGIN")
             try:
+                # 查重用的指纹集合。分两部分:
+                #   seen  —— 本次批次内已处理的 (防同一次提交里自我重复)
+                #   库中已有的 —— 按 (subject, due_date) 分组批量捞, 避免逐条查询
+                seen: set[str] = set()
+
+                # 先把涉及的 (subject, due_date) 组合捞出来, 一次查完而不是 N 次 SELECT
+                combos: set[tuple[str, str]] = {
+                    (item.subject, item.due_date.isoformat()) for item in items
+                }
+                existing_by_combo: dict[tuple[str, str], set[str]] = {}
+                for subj, ddate in combos:
+                    rows = conn.execute(
+                        """
+                        SELECT task_name FROM assignments
+                        WHERE subject = ? AND due_date = ?
+                        """,
+                        (subj, ddate),
+                    ).fetchall()
+                    existing_by_combo[(subj, ddate)] = {
+                        normalize_task_name(r["task_name"]) for r in rows
+                    }
+
                 for item in items:
+                    due_iso = item.due_date.isoformat()
+                    norm = normalize_task_name(item.task_name)
+                    fp = dedup_fingerprint(item.subject, item.task_name, due_iso)
+
+                    if fp in seen:
+                        skipped.append({
+                            "task_name": item.task_name,
+                            "subject": item.subject,
+                            "due_date": due_iso,
+                            "reason": "本次提交内重复",
+                        })
+                        continue
+                    if norm in existing_by_combo[(item.subject, due_iso)]:
+                        skipped.append({
+                            "task_name": item.task_name,
+                            "subject": item.subject,
+                            "due_date": due_iso,
+                            "reason": "已存在相同作业",
+                        })
+                        continue
+
                     cur = conn.execute(
                         """
                         INSERT INTO assignments
@@ -130,7 +187,7 @@ def insert_assignments(batch_id: int | None, items: list[AssignmentCreate]) -> l
                         (
                             item.subject,
                             item.task_name,
-                            item.due_date.isoformat(),
+                            due_iso,
                             item.deadline_time.isoformat() if item.deadline_time else None,
                             1 if item.is_optional else 0,
                             item.est_minutes,
@@ -144,7 +201,10 @@ def insert_assignments(batch_id: int | None, items: list[AssignmentCreate]) -> l
                     )
                     new_id = cur.lastrowid
                     created_ids.append(new_id)
+                    seen.add(fp)
+                    existing_by_combo[(item.subject, due_iso)].add(norm)
                     _log(conn, new_id, "created", None, item.task_name)
+
                 if batch_id is not None:
                     conn.execute(
                         "UPDATE parsed_batches SET status = 'confirmed' WHERE id = ?", (batch_id,)
@@ -156,7 +216,7 @@ def insert_assignments(batch_id: int | None, items: list[AssignmentCreate]) -> l
     except Exception as e:
         raise DBWriteError(f"入库失败: {e}") from e
 
-    return created_ids
+    return created_ids, skipped
 
 
 # ====== 查询 ======

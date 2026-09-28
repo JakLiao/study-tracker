@@ -75,8 +75,17 @@ class BatchCreateRequest(BaseModel):
     items: list[AssignmentCreate] = Field(min_length=1)
 
 
+class SkippedAssignment(BaseModel):
+    """被去重跳过的作业摘要, 用于告知家长跳过了什么."""
+    task_name: str
+    subject: Subject
+    due_date: date
+    reason: str
+
+
 class BatchCreateResponse(BaseModel):
     created_ids: list[int]
+    skipped: list[SkippedAssignment] = Field(default_factory=list)
 
 
 # ====== Assignment DTO (看板 / 列表) ======

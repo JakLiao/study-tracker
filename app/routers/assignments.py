@@ -12,6 +12,7 @@ from ..models import (
     BatchCreateResponse,
     CompletionPatch,
     OptionalPatch,
+    SkippedAssignment,
     StatusPatch,
 )
 from ..services import assignment_service
@@ -22,8 +23,11 @@ router = APIRouter(prefix="/api", tags=["assignments"])
 @router.post("/assignments/batch", response_model=BatchCreateResponse)
 def batch_create(req: BatchCreateRequest) -> BatchCreateResponse:
     items = [AssignmentCreate.model_validate(i) for i in req.items]
-    ids = assignment_service.insert_assignments(req.batch_id, items)
-    return BatchCreateResponse(created_ids=ids)
+    ids, skipped = assignment_service.insert_assignments(req.batch_id, items)
+    return BatchCreateResponse(
+        created_ids=ids,
+        skipped=[SkippedAssignment.model_validate(s) for s in skipped],
+    )
 
 
 @router.get("/assignments")
