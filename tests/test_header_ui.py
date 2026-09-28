@@ -115,7 +115,10 @@ def test_list_tab_renamed_to_calendar(index_html):
 def test_tab_labels_all_chinese(index_html):
     """五个 Tab 都不该出现英文代号或版本号。"""
     labels = re.findall(r'<button[^>]*data-tab="[^"]+"[^>]*>(.*?)</button>', index_html)
-    assert labels == ["看板", "解析", "日历", "复盘", "设置"], labels
+    # 「解析」(entry) 于 2026-09-28 改名为「登记」: Tab 是给家长看的,
+    # "解析" 描述的是内部机制(AI 解析原文), 不是这一步要做的事 ——
+    # 家长做的事是"把今天的作业登记进来"。
+    assert labels == ["看板", "登记", "日历", "复盘", "设置"], labels
     for l in labels:
         assert not re.search(r"[A-Za-z]", l), l
 

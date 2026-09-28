@@ -51,14 +51,31 @@ function fmtDateTime(s) {
   return s.replace('T', ' ').slice(0, 16);
 }
 
-// 置信度 Pill (设计文档 §5.4 + §9 坑 3)
+// 置信度三档的元数据 (2026-09-28)
+// 先定义再用: confidenceDot() 内部要读它, 顺序颠倒虽然因函数体
+// 延迟求值而不会真的抛错, 但读起来容易误判为有坑。
+const CONFIDENCE_META = {
+  high:   { short: '高', icon: '●', tip: 'AI 高度确信' },
+  medium: { short: '中', icon: '◐', tip: 'AI 推断, 建议核对原文' },
+  low:    { short: '低', icon: '⚠', tip: 'AI 推断不完整, 建议点开原文核对' },
+};
+
+// 置信度标记 (设计文档 §5.4 + §9 坑 3)
+// 表格里的紧凑版: 只出图标, 文字移到 title 与 aria-label。
+// 原来用「⚠ 需核对」这样的多字标签, 在预览表窄列里必然折行
+// (「需核对」竖着排三行), 把整行撑高一大截 —— 图上 3 行预览
+// 高得离谱就是这个原因。图标 + 悬停提示信息量不减, 宽度省一大截。
+function confidenceDot(level) {
+  const conf = CONFIDENCE_META[level] || CONFIDENCE_META.medium;
+  return `<span class="conf-dot ${level}" title="${conf.tip}" aria-label="置信度${conf.short}">${conf.icon}</span>`;
+}
+
+// 带文字的置信度标签。给宽度充裕的地方用(看板行、原文弹窗)——
+// 那里的列不会被挤窄, 多几个字能省掉一次悬停。
 function confidencePill(level) {
-  const label = { high: '高', medium: '? 推断', low: '⚠ 需核对' }[level] || level;
-  return `<span class="confidence-pill ${level}" title="${
-    level === 'low' ? 'AI 推断不完整, 建议点开原文核对'
-    : level === 'medium' ? 'AI 推断, 建议核对原文'
-    : 'AI 高度确信'
-  }">${label}</span>`;
+  const conf = CONFIDENCE_META[level] || CONFIDENCE_META.medium;
+  const label = { high: '高', medium: '推断', low: '需核对' }[level] || level;
+  return `<span class="confidence-pill ${level}" title="${conf.tip}">${label}</span>`;
 }
 
 // Toast 兜底 (设计文档 §9 坑 2)
@@ -707,9 +724,9 @@ function renderPreviewTable(items, batchId) {
       <td><input data-field="deadline_time" type="datetime-local" class="js-datetimepicker" value="${it.deadline_time ? it.deadline_time.slice(0,16) : ''}" /></td>
       <td><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
       <td><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || 15}" /></td>
-      <td>${confidencePill(it.confidence)}</td>
-      <td><small>${escapeAttr(it.source_span || '')}</small></td>
-      <td><button class="ghost row-del">删</button></td>
+      <td class="col-conf">${confidenceDot(it.confidence)}</td>
+      <td class="col-src"><small title="${escapeAttr(it.source_span || '')}">${escapeAttr(it.source_span || '')}</small></td>
+      <td class="col-del"><button class="ghost row-del" aria-label="删除这一行">删</button></td>
     `;
     tr.querySelector('.row-del').addEventListener('click', () => tr.remove());
     tbody.appendChild(tr);
@@ -731,6 +748,17 @@ function collectRows(result) {
     const get = f => tr.querySelector(`[data-field="${f}"]`);
     const due = get('due_date').value;
     const dlRaw = get('deadline_time').value;
+    // 置信度与原文都从具名单元格取, 不用 querySelector('small') ——
+    // 那是"第一个 small", 以后任何一行多出个 small 就会读错字段。
+    // 置信度标记从 confidenceDot 换成了 conf-dot, 这里必须同步改,
+    // 否则 classList 永远匹配不到, 全部落到 medium,
+    // 低置信度行的"需核对"提醒会在入库时丢掉。
+    const confCell = tr.querySelector('.col-conf .conf-dot');
+    const conf = confCell
+      ? (confCell.classList.contains('high') ? 'high'
+        : confCell.classList.contains('medium') ? 'medium'
+        : confCell.classList.contains('low') ? 'low' : 'medium')
+      : 'medium';
     return {
       checked: get('checked').checked,
       subject: get('subject').value,
@@ -739,10 +767,8 @@ function collectRows(result) {
       deadline_time: dlRaw ? dlRaw + ':00' : null,
       is_optional: get('is_optional').checked,
       est_minutes: parseInt(get('est_minutes').value, 10),
-      source_span: tr.querySelector('small').textContent || '',
-      confidence: tr.querySelector('.confidence-pill').classList.contains('high') ? 'high'
-        : tr.querySelector('.confidence-pill').classList.contains('medium') ? 'medium'
-        : tr.querySelector('.confidence-pill').classList.contains('low') ? 'low' : 'medium',
+      source_span: (tr.querySelector('.col-src small') || {}).textContent || '',
+      confidence: conf,
     };
   }).filter(r => r.task_name && r.checked);
 }

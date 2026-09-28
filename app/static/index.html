@@ -14,7 +14,7 @@
     <h1>作业小助手</h1>
     <nav id="tabs" role="tablist">
       <button data-tab="board" class="active" role="tab" aria-selected="true">看板</button>
-      <button data-tab="entry" role="tab" aria-selected="false">解析</button>
+      <button data-tab="entry" role="tab" aria-selected="false">登记</button>
       <button data-tab="list" role="tab" aria-selected="false">日历</button>
       <button data-tab="weekly" role="tab" aria-selected="false">复盘</button>
       <button data-tab="settings" role="tab" aria-selected="false">设置</button>
@@ -29,7 +29,10 @@
       <div id="board-content"></div>
     </section>
 
-    <!-- ====== 解析 / 录入 ====== -->
+    <!-- ====== 登记 (原「解析」, 2026-09-28 改名) ======
+         Tab 名对家长应描述"要做什么"而非内部机制: 家长做的是
+         "把今天老师发的作业登记进来", "解析" 说的是 AI 那一侧。
+         页面内的动作文案(点「解析」按钮后提示"AI 解析中")保持不变。 -->
     <section id="view-entry" class="view" role="tabpanel">
       <h2>录入作业</h2>
       <p class="muted">粘贴老师通知原文 → AI 解析 → 逐条确认 → 入库</p>
