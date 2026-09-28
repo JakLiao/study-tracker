@@ -484,8 +484,34 @@ function openSourceModal(item) {
     ${item.est_minutes != null ? `<p>预估用时: ${item.est_minutes} 分钟</p>` : ''}
     ${item.actual_minutes != null ? `<p>实际用时: ${item.actual_minutes} 分钟</p>` : ''}
   `;
-  document.getElementById('modal-ok').onclick = () => m.classList.add('hidden');
+  // 原文弹窗是只读的, 取消与确定都只是关闭, 并排两个同功能按钮
+  // 会让家长以为"确定"另有含义。这里只留一个「返回」。
+  setModalActions({ mode: 'close' });
 }
+
+// 弹窗底部按钮按语义切换 (2026-09-28)。
+//   close  —— 只读弹窗: 隐藏取消, 「确定」改文案为「返回」
+//   confirm —— 输入弹窗: 保留「取消」+「确定」, 由调用方接确定按钮的 onclick
+// 不能简单地删掉取消按钮: 手动添加弹窗里"取消"(放弃)与"确定"(提交)
+// 是两种不同操作, 合并会丢掉"放弃这次编辑"的语义。
+function setModalActions({ mode, onOk = null }) {
+  const cancel = document.getElementById('modal-cancel');
+  const ok = document.getElementById('modal-ok');
+  if (mode === 'close') {
+    cancel.classList.add('hidden');
+    ok.textContent = '返回';
+    ok.classList.remove('primary');
+    ok.classList.add('ghost', 'modal-solo-btn');
+    ok.onclick = () => document.getElementById('modal').classList.add('hidden');
+  } else {
+    cancel.classList.remove('hidden');
+    ok.textContent = '确定';
+    ok.classList.add('primary');
+    ok.classList.remove('ghost', 'modal-solo-btn');
+    ok.onclick = onOk;
+  }
+}
+
 document.getElementById('modal-cancel').addEventListener('click', () => {
   document.getElementById('modal').classList.add('hidden');
 });
@@ -783,30 +809,36 @@ function openManualAddModal() {
   `;
   // modal-content 每次打开都是新 DOM, 所以在这里绑定而不是页面启动时
   initDatePickersIn(document.getElementById('modal-content'));
-  document.getElementById('modal-ok').onclick = async () => {
-    const dl = document.getElementById('m-dl').value;
-    const items = [{
-      subject: document.getElementById('m-subject').value,
-      task_name: document.getElementById('m-name').value.trim(),
-      due_date: document.getElementById('m-due').value,
-      // 修正: 原写法 (v || '') + ':00' || null 因 + 优先级高于 ||,
-      // 空值会得到字符串 ":00" (truthy), 右侧 null 永远不触发,
-      // 后端 pydantic 解析 ":00" 失败 -> 4003, 手动添加不填截止时间必失败。
-      deadline_time: dl ? dl + ':00' : null,
-      is_optional: document.getElementById('m-opt').checked,
-      est_minutes: parseInt(document.getElementById('m-est').value, 10),
-      source_span: '(手动添加)',
-      confidence: 'high',
-    }];
-    if (!items[0].task_name) { toast('任务名必填'); return; }
-    if (!items[0].due_date) { toast('归属日必填'); return; }
-    try {
-      await api('POST', '/assignments/batch', { batch_id: null, items });
-      m.classList.add('hidden');
-      toast(`已入库 ${items.length} 条`);
-      switchTab('board');
-    } catch (e) { toast('入库失败: ' + e.message); }
-  };
+  // 显式恢复成"取消 + 确定": 必须调 setModalActions, 不能只赋 onclick ——
+  // 家长若先点过"原文"(只读弹窗, 那里隐藏了取消并把确定改成"返回"),
+  // 这里不重置就会看到一个没有取消按钮、写着"返回"的提交弹窗。
+  setModalActions({
+    mode: 'confirm',
+    onOk: async () => {
+      const dl = document.getElementById('m-dl').value;
+      const items = [{
+        subject: document.getElementById('m-subject').value,
+        task_name: document.getElementById('m-name').value.trim(),
+        due_date: document.getElementById('m-due').value,
+        // 修正: 原写法 (v || '') + ':00' || null 因 + 优先级高于 ||,
+        // 空值会得到字符串 ":00" (truthy), 右侧 null 永远不触发,
+        // 后端 pydantic 解析 ":00" 失败 -> 4003, 手动添加不填截止时间必失败。
+        deadline_time: dl ? dl + ':00' : null,
+        is_optional: document.getElementById('m-opt').checked,
+        est_minutes: parseInt(document.getElementById('m-est').value, 10),
+        source_span: '(手动添加)',
+        confidence: 'high',
+      }];
+      if (!items[0].task_name) { toast('任务名必填'); return; }
+      if (!items[0].due_date) { toast('归属日必填'); return; }
+      try {
+        await api('POST', '/assignments/batch', { batch_id: null, items });
+        m.classList.add('hidden');
+        toast(`已入库 ${items.length} 条`);
+        switchTab('board');
+      } catch (e) { toast('入库失败: ' + e.message); }
+    },
+  });
 }
 
 // ====== 日期选择器 (flatpickr · 2026-09-28) ======

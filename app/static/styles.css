@@ -863,6 +863,11 @@ tr.is-optional .muted {
 .modal-body h3 { margin-top: 0; }
 .modal-body .row:last-child { margin-top: var(--space-4); }
 
+/* 只读弹窗只留「返回」一个按钮时, 仍靠右并保持自然宽度 ——
+   不加 min-width 会让单个按钮被 flex 拉成一整条, 看着像输入框。
+   这是与系统单按钮对话框一致的做法。 */
+.modal-body .row:last-child .modal-solo-btn { min-width: 96px; }
+
 /* ===== 18. 预览表 (解析页) ===== */
 .preview-table input, .preview-table select { width: auto; min-width: 80px; }
 .preview-table tr.confidence-low {
