@@ -53,7 +53,7 @@ def build_weekly_analytics(week: str, today: date) -> dict:
               AND status = 'done'
               AND actual_minutes IS NOT NULL
               AND is_optional = 0
-              AND task_type != 'observation'
+              AND (task_type IS NULL OR task_type != 'observation')
             """,
             (start.isoformat(), end.isoformat()),
         ).fetchall()

@@ -1,37 +1,43 @@
 /* =====================================================================
- * study-tracker 视觉对齐 v1 (2026-09-28 缪斯设计文档)
- * 配套: docs/02-页面设计.md
- * 设计基调: 「给家长看的家长会备忘录」 — 不卡通不渐变, 数字对齐, 置信度显眼
- * 仅浅色主题 (v1 不做深色模式, 所有颜色只在 :root 定义一次)
+ * study-tracker 视觉 v2 (2026-09-28 奶油糖果)
+ * 决策记录: docs/superpowers/specs/2026-09-28-homework-flow-design.md
+ * 设计基调: 明亮可爱 · 无灰底 · 无纯黑文字 · 仅浅色主题
+ * 科目标签用实底色 —— "复习/听写/默写"在语数英中高度重复,
+ * 纯文字标签无法区分, 实底色是最低认知成本的区分手段。
  * =====================================================================
  */
 
 /* ===== 1. 设计令牌 (颜色 / 间距 / 字号 / 圆角 / 阴影) ===== */
 :root {
-  /* 中性色 */
-  --bg: #F5F6F8;
+  /* 中性色 (暖奶油系, 文字用深棕替代纯黑以保持对比度) */
+  --bg: #FFF8F0;
   --surface: #FFFFFF;
-  --surface-2: #F0F2F5;
-  --border: #E2E5EA;
-  --text-1: #1F2937;
-  --text-2: #4B5563;
-  --text-3: #9CA3AF;
+  --surface-2: #FFF1E4;
+  --border: #FFE0CC;
+  --text-1: #4A3728;
+  --text-2: #8A6F5C;
+  --text-3: #BFA894;
 
-  /* 科目色 (低饱和 + 等明度) */
-  --c-语: #B4502E;
-  --c-语-soft: #FBEFE9;
-  --c-数: #3B6FA5;
-  --c-数-soft: #EBF1F7;
-  --c-英: #5B8A6B;
-  --c-英-soft: #EFF4F0;
+  /* 科目色 (实底色 + 白字) */
+  --c-语: #E07A4E;
+  --c-语-soft: #FBE7DC;
+  --c-数: #3E9CC4;
+  --c-数-soft: #E2EEF6;
+  --c-英: #5FA055;
+  --c-英-soft: #E8F0E2;
 
   /* 状态色 */
-  --status-todo: #6B7280;
+  --status-todo: #BFA894;
   --status-doing: #D97706;
-  --status-done: #059669;
-  --status-optional: #9CA3AF;
+  --status-done: #3FA34D;
+  --status-optional: #BFA894;
   --status-overdue: #DC2626;
   --status-overdue-soft: #FEF3F2;
+
+  /* 主操作色 */
+  --accent: #FF6B9D;
+  --warn-soft: #FFF0F4;
+  --warn-ink: #C2185B;
 
   /* 间距 (4 倍数) */
   --space-1: 4px;
@@ -266,12 +272,13 @@ tr:last-child td { border-bottom: none; }
   padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
   font-size: var(--fs-caption);
-  font-weight: 500;
-  border: 1px solid currentColor;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
 }
-.subject-tag.语文 { color: var(--c-语); background: var(--c-语-soft); border-color: transparent; }
-.subject-tag.数学 { color: var(--c-数); background: var(--c-数-soft); border-color: transparent; }
-.subject-tag.英语 { color: var(--c-英); background: var(--c-英-soft); border-color: transparent; }
+.subject-tag.语文 { background: var(--c-语); }
+.subject-tag.数学 { background: var(--c-数); }
+.subject-tag.英语 { background: var(--c-英); }
 
 /* ===== 10. 置信度视觉 (设计文档 §9 坑 3 — 必须显眼) ===== */
 .confidence-row {
@@ -319,9 +326,83 @@ tr:last-child td { border-bottom: none; }
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   font-size: var(--fs-caption);
-  background: var(--surface-2);
-  color: var(--text-2);
+  font-weight: 600;
+  background: var(--c-语-soft);
+  color: var(--c-语);
   margin-left: var(--space-1);
+}
+
+/* ===== 11.5 看板分区 (2026-09-28) ===== */
+.board-hint {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+.board-hint.all-clear {
+  background: #E8F6EC;
+  color: #2E7D32;
+}
+.sec-settled {
+  opacity: .92;
+}
+.sec-settled .card-title {
+  color: var(--text-2);
+}
+.optional-card > summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+/* 选做开关: 与状态按钮区分, 用虚线框表达"这是一个标记而非状态" */
+.status-btn.opt-toggle {
+  border-style: dashed;
+  color: var(--text-2);
+}
+.status-btn.opt-toggle.on {
+  background: var(--c-语-soft);
+  border-color: var(--c-语);
+  border-style: solid;
+  color: var(--c-语);
+  font-weight: 600;
+}
+
+/* 跳过态不能只靠颜色区分 (色盲不可识别), 加文字前缀 */
+.assignment-row.skipped .task-name {
+  color: var(--text-3);
+}
+.assignment-row.skipped .task-name::before {
+  content: "今天不做 · ";
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* ===== 11.6 录入页批次日期 (2026-09-28) ===== */
+.entry-batch {
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+.entry-batch label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+/* AI 未识别归属日: 留空 + 标红, 要求家长确认 */
+.need-date {
+  border-color: var(--status-overdue) !important;
+  background: var(--status-overdue-soft);
+}
+.need-date-hint {
+  display: block;
+  color: var(--status-overdue);
+  font-size: var(--fs-caption);
+  margin-top: 2px;
 }
 
 /* ===== 12. 任务行 (看板核心组件, 设计文档 §5.1) ===== */

@@ -28,8 +28,11 @@ async function api(method, path, body) {
 }
 
 function todayStr() {
+  // 必须用本地日期。toISOString() 取的是 UTC, 在 UTC+8 的 00:00-08:00
+  // 期间会退到前一天, 导致"今天"的作业被记到昨天, 早上打开看板一片空白。
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function el(html) {
@@ -116,8 +119,13 @@ async function loadHealth() {
 }
 
 // ====== 看板 ======
+// 全量重建 DOM 会把滚动位置弹回顶部, 家长点一下状态就得重新往下滚。
+// 重建前后记住 scrollTop 并还原。
+let _boardScroll = 0;
 async function loadBoard() {
   const root = document.getElementById('board-content');
+  const scroller = root.closest('.view.active') || document.scrollingElement;
+  _boardScroll = scroller ? scroller.scrollTop : 0;
   root.innerHTML = '<p class="muted">加载中…</p>';
   try {
     const b = await api('GET', '/board/today');
@@ -138,15 +146,16 @@ async function loadBoard() {
       root.querySelector('[data-action="goto-entry"]').addEventListener('click', () => switchTab('entry'));
       return;
     }
-    // 进度条 (设计文档 §5.5)
-    const total = b.progress.total;
-    const done = b.progress.done;
-    const pct = total ? Math.round(done / total * 100) : 0;
+    // 进度条 (2026-09-28 口径: 跳过算已收尾, 分母排除选做)
+    const p = b.progress;
+    const pct = p.pct != null ? p.pct : 0;
+    const skippedNote = p.skipped ? ` · 跳过 ${p.skipped}` : '';
+    const optNote = p.optional ? ` · 选做 ${p.optional}` : '';
     root.appendChild(el(`
       <div class="progress-bar">
         <div class="progress-text">
-          <span>已完成 <strong>${done}</strong> / 总 <strong>${total}</strong> · ${pct}%</span>
-          <span class="muted">估时 ${b.progress.est_total || 0} 分</span>
+          <span>已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
+          <span class="muted">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</span>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
       </div>
@@ -157,26 +166,45 @@ async function loadBoard() {
         `<span class="subject-tag ${d.subject}">${d.subject}</span>
          ${d.task_name} · 截止 ${fmtDateTime(d.deadline_time)}`
       ).join('<br/>');
-      root.appendChild(el(`<div class="deadline-warn"><strong>⚠ 本周非今日到期</strong>${items}</div>`));
+      root.appendChild(el(`<div class="deadline-warn"><strong>⚠ 未来 7 天到期</strong>${items}</div>`));
     }
-    // 按科目分组
-    for (const subj of ['语文', '数学', '英语']) {
-      const items = b.by_subject[subj] || [];
-      if (!items.length) continue;
-      const completed = items.filter(i => i.status === 'done').length;
-      const card = el(`<div class="card"><div class="card-title"><span class="subject-tag ${subj}">${subj}</span><span class="count">${completed}/${items.length}</span></div><div class="card-body"></div></div>`);
+
+    // 分区: 待完成 / 已收尾 / 选做(折叠)
+    // 口径说明: done 与 skipped 都算"已收尾", 但只有 done 算"完成"
+    const all = [];
+    for (const subj of ['语文', '数学', '英语']) all.push(...(b.by_subject[subj] || []));
+    const isSettled = i => i.status === 'done' || i.status === 'skipped';
+    const pending = all.filter(i => !isSettled(i));
+    const settled = all.filter(i => isSettled(i));
+
+    if (pending.length) {
+      root.appendChild(el(`<div class="board-hint">今日还有 <strong>${pending.length}</strong> 项要做</div>`));
+    } else if (all.length) {
+      root.appendChild(el('<div class="board-hint all-clear">今日必做已全部收尾 ✓</div>'));
+    }
+
+    const section = (title, items, cls) => {
+      if (!items.length) return;
+      const doneN = items.filter(i => i.status === 'done').length;
+      const card = el(`<div class="card ${cls || ''}"><div class="card-title">${title}<span class="count">${doneN}/${items.length}</span></div><div class="card-body"></div></div>`);
       items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
       root.appendChild(card);
-    }
-    // 选做分组
+    };
+    section('待完成', pending, 'sec-pending');
+    section('已收尾', settled, 'sec-settled');
+
+    // 选做分组 (默认收起 —— 低优先级内容不该稀释主任务视觉权重)
     if (b.optional_items && b.optional_items.length) {
-      const card = el(`<details class="card" open><summary class="card-title">选做 (${b.optional_items.length})</summary><div class="card-body"></div></details>`);
-      b.optional_items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
+      const opt = b.optional_items;
+      const optDone = opt.filter(i => i.status === 'done').length;
+      const card = el(`<details class="card optional-card"><summary class="card-title">选做 (${opt.length})<span class="count">${optDone}/${opt.length}</span></summary><div class="card-body"></div></details>`);
+      opt.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
       root.appendChild(card);
     }
   } catch (e) {
     root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
   }
+  if (scroller) scroller.scrollTop = _boardScroll;
 }
 
 // 渲染任务行 (设计文档 §5.1 + §9 4 个坑)
@@ -187,8 +215,9 @@ function renderAssignment(item, withStatus) {
   const row = el(`
     <div class="assignment-row ${item.status} ${confClass} ${isPendingActual ? 'pending-actual' : ''}" data-id="${item.id}">
       <div class="row-main">
+        <span class="subject-tag ${item.subject}">${item.subject}</span>
         <div style="flex:1;">
-          <div class="task-name">${escapeAttr(item.task_name)}${item.is_optional ? '<span class="optional-tag">选</span>' : ''}</div>
+          <div class="task-name">${escapeAttr(item.task_name)}${item.is_optional ? '<span class="optional-tag">选做</span>' : ''}</div>
         </div>
         ${item.est_minutes != null ? `<div class="est-min">${item.est_minutes}</div>` : '<div class="est-min muted">—</div>'}
       </div>
@@ -207,21 +236,71 @@ function renderAssignment(item, withStatus) {
 
   const actions = row.querySelector('.row-actions');
 
-  // 状态按钮组
-  ['todo', 'doing', 'done', 'skipped'].forEach(s => {
-    const b = el(`<button class="status-btn ${s} ${item.status === s ? 'active' : ''}" data-status="${s}" aria-label="状态 ${statusLabel(s)}${item.status === s ? ' (当前)' : ''}">${statusLabel(s)}</button>`);
+  // 三个动作: 开始(推进) / 完成(收尾) / 选做(可来回切换)
+  // 不再平铺 todo/doing/done/skipped 四个互斥按钮 —— 那会让一行塞进 4+ 个控件,
+  // 且"跳过"与"选做"语义重叠, 家长分不清该点哪个。
+  const patchStatus = async (s, btn) => {
+    btn.disabled = true;                       // 请求锁: 防快速连点产生并发 PATCH
+    try {
+      await api('PATCH', `/assignments/${item.id}/status`, { status: s });
+      if (s === 'done' && item.actual_minutes == null) {
+        toast('已标记完成, 请补填实际耗时 (不填不影响, 但周复盘不计)');
+      } else if (s === 'skipped') {
+        toast('已跳过, 不计入完成数');
+      }
+      await loadBoard();
+    } catch (e) {
+      btn.disabled = false;
+      toast('状态更新失败: ' + e.message);      // 用 toast 而非 alert, 不打断流程
+    }
+  };
+
+  // 开始: todo -> doing
+  if (item.status === 'todo') {
+    const b = el(`<button class="status-btn doing" aria-label="标记为进行中">开始</button>`);
+    b.addEventListener('click', () => patchStatus('doing', b));
+    actions.appendChild(b);
+  }
+  // 完成: todo/doing -> done
+  if (item.status === 'todo' || item.status === 'doing') {
+    const b = el(`<button class="status-btn done" aria-label="标记为已完成">完成</button>`);
+    b.addEventListener('click', () => patchStatus('done', b));
+    actions.appendChild(b);
+  }
+  // 跳过: 未收尾的项才需要; 已跳过的项给"撤销"
+  if (item.status === 'todo' || item.status === 'doing') {
+    const b = el(`<button class="status-btn skipped" aria-label="今天不做这条">今天不做</button>`);
+    b.addEventListener('click', () => patchStatus('skipped', b));
+    actions.appendChild(b);
+  } else if (item.status === 'skipped') {
+    const b = el(`<button class="status-btn todo" aria-label="撤销跳过">撤销跳过</button>`);
+    b.addEventListener('click', () => patchStatus('todo', b));
+    actions.appendChild(b);
+  }
+  // 选做: is_optional 双向开关 (后端 PATCH 接口此前从未被前端调用过)
+  if (item.is_optional) {
+    const b = el(`<button class="status-btn opt-toggle on" aria-label="取消选做标记">取消选做</button>`);
     b.addEventListener('click', async () => {
+      b.disabled = true;
       try {
-        await api('PATCH', `/assignments/${item.id}/status`, { status: s });
-        // 设计文档 §9 坑 2: 点 done 后未填实耗 -> 不抛错, 进入 pending_actual 中间态
-        if (s === 'done' && item.actual_minutes == null) {
-          toast('已标记完成, 请补填实际耗时 (不填不影响, 但周复盘不计)');
-        }
-        loadBoard();
-      } catch (e) { alert('状态更新失败: ' + e.message); }
+        await api('PATCH', `/assignments/${item.id}/optional`, { is_optional: false });
+        toast('已取消选做, 计入今日必做');
+        await loadBoard();
+      } catch (e) { b.disabled = false; toast('操作失败: ' + e.message); }
     });
     actions.appendChild(b);
-  });
+  } else {
+    const b = el(`<button class="status-btn opt-toggle" aria-label="标记为选做">选做</button>`);
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await api('PATCH', `/assignments/${item.id}/optional`, { is_optional: true });
+        toast('已标记选做, 不计入今日必做');
+        await loadBoard();
+      } catch (e) { b.disabled = false; toast('操作失败: ' + e.message); }
+    });
+    actions.appendChild(b);
+  }
 
   // pending_actual 实耗时输入 (设计文档 §9 坑 2 — 高亮 + 自动 focus)
   if (isPendingActual) {
@@ -240,11 +319,13 @@ function renderAssignment(item, withStatus) {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: v });
         toast('已记录');
         loadBoard();
-      } catch (e) { alert('保存失败: ' + e.message); }
+      } catch (e) { toast('保存失败: ' + e.message); }
     });
     skipBtn.addEventListener('click', () => {
       input.classList.remove('error');
-      toast('已跳过, 周复盘不会计入');
+      input.value = '';
+      input.placeholder = '不填则不计入周复盘';
+      toast('本次不记录实耗, 之后仍可补填');
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
     inputWrap.append(input, saveBtn, skipBtn);
@@ -262,21 +343,24 @@ function renderAssignment(item, withStatus) {
       try {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: n });
         loadBoard();
-      } catch (e) { alert('保存失败: ' + e.message); }
+      } catch (e) { toast('保存失败: ' + e.message); }
     });
     actions.appendChild(editBtn);
   }
 
-  // 删除
-  const delBtn = el('<button class="danger">删除</button>');
-  delBtn.addEventListener('click', async () => {
-    if (!confirm(`确定删除 "${item.task_name}"?`)) return;
-    try {
-      await api('DELETE', `/assignments/${item.id}`);
-      loadBoard();
-    } catch (e) { alert('删除失败: ' + e.message); }
-  });
-  actions.appendChild(delBtn);
+  // 删除 —— 已完成的作业后端强制禁止删除 (4010), 所以这里直接不渲染,
+  // 否则就是给用户一个"点了必然报错"的按钮。
+  if (item.status !== 'done') {
+    const delBtn = el('<button class="danger">删除</button>');
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`确定删除 "${item.task_name}"?`)) return;
+      try {
+        await api('DELETE', `/assignments/${item.id}`);
+        loadBoard();
+      } catch (e) { toast('删除失败: ' + e.message); }
+    });
+    actions.appendChild(delBtn);
+  }
 
   // 原文 popover
   const srcLink = row.querySelector('[data-action="show-source"]');
@@ -474,12 +558,16 @@ function renderPreviewTable(items, batchId) {
     </div>
   `;
   const tbody = result.querySelector('tbody');
+  const batchDate = document.getElementById('entry-date').value;
   items.forEach((it, idx) => {
     const tr = document.createElement('tr');
     tr.classList.add(`confidence-${it.confidence}`); // 视觉差异化
     tr.dataset.idx = idx;
+    // AI 没识别出日期时留空并标红, 由家长确认 —— 不能静默填今天。
+    // 静默填充会让家长以为"AI 说今天", 实际是系统替他猜的。
+    const noAiDate = !it.due_date;
     // 设计 §9 坑 3: 低置信度默认不勾选, 强制家长过目
-    const checkedDefault = it.confidence !== 'low';
+    const checkedDefault = it.confidence !== 'low' && !noAiDate;
     tr.innerHTML = `
       <td><input data-field="checked" type="checkbox" ${checkedDefault ? 'checked' : ''} /></td>
       <td>
@@ -490,7 +578,11 @@ function renderPreviewTable(items, batchId) {
         </select>
       </td>
       <td><input data-field="task_name" value="${escapeAttr(it.task_name)}" /></td>
-      <td><input data-field="due_date" type="date" value="${it.due_date || todayStr()}" /></td>
+      <td>
+        <input data-field="due_date" type="date" class="${noAiDate ? 'need-date' : ''}"
+               value="${it.due_date || ''}" placeholder="${batchDate || todayStr()}" />
+        ${noAiDate ? '<small class="need-date-hint">AI 未识别归属日, 请确认</small>' : ''}
+      </td>
       <td><input data-field="deadline_time" type="datetime-local" value="${it.deadline_time ? it.deadline_time.slice(0,16) : ''}" /></td>
       <td><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
       <td><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || 15}" /></td>
@@ -533,11 +625,17 @@ function collectRows(result) {
 
 async function confirmBatch(batchId, result) {
   const items = collectRows(result);
-  if (!items.length) { alert('至少勾选一行'); return; }
+  if (!items.length) { toast('至少勾选一行'); return; }
   for (const it of items) {
-    if (!it.due_date) { alert('每条 due_date 必填'); return; }
+    if (!it.due_date) {
+      // AI 未识别日期的行现在留空, 这条校验从死代码变成真正的守卫
+      toast('有作业未确认归属日, 请先填写');
+      const firstEmpty = result.querySelector('[data-field="due_date"].need-date, [data-field="due_date"]:not([value])');
+      if (firstEmpty) firstEmpty.focus();
+      return;
+    }
     if (!it.est_minutes || it.est_minutes < 1 || it.est_minutes > 180) {
-      alert('预估分钟必须在 1~180'); return;
+      toast('预估分钟必须在 1~180'); return;
     }
   }
   try {
@@ -546,8 +644,10 @@ async function confirmBatch(batchId, result) {
     result.innerHTML = '';
     rawTextarea.value = '';
     document.getElementById('char-count-num').textContent = '0';
+    const cc = document.getElementById('char-count');
+    if (cc) cc.classList.remove('warn');
     switchTab('board');
-  } catch (e) { alert('入库失败: ' + e.message); }
+  } catch (e) { toast('入库失败: ' + e.message); }
 }
 
 // 手动添加 modal
@@ -572,11 +672,15 @@ function openManualAddModal() {
     </div>
   `;
   document.getElementById('modal-ok').onclick = async () => {
+    const dl = document.getElementById('m-dl').value;
     const items = [{
       subject: document.getElementById('m-subject').value,
       task_name: document.getElementById('m-name').value.trim(),
       due_date: document.getElementById('m-due').value,
-      deadline_time: (document.getElementById('m-dl').value || '') + ':00' || null,
+      // 修正: 原写法 (v || '') + ':00' || null 因 + 优先级高于 ||,
+      // 空值会得到字符串 ":00" (truthy), 右侧 null 永远不触发,
+      // 后端 pydantic 解析 ":00" 失败 -> 4003, 手动添加不填截止时间必失败。
+      deadline_time: dl ? dl + ':00' : null,
       is_optional: document.getElementById('m-opt').checked,
       est_minutes: parseInt(document.getElementById('m-est').value, 10),
       source_span: '(手动添加)',
@@ -589,12 +693,14 @@ function openManualAddModal() {
       m.classList.add('hidden');
       toast(`已入库 ${items.length} 条`);
       switchTab('board');
-    } catch (e) { alert('入库失败: ' + e.message); }
+    } catch (e) { toast('入库失败: ' + e.message); }
   };
 }
 
 // ====== 列表 ======
 document.getElementById('list-date').value = todayStr();
+// 录入页的批次级默认归属日
+document.getElementById('entry-date').value = todayStr();
 document.getElementById('btn-load-list').addEventListener('click', () => loadList());
 document.getElementById('btn-load-today').addEventListener('click', () => {
   document.getElementById('list-date').value = todayStr();
@@ -602,7 +708,10 @@ document.getElementById('btn-load-today').addEventListener('click', () => {
 });
 document.getElementById('btn-load-yesterday').addEventListener('click', () => {
   const d = new Date(); d.setDate(d.getDate() - 1);
-  document.getElementById('list-date').value = d.toISOString().slice(0, 10);
+  // 同样不能用 toISOString (UTC), 凌晨会退到前两天
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('list-date').value =
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   loadList();
 });
 

@@ -30,6 +30,12 @@
     <section id="view-entry" class="view" role="tabpanel">
       <h2>录入作业</h2>
       <p class="muted">粘贴老师通知原文 → AI 解析 → 逐条确认 → 入库</p>
+      <div class="row entry-batch">
+        <label>本次作业归属日
+          <input id="entry-date" type="date" />
+        </label>
+        <span class="muted">AI 识别出日期的行会自动填写, 识别不出的需你确认</span>
+      </div>
       <textarea id="raw-text" rows="10" placeholder="例如:&#10;&#10;【9.21英语】&#10;1. 一起作业; 2. 描写本 P11-12; 3. 背课文 P18-19。"></textarea>
       <div class="char-count"><span id="char-count-num">0</span> / 10000</div>
       <div class="row">

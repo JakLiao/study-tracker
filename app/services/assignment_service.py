@@ -211,10 +211,20 @@ def update_status(assignment_id: int, new_status: str) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("BEGIN")
         try:
-            conn.execute(
-                "UPDATE assignments SET status = ?, updated_at = ? WHERE id = ?",
-                (new_status, now, assignment_id),
-            )
+            # 从 done 退回未完成状态时, 必须清掉 actual_minutes。
+            # 否则会出现"待办作业却显示耗时 30 分"的矛盾展示,
+            # 且这 30 分会混进周复盘统计, 污染估时偏差分析。
+            if old_status == "done" and new_status != "done":
+                conn.execute(
+                    "UPDATE assignments SET status = ?, actual_minutes = NULL, updated_at = ? WHERE id = ?",
+                    (new_status, now, assignment_id),
+                )
+                _log(conn, assignment_id, "edited", "actual_minutes", "null")
+            else:
+                conn.execute(
+                    "UPDATE assignments SET status = ?, updated_at = ? WHERE id = ?",
+                    (new_status, now, assignment_id),
+                )
             _log(conn, assignment_id, "status_changed", old_status, new_status)
             conn.execute("COMMIT")
         except Exception:
@@ -345,18 +355,38 @@ def build_today_board(today: date) -> dict:
     by_subject: dict[str, list[AssignmentDTO]] = {s: [] for s in config.SUBJECTS}
     optional_items: list[AssignmentDTO] = []
     done = 0
+    skipped = 0
+    est_total = 0
     for r in rows:
+        est_total += r.est_minutes or 0
         if r.is_optional:
             optional_items.append(r)
         else:
             by_subject[r.subject].append(r)
         if r.status == "done":
             done += 1
+        elif r.status == "skipped":
+            skipped += 1
+    # 进度口径 (2026-09-28 用户确认): 跳过算"已收尾"但不当"完成",
+    # 分母排除选做 —— 家长点过"选做"就不再是今天必须完成的事,
+    # 不该让它把进度条永久压住走不满。
+    required = len(rows) - len(optional_items)
+    settled = done + skipped
+    pct = 100 if required <= 0 else round(settled * 100 / required)
     upcoming = list_upcoming_deadlines(today, days=7)
     return {
         "date": today,
         "is_late_night": is_late_night,
-        "progress": {"done": done, "total": len(rows)},
+        "progress": {
+            "done": done,
+            "skipped": skipped,
+            "settled": settled,
+            "total": len(rows),
+            "optional": len(optional_items),
+            "required": required,
+            "pct": pct,
+            "est_total": est_total,
+        },
         "by_subject": by_subject,
         "optional_items": optional_items,
         "upcoming_deadlines": upcoming,
