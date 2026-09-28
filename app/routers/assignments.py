@@ -37,6 +37,15 @@ def list_assignments(date: str = Query(...)) -> dict:
     return {"date": d.isoformat(), "items": [i.model_dump(mode="json") for i in items]}
 
 
+@router.get("/assignments/calendar")
+def calendar(
+    year: int = Query(..., ge=1970, le=2100),
+    month: int = Query(..., ge=1, le=12),
+) -> dict:
+    """按月返回每日作业汇总, 供日历视图渲染."""
+    return assignment_service.calendar_summary(year, month)
+
+
 @router.patch("/assignments/{assignment_id}/status")
 def patch_status(assignment_id: int, body: StatusPatch) -> dict:
     return assignment_service.update_status(assignment_id, body.status)

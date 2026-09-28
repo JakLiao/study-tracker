@@ -41,11 +41,6 @@ function el(html) {
   return t.content.firstElementChild;
 }
 
-function fmtMin(v) {
-  if (v == null || v === '') return '—';
-  return v + '分';
-}
-
 function fmtDate(s) {
   if (!s) return '—';
   return s.slice(0, 10);
@@ -92,7 +87,12 @@ function switchTab(name) {
     _boardScroll = 0;
     loadBoard();
   }
-  if (name === 'list') loadList();
+  // 日历与详情一起加载。保留 _calYear/_calMonth, 切走再切回时
+  // 家长仍停在上次翻到的那个月, 而不是被强行弹回本月。
+  if (name === 'list') {
+    loadCalendar();
+    if (_calSelected) loadList(_calSelected);
+  }
   if (name === 'weekly') loadWeekly('current');
   if (name === 'settings') loadSettings();
 }
@@ -261,7 +261,9 @@ async function loadBoard() {
 }
 
 // 渲染任务行 (设计文档 §5.1 + §9 4 个坑)
-function renderAssignment(item, withStatus) {
+// onChange: 状态变更后的回调。看板传 loadBoard, 历史日历传刷新日历+详情,
+// 不传则按钮不重绘 —— 历史页若复用 loadBoard 会把用户弹出日历页。
+function renderAssignment(item, withStatus, onChange) {
   // pending_actual: done 但未填实耗时 (设计文档 §9 坑 2)
   const isPendingActual = item.status === 'done' && item.actual_minutes == null;
   const confClass = `confidence-${item.confidence}`; // 给整行加边条 / 底色
@@ -292,6 +294,8 @@ function renderAssignment(item, withStatus) {
   if (!withStatus) return row;
 
   const actions = row.querySelector('.row-actions');
+  // 看板与历史页的刷新方式不同, 统一走回调, 避免历史页误触发 loadBoard
+  const refresh = onChange || (() => loadBoard());
 
   // 两个终结动作: 完成 / 今天不做
   // 2026-09-28 用户反馈: "开始"按钮是多余的 —— 家长不会特意去点"开始",
@@ -306,7 +310,7 @@ function renderAssignment(item, withStatus) {
       } else if (s === 'skipped') {
         toast('已跳过, 不计入完成数');
       }
-      await loadBoard();
+      await refresh();
     } catch (e) {
       btn.disabled = false;
       toast('状态更新失败: ' + e.message);      // 用 toast 而非 alert, 不打断流程
@@ -337,7 +341,7 @@ function renderAssignment(item, withStatus) {
       try {
         await api('PATCH', `/assignments/${item.id}/optional`, { is_optional: false });
         toast('已取消选做, 计入今日必做');
-        await loadBoard();
+        await refresh();
       } catch (e) { b.disabled = false; toast('操作失败: ' + e.message); }
     });
     actions.appendChild(b);
@@ -348,7 +352,7 @@ function renderAssignment(item, withStatus) {
       try {
         await api('PATCH', `/assignments/${item.id}/optional`, { is_optional: true });
         toast('已标记选做, 不计入今日必做');
-        await loadBoard();
+        await refresh();
       } catch (e) { b.disabled = false; toast('操作失败: ' + e.message); }
     });
     actions.appendChild(b);
@@ -370,7 +374,7 @@ function renderAssignment(item, withStatus) {
       try {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: v });
         toast('已记录');
-        loadBoard();
+        refresh();
       } catch (e) { toast('保存失败: ' + e.message); }
     });
     skipBtn.addEventListener('click', () => {
@@ -394,7 +398,7 @@ function renderAssignment(item, withStatus) {
       if (isNaN(n) || n < 0 || n > 240) { toast('0~240'); return; }
       try {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: n });
-        loadBoard();
+        refresh();
       } catch (e) { toast('保存失败: ' + e.message); }
     });
     actions.appendChild(editBtn);
@@ -408,7 +412,7 @@ function renderAssignment(item, withStatus) {
       if (!confirm(`确定删除 "${item.task_name}"?`)) return;
       try {
         await api('DELETE', `/assignments/${item.id}`);
-        loadBoard();
+        refresh();
       } catch (e) { toast('删除失败: ' + e.message); }
     });
     actions.appendChild(delBtn);
@@ -423,10 +427,6 @@ function renderAssignment(item, withStatus) {
   }
 
   return row;
-}
-
-function statusLabel(s) {
-  return { todo: '待办', doing: '进行', done: '完成', skipped: '跳过' }[s] || s;
 }
 
 // 原文 modal (设计文档 §9 坑 3: 低置信度行可点开原文核对)
@@ -757,58 +757,192 @@ function openManualAddModal() {
   };
 }
 
-// ====== 列表 ======
-document.getElementById('list-date').value = todayStr();
+// ====== 日历 / 列表 ======
+// 当前展示的月份 (null = 本月) 与选中的日期。
+// 记下来是为了切 Tab 回来时保留用户翻到的那个月, 而不是每次都弹回本月。
+let _calYear = null;
+let _calMonth = null;
+let _calSelected = null;
+let _calData = null;
+
 // 录入页的批次级默认归属日
 document.getElementById('entry-date').value = todayStr();
-document.getElementById('btn-load-list').addEventListener('click', () => loadList());
-document.getElementById('btn-load-today').addEventListener('click', () => {
-  document.getElementById('list-date').value = todayStr();
-  loadList();
-});
-document.getElementById('btn-load-yesterday').addEventListener('click', () => {
-  const d = new Date(); d.setDate(d.getDate() - 1);
-  // 同样不能用 toISOString (UTC), 凌晨会退到前两天
-  const p = n => String(n).padStart(2, '0');
-  document.getElementById('list-date').value =
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  loadList();
-});
 
-async function loadList() {
-  const d = document.getElementById('list-date').value;
-  if (!d) return;
-  const root = document.getElementById('list-content');
-  root.innerHTML = '<p class="muted">加载中…</p>';
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function dateStr(y, m, d) {
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+}
+
+// 本地时区的"今天"。同样不能用 toISOString(), 见 todayStr() 注释。
+function todayParts() {
+  const d = new Date();
+  return { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() };
+}
+
+function shiftMonth(y, m, delta) {
+  const total = y * 12 + (m - 1) + delta;
+  return { y: Math.floor(total / 12), m: (total % 12) + 1 };
+}
+
+// 日期格子的完成状态。与看板口径一致: 只看必做, 跳过算已收尾。
+function dayState(day) {
+  if (!day || !day.total) return 'none';
+  if (day.required === 0) return 'optional-only';   // 当天只有选做
+  if (day.required_done === day.required) return 'all-done';
+  if (day.settled > 0) return 'partial';
+  return 'has';
+}
+
+async function loadCalendar() {
+  const grid = document.getElementById('cal-grid');
+  const title = document.getElementById('cal-title');
+  const t = todayParts();
+  if (_calYear == null) {
+    _calYear = t.y;
+    _calMonth = t.m;
+    _calSelected = _calSelected || dateStr(t.y, t.m, t.d);
+  }
+  grid.innerHTML = '<p class="muted">加载中…</p>';
   try {
-    const r = await api('GET', `/assignments?date=${d}`);
-    if (!r.items.length) {
-      root.innerHTML = `
-        <div class="empty">
-          <div class="empty-icon">📋</div>
-          <p>${d} 没有作业</p>
-        </div>`;
-      return;
-    }
-    const table = el('<table><tr><th>科目</th><th>任务</th><th>预估</th><th>实耗</th><th>状态</th><th>置信</th><th>原文</th></tr></table>');
-    r.items.forEach(it => {
-      const tr = el(`<tr class="confidence-${it.confidence} ${it.is_optional ? 'is-optional' : ''}">
-        <td><span class="subject-tag ${it.subject}">${it.subject}</span></td>
-        <td>${escapeAttr(it.task_name)}${it.is_optional ? '<span class="optional-tag">选做</span>' : ''}</td>
-        <td>${fmtMin(it.est_minutes)}</td>
-        <td>${fmtMin(it.actual_minutes)}</td>
-        <td>${statusLabel(it.status)}</td>
-        <td>${confidencePill(it.confidence)}</td>
-        <td><small>${escapeAttr(it.source_span || '')}</small></td>
-      </tr>`);
-      table.appendChild(tr);
-    });
-    root.innerHTML = '';
-    root.appendChild(table);
+    const r = await api('GET', `/assignments/calendar?year=${_calYear}&month=${_calMonth}`);
+    _calData = r;
+    title.textContent = `${r.year} 年 ${r.month} 月`;
+    renderCalendar();
   } catch (e) {
-    root.innerHTML = `<div class="error-banner">加载失败: ${e.message}</div>`;
+    grid.innerHTML = `<div class="error-banner">日历加载失败: ${e.message}</div>`;
   }
 }
+
+function renderCalendar() {
+  const grid = document.getElementById('cal-grid');
+  const r = _calData;
+  grid.innerHTML = '';
+  // 周一起始: 后端 first_weekday 是 Monday=0, 与 cal-weekdays 表头顺序一致。
+  for (let i = 0; i < r.first_weekday; i++) {
+    grid.appendChild(el('<div class="cal-cell blank"></div>'));
+  }
+  for (let d = 1; d <= r.days_in_month; d++) {
+    const ds = dateStr(r.year, r.month, d);
+    const day = r.days[ds];
+    const weekday = (r.first_weekday + d - 1) % 7;
+    const cell = el(`
+      <button class="cal-cell ${dayState(day)} ${ds === _calSelected ? 'selected' : ''} ${weekday >= 5 ? 'we' : ''}"
+              data-date="${ds}" aria-label="${ds}">
+        <span class="cal-day">${d}</span>
+        ${day && day.total ? `<span class="cal-badge">${day.required ? `${day.required_done}/${day.required}` : '选'}</span>` : ''}
+      </button>
+    `);
+    cell.addEventListener('click', () => selectDate(ds));
+    grid.appendChild(cell);
+  }
+}
+
+async function selectDate(ds) {
+  _calSelected = ds;
+  renderCalendar();
+  await loadList(ds);
+}
+
+function loadList(dateArg) {
+  const d = dateArg || _calSelected;
+  if (!d) return Promise.resolve();
+  const root = document.getElementById('list-content');
+  const title = document.getElementById('list-detail-title');
+  const weekdayLabel = '日一二三四五六'[new Date(d + 'T00:00:00').getDay()];
+  title.textContent = `${d} 周${weekdayLabel}${d === todayStr() ? ' (今天)' : ''}`;
+  root.innerHTML = '<p class="muted">加载中…</p>';
+  return api('GET', `/assignments?date=${d}`)
+    .then(r => renderDayDetail(root, d, r.items))
+    .catch(e => { root.innerHTML = `<div class="error-banner">加载失败: ${e.message}</div>`; });
+}
+
+function renderDayDetail(root, d, items) {
+  root.innerHTML = '';
+  if (!items.length) {
+    root.appendChild(el(`
+      <div class="empty">
+        <div class="empty-icon">📋</div>
+        <p>${d} 没有作业</p>
+      </div>
+    `));
+    return;
+  }
+  // 分区与看板一致: 待完成 / 已收尾 / 选做折叠。
+  // 历史日期也允许改状态 —— 家长常在第二天补记, 不该被限制。
+  const isSettled = i => i.status === 'done' || i.status === 'skipped';
+  const required = items.filter(i => !i.is_optional);
+  const optional = items.filter(i => i.is_optional);
+  const pending = required.filter(i => !isSettled(i));
+  const settled = required.filter(isSettled);
+
+  root.appendChild(el(`<div class="card">
+    <div class="progress-text">
+      <span>必做已收尾 <strong>${settled.length}</strong> / ${required.length}</span>
+      <span class="muted">完成 ${required.filter(i => i.status === 'done').length} · 选做 ${optional.length}</span>
+    </div>
+  </div>`));
+
+  const section = (title, list) => {
+    if (!list.length) return;
+    const doneN = list.filter(i => i.status === 'done').length;
+    const c = el(`<div class="card"><div class="card-title">${title}<span class="count">${doneN}/${list.length}</span></div><div class="card-body"></div></div>`);
+    list.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail)));
+    root.appendChild(c);
+  };
+  section('待完成', pending);
+  section('已收尾', settled);
+
+  if (optional.length) {
+    const optDone = optional.filter(i => i.status === 'done').length;
+    const c = el(`<details class="card optional-card"><summary class="card-title">选做 (${optional.length})<span class="count">${optDone}/${optional.length}</span></summary><div class="card-body"></div></details>`);
+    optional.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail)));
+    root.appendChild(c);
+  }
+}
+
+// 历史日期改状态后要同时刷新日历格子, 但不整页重载,
+// 否则家长点一下"完成"就被弹回列表顶部。
+function refreshCalendarDetail() {
+  if (_calData) {
+    api('GET', `/assignments/calendar?year=${_calYear}&month=${_calMonth}`)
+      .then(r => { _calData = r; renderCalendar(); })
+      .catch(() => {});
+  }
+  loadList(_calSelected);
+}
+
+function gotoDate(y, m, day) {
+  _calYear = y;
+  _calMonth = m;
+  _calSelected = dateStr(y, m, day);
+  loadCalendar();
+  loadList(_calSelected);
+}
+
+document.getElementById('cal-prev').addEventListener('click', () => {
+  const n = shiftMonth(_calYear, _calMonth, -1);
+  _calYear = n.y; _calMonth = n.m;
+  loadCalendar();
+});
+document.getElementById('cal-next').addEventListener('click', () => {
+  const n = shiftMonth(_calYear, _calMonth, 1);
+  _calYear = n.y; _calMonth = n.m;
+  loadCalendar();
+});
+document.getElementById('cal-today').addEventListener('click', () => {
+  const t = todayParts();
+  gotoDate(t.y, t.m, t.d);
+});
+document.getElementById('btn-load-today').addEventListener('click', () => {
+  const t = todayParts();
+  gotoDate(t.y, t.m, t.d);
+});
+document.getElementById('btn-load-yesterday').addEventListener('click', () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  gotoDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+});
 
 // ====== 复盘 ======
 document.querySelectorAll('.week-btn').forEach(b => {

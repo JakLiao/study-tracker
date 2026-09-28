@@ -238,6 +238,69 @@ def list_by_date(d: date) -> list[AssignmentDTO]:
     return [row_to_assignment_dto(r) for r in rows]
 
 
+def calendar_summary(year: int, month: int) -> dict[str, Any]:
+    """按月汇总每日作业数, 供日历视图渲染 (2026-09-28).
+
+    一次查询返回整月, 避免前端按天发 30 次请求。
+    口径与看板 (board) 保持一致:
+      total          = 当天全部作业 (含选做)
+      required       = 当天必做 (不含选做), 进度分母用这个
+      required_done  = 必做已完成数
+      required_skip  = 必做已跳过数 (跳过算"已收尾"但不算完成)
+      optional       = 选做数
+      optional_done  = 选做已完成数
+    必做与选做必须分开统计: 日历格子要判断"必做是否全完成",
+    若只看合并的 done, 会出现"选做全做了、必做一项没做却显示全完成"的误判。
+    """
+    if not 1 <= month <= 12:
+        raise BadDateFormatError(f"月份必须在 1-12 之间, 收到 {month}")
+    first = date(year, month, 1)
+    last = date(year + (month == 12), (month % 12) + 1, 1)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT due_date,
+                   COUNT(*)                                                    AS total,
+                   SUM(CASE WHEN is_optional = 1 THEN 1 ELSE 0 END)           AS optional,
+                   SUM(CASE WHEN is_optional = 0 AND status = 'done'    THEN 1 ELSE 0 END) AS req_done,
+                   SUM(CASE WHEN is_optional = 0 AND status = 'skipped' THEN 1 ELSE 0 END) AS req_skip,
+                   SUM(CASE WHEN is_optional = 1 AND status = 'done'    THEN 1 ELSE 0 END) AS opt_done,
+                   SUM(CASE WHEN is_optional = 1 AND status = 'skipped' THEN 1 ELSE 0 END) AS opt_skip
+            FROM assignments
+            WHERE due_date >= ? AND due_date < ?
+            GROUP BY due_date
+            """,
+            (first.isoformat(), last.isoformat()),
+        ).fetchall()
+
+    days: dict[str, Any] = {}
+    for r in rows:
+        d = r["due_date"]
+        optional = r["optional"] or 0
+        req_done = r["req_done"] or 0
+        req_skip = r["req_skip"] or 0
+        required = r["total"] - optional
+        days[d] = {
+            "date": d,
+            "total": r["total"],
+            "required": required,
+            "optional": optional,
+            "required_done": req_done,
+            "required_skipped": req_skip,
+            "optional_done": r["opt_done"] or 0,
+            "optional_skipped": r["opt_skip"] or 0,
+            # 已收尾 = 完成 + 跳过 (跳过不计完成, 但当天不必再惦记)
+            "settled": req_done + req_skip,
+        }
+    return {
+        "year": year,
+        "month": month,
+        "first_weekday": first.weekday(),  # 0=周一, 与前端 getDay() 对齐
+        "days_in_month": (last - timedelta(days=1)).day,
+        "days": days,
+    }
+
+
 def list_upcoming_deadlines(today: date, days: int = 7) -> list[AssignmentDTO]:
     """本周内非今日到期 (deadline_time 在 [today+1, today+days])."""
     end = today + timedelta(days=days)

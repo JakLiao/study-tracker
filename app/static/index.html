@@ -48,16 +48,33 @@
       <div id="parse-result"></div>
     </section>
 
-    <!-- ====== 列表 ====== -->
+    <!-- ====== 列表 (日历 + 当日详情) ====== -->
     <section id="view-list" class="view" role="tabpanel">
-      <h2>作业列表</h2>
-      <div class="row">
-        <label>日期
-          <input type="date" id="list-date" />
-        </label>
-        <button id="btn-load-list">加载</button>
-        <button id="btn-load-today" class="ghost">今天</button>
-        <button id="btn-load-yesterday" class="ghost">昨天</button>
+      <h2>作业日历</h2>
+      <div class="cal-head">
+        <button id="cal-prev" class="ghost" aria-label="上个月">← 上月</button>
+        <div id="cal-title" class="cal-title"></div>
+        <button id="cal-next" class="ghost" aria-label="下个月">下月 →</button>
+        <button id="cal-today" class="ghost">回到今天</button>
+      </div>
+      <div class="cal-weekdays" aria-hidden="true">
+        <span>一</span><span>二</span><span>三</span><span>四</span>
+        <span>五</span><span class="we">六</span><span class="we">日</span>
+      </div>
+      <div id="cal-grid" class="cal-grid"></div>
+      <div class="cal-legend">
+        <span><i class="lg lg-has"></i>有作业</span>
+        <span><i class="lg lg-done"></i>全完成</span>
+        <span><i class="lg lg-part"></i>部分完成</span>
+        <span><i class="lg lg-opt"></i>仅选做</span>
+      </div>
+
+      <div class="list-detail-head">
+        <h3 id="list-detail-title">选择日期查看当天作业</h3>
+        <div class="row">
+          <button id="btn-load-today" class="ghost">今天</button>
+          <button id="btn-load-yesterday" class="ghost">昨天</button>
+        </div>
       </div>
       <div id="list-content"></div>
     </section>

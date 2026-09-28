@@ -50,6 +50,21 @@
   --row-opt-bar: #8A6A0A;
   --row-opt-ink: #5A4200;
 
+  /* 日历格子底色。语义 = 必做的收尾情况, 与看板进度条同口径:
+     has       有作业但一项没动 (最需要被看见)
+     partial   做了一部分 (需要继续)
+     all-done  必做全完成 (可以安心)
+     opt-only  当天只有选做
+     四种底色都压到 >= 1.35:1 对白卡的差异, 否则和 --surface-2 一样"看不出来"。 */
+  --cal-has-bg: #FFE7D0;
+  --cal-has-ink: #7A4A21;
+  --cal-part-bg: #FFF0BE;
+  --cal-part-ink: #7A5A05;
+  --cal-done-bg: #D8F0D2;
+  --cal-done-ink: #1E5B25;
+  --cal-opt-bg: #E8E2F7;
+  --cal-opt-ink: #4B3B7A;
+
   /* 间距 (4 倍数) */
   --space-1: 4px;
   --space-2: 8px;
@@ -840,4 +855,143 @@ footer {
 @keyframes toast-in {
   from { transform: translate(-50%, 8px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+/* ===== 24. 作业日历 (2026-09-28) =====
+   目标: 点一个日期就能看到当天做了什么、完成到什么程度。
+   布局顺序刻意是"月历在上、当天详情在下"—— 家长是"先选日子, 再看那天",
+   与列表页的读写顺序一致。 */
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+.cal-title {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  min-width: 120px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  text-align: center;
+  margin-bottom: var(--space-1);
+}
+.cal-weekdays .we { color: #C77B8A; }   /* 周末淡红, 与格子里的 .we 呼应 */
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+}
+
+.cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  /* 固定比例而非固定高度: 5 行的月份 (31 天) 与 6 行的 (30 天) 高度一致,
+     翻月时页面不会跳动 */
+  aspect-ratio: 1 / 1;
+  min-height: 40px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.cal-cell.blank { border-color: transparent; background: transparent; cursor: default; }
+.cal-cell:hover:not(.blank) { background: var(--surface-2); }
+
+.cal-day { font-size: var(--fs-body-s); font-weight: 500; line-height: 1.1; }
+.cal-cell.we .cal-day { color: #C77B8A; }
+
+/* 完成度徽标: "3/5"。放在格子底部, 不挤占日期数字的识别位 */
+.cal-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(74, 55, 40, 0.08);
+  color: var(--text-2);
+}
+
+/* 四种状态底色。语义见 :root 中的 --cal-* 注释 */
+.cal-cell.has         { background: var(--cal-has-bg);  border-color: #F0C79E; }
+.cal-cell.has .cal-badge { background: rgba(122, 74, 33, 0.14); color: var(--cal-has-ink); }
+.cal-cell.partial     { background: var(--cal-part-bg); border-color: #EBD48A; }
+.cal-cell.partial .cal-badge { background: rgba(122, 90, 5, 0.14); color: var(--cal-part-ink); }
+.cal-cell.all-done    { background: var(--cal-done-bg); border-color: #A9D6A0; }
+.cal-cell.all-done .cal-badge { background: rgba(30, 91, 37, 0.14); color: var(--cal-done-ink); }
+.cal-cell.optional-only { background: var(--cal-opt-bg); border-color: #CFC4E8; }
+.cal-cell.optional-only .cal-badge { background: rgba(75, 59, 122, 0.14); color: var(--cal-opt-ink); }
+
+/* 选中态用双层描边而非加粗边框 —— border-width 变化会让整个 grid 重排 */
+.cal-cell.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--warn-soft), 0 0 0 3px var(--accent);
+}
+
+.cal-legend {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin: var(--space-3) 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.cal-legend span { display: flex; align-items: center; gap: var(--space-1); }
+.lg { width: 12px; height: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); display: inline-block; }
+.lg-has  { background: var(--cal-has-bg); border-color: #F0C79E; }
+.lg-done { background: var(--cal-done-bg); border-color: #A9D6A0; }
+.lg-part { background: var(--cal-part-bg); border-color: #EBD48A; }
+.lg-opt  { background: var(--cal-opt-bg); border-color: #CFC4E8; }
+
+.list-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+}
+.list-detail-head h3 { margin: 0; }
+.list-detail-head .row { margin: 0; }
+
+/* 窄屏: 7 列格子放不下 "3/5" 徽标, 改用左下角圆点表示"有作业/已完成"。
+   数字优先保住 —— 家长扫的是日期, 完成度只是辅助信号。 */
+@media (max-width: 480px) {
+  .cal-badge { display: none; }
+  .cal-cell.has::after,
+  .cal-cell.partial::after,
+  .cal-cell.all-done::after,
+  .cal-cell.optional-only::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.55;
+  }
+  .cal-cell.has::after         { background: var(--cal-has-ink); }
+  .cal-cell.partial::after     { background: var(--cal-part-ink); }
+  .cal-cell.all-done::after    { background: var(--cal-done-ink); }
+  .cal-cell.optional-only::after { background: var(--cal-opt-ink); }
+  .cal-cell { min-height: 34px; }
 }
