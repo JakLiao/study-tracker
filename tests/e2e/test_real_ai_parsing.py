@@ -1,4 +1,9 @@
-"""真实 AI 解析 E2E 测试 (不 mock).
+"""真实 AI 解析 E2E 检查 (不 mock).
+
+⚠️ 这不是 pytest 用例: 全文 0 个 `def test_`, pytest 收集到 0 条。
+   直接手工跑: `python3 tests/e2e/test_real_ai_parsing.py`
+   会真打 MiniMax 并消耗额度, 故刻意不转成 pytest 自动执行。
+   同理**不要**为了跑它把 python-dotenv 写进 requirements —— 本脚本已不依赖它。
 
 校验 P0 修复: prompts.py 改用 string.Template 后, 真打 MiniMax 必须不抛 KeyError.
 
@@ -24,9 +29,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-
-# 必须真实加载 Key
-from dotenv import dotenv_values  # noqa: F401  不用, 仅占位防止 import 顺序问题
 
 # 直接 source 用户的 .bashrc
 import subprocess
