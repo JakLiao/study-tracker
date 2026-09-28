@@ -498,7 +498,7 @@ function openSourceModal(item) {
     <p class="muted">置信度: ${confidencePill(conf)}</p>
     <blockquote style="background:var(--surface-2); padding:var(--space-3); border-radius:var(--radius-md); margin:var(--space-2) 0; font-size:var(--fs-body-s);">${escapeAttr(item.source_span)}</blockquote>
     ${item.deadline_time ? `<p>⏰ 截止: ${fmtDateTime(item.deadline_time)}</p>` : ''}
-    ${item.est_minutes != null ? `<p>预估用时: ${item.est_minutes} 分钟</p>` : ''}
+    ${item.est_minutes != null ? `<p>预计用时: ${item.est_minutes} 分钟</p>` : ''}
     ${item.actual_minutes != null ? `<p>实际用时: ${item.actual_minutes} 分钟</p>` : ''}
   `;
   // 原文弹窗是只读的, 取消与确定都只是关闭, 并排两个同功能按钮
@@ -686,7 +686,7 @@ function renderPreviewTable(items, batchId) {
     <table class="preview-table">
       <thead><tr>
         <th>勾</th><th>科目</th><th>任务名</th><th>归属日</th><th>截止</th>
-        <th>选做</th><th>预估分</th><th>置信</th><th>原文</th><th></th>
+        <th>选做</th><th>预计用时</th><th>置信</th><th>原文</th><th></th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -789,7 +789,7 @@ async function confirmBatch(batchId, result) {
       return;
     }
     if (!it.est_minutes || it.est_minutes < 1 || it.est_minutes > 180) {
-      toast('预估分钟必须在 1~180'); return;
+      toast('预计用时必须在 1~180 分钟'); return;
     }
   }
   try {
@@ -822,7 +822,7 @@ function openManualAddModal() {
       <label>科目
         <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
       </label>
-      <label>预估分
+      <label>预计用时
         <input id="m-est" type="number" value="15" min="1" max="180" style="width:80px;" inputmode="numeric" />
       </label>
     </div>

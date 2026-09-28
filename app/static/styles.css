@@ -910,13 +910,20 @@ tr.is-optional .muted {
 .preview-table th:nth-child(4),  .preview-table td:nth-child(4)  { width: 130px; }  /* 归属日 */
 .preview-table th:nth-child(5),  .preview-table td:nth-child(5)  { width: 148px; }  /* 截止 */
 .preview-table th:nth-child(6),  .preview-table td:nth-child(6)  { width: 46px; }   /* 选做 */
-.preview-table th:nth-child(7),  .preview-table td:nth-child(7)  { width: 66px; }   /* 预估分 */
+.preview-table th:nth-child(7),  .preview-table td:nth-child(7)  { width: 82px; }   /* 预计用时 */
 .preview-table th:nth-child(8),  .preview-table td:nth-child(8)  { width: 42px; }   /* 置信 */
 .preview-table th:nth-child(9),  .preview-table td:nth-child(9)  { width: 92px; }   /* 原文 */
 .preview-table th:nth-child(10), .preview-table td:nth-child(10) { width: 40px; }   /* 删 */
 
 /* 单元格不换行: 换行正是行高暴涨的元凶, 一律截断 + title 兜底 */
 .preview-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 表头同样不换行。
+   之前只给 td 加了 nowrap, th 漏在外面 —— 「预计用时」四个字
+   (比原来的「预估分」多一字) 在 82px 列里正好放不下, 表头会折成两行,
+   把刚压下去的行高又顶回来。固定列宽布局下, 表头折行更难察觉,
+   所以这里补上并由测试锁住。 */
+.preview-table th { white-space: nowrap; }
 
 /* 原文列: 单行截断。要看完整原文点行尾「原文」弹窗 ——
    在表格里展开会让预览表无法快速扫读, 反而看不出哪条还没核对。 */

@@ -117,6 +117,83 @@ def test_cells_no_wrap(styles):
     assert "overflow: hidden" in b
 
 
+def test_header_no_wrap(styles):
+    """表头也不能换行。
+
+    之前只给 td 加了 nowrap, th 漏在外面。「预估分」三字在 66px 里
+    刚好放得下, 换成「预计用时」四字后表头会折成两行, 把刚压下去的
+    行高又顶回来 —— 属于改文案才暴露的隐性回归, 必须锁住。
+    """
+    b = _block(styles, ".preview-table th")
+    assert "white-space: nowrap" in b, "表头缺少 nowrap, 长表头会折行"
+
+
+def test_est_column_wide_enough(styles):
+    """「预计用时」四字 + 单元格内边距, 列宽要放得下。
+
+    四字约 56px, 加左右各 12px 内边距约 80px, 故下限取 80px。
+    注意第 3 列(任务名)是 auto, 正则只取 px 值会让索引前移,
+    所以这里按列号(1-based)取值, 不依赖数组下标。
+    """
+    widths = {}
+    for col, w in re.findall(
+            r"\.preview-table th:nth-child\((\d+)\),\s+\.preview-table td:nth-child\(\d+\)\s+\{ width: (\w+)", styles):
+        widths[int(col)] = w
+    assert 7 in widths, widths
+    # 抓到的值带 px 后缀(如 "82px"), 先剥掉再比数值
+    est = re.sub(r"px$", "", widths[7])
+    assert est.isdigit(), f"第 7 列宽度应为固定像素: {widths[7]}"
+    assert int(est) >= 80, f"第 7 列(预计用时) 宽度 {est}px 不足以容纳四字表头"
+
+
+# ====== 3b. 「预估分」->「预计用时」(2026-09-28) ======
+
+def test_no_stale_old_wording(app_js):
+    """同一个字段在两个界面不能叫不同名字。"""
+    code = _code(app_js)
+    assert "预估分" not in code, "仍残留旧叫法「预估分」"
+
+
+def test_preview_header_uses_new_name(app_js):
+    code = _code(app_js)
+    assert "<th>预计用时</th>" in code
+
+
+def test_manual_form_label_uses_new_name(app_js):
+    """手动添加弹窗的标签同步 —— 改一处不改另一处会让人以为
+    是两个不同的字段。"""
+    code = _code(app_js)
+    assert "<label>预计用时" in code
+
+
+def test_validation_toast_uses_new_name(app_js):
+    code = _code(app_js)
+    assert "预计用时必须在 1~180 分钟" in code
+    assert "预估分钟必须在" not in code
+
+
+def test_source_modal_uses_new_name(app_js):
+    """原文弹窗是完整句式, 应与表头一致。"""
+    code = _code(app_js)
+    assert "预计用时: ${item.est_minutes} 分钟" in code
+    assert "预估用时: ${item.est_minutes} 分钟" not in code
+
+
+def test_board_inline_label_kept(app_js):
+    """看板行内保持简写「预估」—— 它紧贴数字(预估 30)且与
+    「实际用时」成对, 展开成「预计用时 30」反而冗余。"""
+    code = _code(app_js)
+    assert '<span class="est-label">预估</span>' in code
+
+
+def test_settings_labels_keep_baseline_wording(app_js):
+    """设置页说的是 AI 估算基准(各科预估用时), 与家长填的
+    预计用时不是一回事, 不应跟着改。"""
+    code = _code(app_js)
+    assert "各科预估用时（分钟）" in code
+    assert "各作业类型预估用时（分钟）" in code
+
+
 def test_source_column_truncates(styles):
     b = _block(styles, ".preview-table .col-src small")
     assert "white-space: nowrap" in b
