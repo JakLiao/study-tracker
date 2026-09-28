@@ -233,8 +233,8 @@ button#btn-add-manual[disabled-look="true"] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
-  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 .card-title {
   display: flex;
@@ -506,12 +506,17 @@ tr.is-optional .muted {
   margin-top: 2px;
 }
 
-/* ===== 12. 任务行 (看板核心组件, 设计文档 §5.1) ===== */
+/* ===== 12. 任务行 (看板核心组件, 设计文档 §5.1) =====
+ * 紧凑化 (2026-09-28): 家长反映单个作业项太松散。
+ * 一个作业项原本占 3 层(主行/元信息/按钮) + 12px 上下内边距,
+ * 一屏放不下几条。现收紧为 6px 内边距 + 4px 层间距,
+ * 单项高度约减少 24px, 但可读性不受影响 —— 缩的是留白, 不是字号。
+ */
 .assignment-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
   position: relative;
 }
@@ -520,12 +525,24 @@ tr.is-optional .muted {
 .assignment-row .row-main {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
+/* 元信息与操作按钮并排一行 (紧凑化 2026-09-28):
+   原本 meta 与 actions 是上下两行, 一个作业项要占 3 层。
+   现在 meta 在左、按钮在右, 同一行; 空间不足时 flex-wrap 自动换行,
+   不会挤压按钮。 */
+.assignment-row .row-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.assignment-row .row-foot:empty { display: none; }
 .assignment-row .row-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   font-size: var(--fs-caption);
   color: var(--text-3);
   flex-wrap: wrap;
@@ -541,12 +558,16 @@ tr.is-optional .muted {
 }
 .assignment-row.skipped .task-name { color: var(--text-3); }
 
-/* 英雄数字: 预估/实耗分钟 (设计文档 §3) */
+/* 英雄数字: 预估/实耗分钟 (设计文档 §3)
+   字号由 22px 降到 17px —— 紧凑化 2026-09-28。
+   22px 在单行里显得过于抢眼, 且它只是辅助信息(真正的进度在进度条上)。 */
 .assignment-row .est-min {
-  font-size: var(--fs-number-l);
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-1);
   line-height: 1;
+  min-width: 28px;
+  text-align: right;
 }
 .assignment-row .est-min::after {
   content: " 分";
@@ -601,13 +622,13 @@ tr.is-optional .muted {
 .status-btn {
   border: 1.5px solid var(--border);
   background: var(--surface);
-  padding: var(--space-1) var(--space-3);
+  padding: 2px var(--space-2);
   border-radius: var(--radius-pill);
   cursor: pointer;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
-  min-height: 30px;
+  min-height: 26px;
   white-space: nowrap;
   transition: filter .12s, background .12s, border-color .12s;
 }

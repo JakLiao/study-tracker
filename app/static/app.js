@@ -276,14 +276,16 @@ function renderAssignment(item, withStatus) {
         </div>
         ${item.est_minutes != null ? `<div class="est-min">${item.est_minutes}</div>` : '<div class="est-min muted">—</div>'}
       </div>
-      <div class="row-meta">
-        ${item.deadline_time ? `<span>⏰ ${fmtDateTime(item.deadline_time)}</span>` : ''}
-        ${item.task_type ? `<span>类型: ${item.task_type}</span>` : ''}
-        ${confidencePill(item.confidence)}
-        ${item.source_span ? `<span class="source-link" data-action="show-source">原文</span>` : ''}
-        ${item.actual_minutes != null ? `<span>实际 <strong>${item.actual_minutes}</strong> 分</span>` : ''}
+      <div class="row-foot">
+        <div class="row-meta">
+          ${item.deadline_time ? `<span>⏰ ${fmtDateTime(item.deadline_time)}</span>` : ''}
+          ${item.task_type ? `<span>类型: ${item.task_type}</span>` : ''}
+          ${confidencePill(item.confidence)}
+          ${item.source_span ? `<span class="source-link" data-action="show-source">原文</span>` : ''}
+          ${item.actual_minutes != null ? `<span>实际 <strong>${item.actual_minutes}</strong> 分</span>` : ''}
+        </div>
+        ${withStatus ? '<div class="row-actions"></div>' : ''}
       </div>
-      ${withStatus ? '<div class="row-actions"></div>' : ''}
     </div>
   `);
 
