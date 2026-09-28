@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学习跟踪平台 v1 · 原型</title>
+<style>
+/* ============ 设计 token（与 docs/02-页面设计.md 完全对齐） ============ */
+:root{
+  --bg:#F5F6F8; --surface:#FFFFFF; --surface-2:#F0F2F5;
+  --border:#E2E5EA; --text-1:#1F2937; --text-2:#4B5563; --text-3:#9CA3AF;
+
+  --sub-chinese:#B4502E; --sub-chinese-bg:#FBEFE9;
+  --sub-math:#3B6FA5;   --sub-math-bg:#EBF1F7;
+  --sub-english:#5B8A6B;--sub-english-bg:#EFF4F0;
+
+  --status-todo:#6B7280;     --status-doing:#D97706;
+  --status-done:#059669;     --status-optional:#9CA3AF;
+  --status-overdue:#DC2626;  --warn-amber:#D97706; --warn-red:#DC2626;
+
+  --space-1:4px; --space-2:8px; --space-3:12px;
+  --space-4:16px; --space-5:24px; --space-6:32px;
+  --radius-sm:4px; --radius-md:6px; --radius-lg:8px; --radius-pill:999px;
+  --shadow:0 1px 2px rgba(0,0,0,.04), 0 4px 8px rgba(0,0,0,.04);
+}
+[data-theme="dark"]{
+  --bg:#0F1419; --surface:#1A2027; --surface-2:#222A33;
+  --border:#2D3742; --text-1:#E8ECF1; --text-2:#A5B1BD; --text-3:#6B7785;
+  --sub-chinese:#D17A5C; --sub-chinese-bg:#3A2218;
+  --sub-math:#6B9DD0;     --sub-math-bg:#1B2A3A;
+  --sub-english:#85B098;  --sub-english-bg:#1E2E26;
+  --status-todo:#9CA3AF;  --status-doing:#F59E0B;
+  --status-done:#34D399;  --status-optional:#6B7785;
+  --status-overdue:#F87171; --warn-amber:#F59E0B; --warn-red:#F87171;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 8px rgba(0,0,0,.2);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text-1);
+  font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  font-feature-settings:"tnum" 1; -webkit-font-smoothing:antialiased}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--text-3)} .sub2{color:var(--text-2)}
+
+/* ============ 顶部 Tab（6 个页面） ============ */
+.appbar{background:var(--surface);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:10}
+.appbar-inner{max-width:720px;margin:0 auto;padding:var(--space-3) var(--space-4);
+  display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap}
+.brand{font-weight:600;font-size:16px;flex:0 0 auto}
+.brand small{font-weight:400;color:var(--text-3);margin-left:6px;font-size:12px}
+.tabs{display:flex;gap:2px;flex:1;flex-wrap:wrap}
+.tab{padding:6px 10px;border-radius:var(--radius-md);color:var(--text-2);
+  cursor:pointer;border:1px solid transparent;font-size:13px;background:none}
+.tab:hover{background:var(--surface-2)}
+.tab.active{background:var(--text-1);color:#fff}
+.theme-toggle{margin-left:auto;background:var(--surface-2);
+  border:1px solid var(--border);border-radius:var(--radius-md);
+  padding:6px 10px;cursor:pointer;font-size:12px;color:var(--text-2)}
+
+main{max-width:720px;margin:0 auto;padding:var(--space-4);
+  padding-bottom:96px}
+.page{display:none}
+.page.active{display:block}
+
+/* ============ 公共卡片 ============ */
+.card{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);margin-bottom:var(--space-3);overflow:hidden}
+.card-head{padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:var(--space-2)}
+.card-head h2{font-size:16px;font-weight:600}
+.card-body{padding:var(--space-3) var(--space-4)}
+.card-row{padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border)}
+.card-row:last-child{border-bottom:none}
+
+/* ============ 按钮 ============ */
+.btn{display:inline-flex;align-items:center;gap:6px;
+  height:36px;padding:0 14px;border-radius:var(--radius-md);
+  font-size:14px;cursor:pointer;border:1px solid transparent;
+  background:var(--surface-2);color:var(--text-1);font-weight:500}
+.btn.primary{background:var(--text-1);color:#fff;border-color:var(--text-1)}
+.btn.secondary{background:var(--surface);border-color:var(--border);color:var(--text-1)}
+.btn.ghost{background:none;color:var(--text-2);border-color:transparent}
+.btn.danger{background:var(--surface);color:var(--status-overdue);border-color:var(--status-overdue)}
+.btn:hover{filter:brightness(.96)}
+
+/* ============ 徽章 ============ */
+.badge{display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:var(--radius-sm);
+  font-size:12px;font-weight:500;line-height:1.5;
+  border:1px solid transparent}
+.badge.sub-chinese{color:var(--sub-chinese);background:var(--sub-chinese-bg);border-color:color-mix(in srgb,var(--sub-chinese) 30%,transparent)}
+.badge.sub-math{color:var(--sub-math);background:var(--sub-math-bg);border-color:color-mix(in srgb,var(--sub-math) 30%,transparent)}
+.badge.sub-english{color:var(--sub-english);background:var(--sub-english-bg);border-color:color-mix(in srgb,var(--sub-english) 30%,transparent)}
+.badge.status-todo{color:var(--status-todo);background:var(--surface-2)}
+.badge.status-doing{color:#fff;background:var(--status-doing)}
+.badge.status-done{color:var(--status-done);background:color-mix(in srgb,var(--status-done) 12%,transparent);border-color:color-mix(in srgb,var(--status-done) 30%,transparent)}
+.badge.status-optional{color:var(--text-2);background:var(--surface-2)}
+.badge.status-overdue{color:#fff;background:var(--status-overdue)}
+.badge.conf-med{color:var(--warn-amber);background:color-mix(in srgb,var(--warn-amber) 12%,transparent)}
+.badge.conf-low{color:#fff;background:var(--warn-red)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+
+/* ============ 7.1 今日看板 ============ */
+.h1{font-size:22px;font-weight:600;line-height:1.3;margin-bottom:var(--space-3)}
+.topbar{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:var(--space-3)}
+.topbar .right{font-size:14px;color:var(--text-2)}
+.late-night{display:none;color:var(--text-3);font-size:12px;margin-top:4px}
+.late-night.show{display:block}
+.warn-strip{background:#FEF3F2;border:1px solid var(--warn-red);
+  border-radius:var(--radius-lg);padding:var(--space-3) var(--space-4);
+  margin-bottom:var(--space-3)}
+.warn-strip.dark{background:#2A1818;border-color:#7F1D1D}
+.warn-strip h3{font-size:14px;font-weight:600;color:var(--warn-red);margin-bottom:var(--space-2)}
+.warn-strip ul{list-style:none;font-size:13px}
+.warn-strip li{display:flex;justify-content:space-between;padding:4px 0;
+  color:var(--text-2);border-bottom:1px dashed var(--border)}
+.warn-strip li:last-child{border-bottom:none}
+.warn-strip li.overdue{color:var(--text-3);text-decoration:line-through}
+
+.progress-overview{margin:var(--space-3) 0 var(--space-4)}
+.progress-bar{height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden;display:flex}
+.progress-bar .done{background:var(--status-done)}
+.progress-bar .doing{background:linear-gradient(90deg,var(--status-doing),var(--status-done))}
+.progress-bar .todo{background:transparent;flex:1}
+.progress-meta{display:flex;justify-content:space-between;font-size:13px;
+  color:var(--text-2);margin-bottom:var(--space-2)}
+
+.subj-group{margin-bottom:var(--space-4)}
+.subj-group .card-head{background:color-mix(in srgb,var(--cur) 6%,var(--surface))}
+.subj-bar{width:4px;height:18px;border-radius:2px;background:var(--cur);flex:0 0 auto}
+
+/* 任务行 */
+.task{border-bottom:1px solid var(--border);padding:var(--space-3) var(--space-4);
+  position:relative;display:grid;grid-template-columns:auto 1fr auto;
+  column-gap:var(--space-3);align-items:center}
+.task:last-child{border-bottom:none}
+.task.color-red{background:color-mix(in srgb,var(--warn-red) 6%,transparent)}
+.task.color-red::before{content:"";position:absolute;left:0;top:0;bottom:0;
+  width:3px;background:var(--warn-red)}
+.task.color-amber::before{content:"";position:absolute;left:0;top:0;bottom:0;
+  width:3px;background:var(--warn-amber)}
+.task .name{font-size:14px;font-weight:500;margin-bottom:2px}
+.task .src{font-size:12px;color:var(--text-3);border-bottom:1px dashed var(--text-3);
+  cursor:pointer}
+.task .meta{display:flex;align-items:center;gap:var(--space-2);margin-top:6px;flex-wrap:wrap}
+.task .right-est{font-size:18px;font-weight:600;text-align:right;line-height:1}
+.task .right-est small{display:block;font-size:11px;color:var(--text-3);
+  font-weight:400;margin-top:2px}
+.task .status-group{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.status-btn{padding:3px 8px;border:1px solid var(--border);background:var(--surface);
+  border-radius:var(--radius-md);font-size:12px;cursor:pointer;color:var(--text-2)}
+.status-btn.active[data-s="todo"]{background:var(--surface-2);color:var(--status-todo);border-color:var(--status-todo)}
+.status-btn.active[data-s="doing"]{background:var(--status-doing);color:#fff;border-color:var(--status-doing)}
+.status-btn.active[data-s="done"]{background:color-mix(in srgb,var(--status-done) 14%,transparent);color:var(--status-done);border-color:var(--status-done);text-decoration:line-through}
+.actual-input{width:64px;height:28px;border:1px solid var(--warn-amber);
+  border-radius:var(--radius-md);padding:0 6px;font-size:13px;
+  background:color-mix(in srgb,var(--warn-amber) 8%,transparent);color:var(--text-1)}
+.actual-input::placeholder{color:var(--warn-amber);font-size:11px}
+.menu-btn{background:none;border:none;color:var(--text-3);cursor:pointer;font-size:16px;padding:4px}
+
+.subj-card.chinese{--cur:var(--sub-chinese)}
+.subj-card.math{--cur:var(--sub-math)}
+.subj-card.english{--cur:var(--sub-english)}
+.subj-head-left{display:flex;align-items:center;gap:var(--space-2)}
+.subj-count{font-size:13px;color:var(--text-2);font-weight:400;margin-left:auto}
+
+.optional-toggle{padding:var(--space-2) var(--space-4);font-size:13px;
+  color:var(--text-2);cursor:pointer;border-top:1px dashed var(--border);
+  display:flex;align-items:center;gap:4px}
+
+/* ============ 7.2 解析页 ============ */
+.parse-section{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);padding:var(--space-4);margin-bottom:var(--space-3)}
+textarea{width:100%;min-height:200px;padding:var(--space-3);
+  border:1px solid var(--border);border-radius:var(--radius-md);
+  font-family:inherit;font-size:14px;background:var(--surface);color:var(--text-1);
+  resize:vertical}
+textarea:focus{border-color:var(--text-1);outline:none;
+  box-shadow:0 0 0 2px color-mix(in srgb,var(--text-1) 20%,transparent)}
+.char-count{font-size:12px;color:var(--text-3);text-align:right;margin-top:4px}
+.parse-actions{display:flex;justify-content:space-between;align-items:center;
+  margin-top:var(--space-3);gap:var(--space-2);flex-wrap:wrap}
+.parse-actions .right{display:flex;gap:var(--space-2)}
+.parse-tip{font-size:12px;color:var(--text-3);margin-top:var(--space-2)}
+
+.parse-error{background:color-mix(in srgb,var(--warn-red) 8%,transparent);
+  border:1px solid var(--warn-red);border-radius:var(--radius-lg);
+  padding:var(--space-3) var(--space-4);margin-bottom:var(--space-3);display:none}
+.parse-error.show{display:flex;gap:var(--space-3);align-items:flex-start}
+.parse-error .icon{color:var(--warn-red);font-weight:700;font-size:18px;line-height:1}
+.parse-error h4{color:var(--warn-red);font-size:14px;margin-bottom:4px}
+.parse-error p{font-size:13px;color:var(--text-2);margin-bottom:var(--space-2)}
+
+.result-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:var(--space-3)}
+.result-table th,.result-table td{padding:8px;text-align:left;
+  border-bottom:1px solid var(--border);vertical-align:middle}
+.result-table th{background:var(--surface-2);font-weight:500;color:var(--text-2);font-size:12px}
+.result-table input[type="text"],.result-table input[type="number"],.result-table select{
+  width:100%;padding:4px 6px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);font-size:13px;background:var(--surface);color:var(--text-1)}
+.result-table tr.conf-low{background:color-mix(in srgb,var(--warn-red) 8%,transparent)}
+.result-table tr.conf-low td:first-child{border-left:3px solid var(--warn-red)}
+.result-table .est-input{width:64px}
+.result-table .check-col{width:32px;text-align:center}
+.confirm-bar{display:flex;justify-content:space-between;align-items:center;
+  margin-top:var(--space-3);flex-wrap:wrap;gap:var(--space-2)}
+.confirm-bar .count{font-size:13px;color:var(--text-2)}
+
+/* ============ 7.3 按日/按周列表 ============ */
+.date-switcher{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:var(--space-3);gap:var(--space-2)}
+.date-switcher .date{font-size:16px;font-weight:600}
+.date-switcher button{height:32px;width:32px;border-radius:var(--radius-md);
+  border:1px solid var(--border);background:var(--surface);cursor:pointer;
+  color:var(--text-1);font-size:16px}
+.view-tab{display:flex;background:var(--surface-2);border-radius:var(--radius-md);
+  padding:2px;margin-bottom:var(--space-3);width:fit-content}
+.view-tab button{padding:4px 14px;border-radius:var(--radius-sm);
+  border:none;background:none;cursor:pointer;font-size:13px;color:var(--text-2)}
+.view-tab button.active{background:var(--surface);color:var(--text-1);
+  box-shadow:var(--shadow)}
+.timeline{display:flex;gap:var(--space-2);overflow-x:auto;padding-bottom:var(--space-2)}
+.day-card{min-width:120px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);padding:var(--space-3);flex:0 0 auto}
+.day-card.today{border-color:var(--text-1)}
+.day-card h4{font-size:13px;font-weight:600;margin-bottom:var(--space-2)}
+.day-card .count{font-size:11px;color:var(--text-3)}
+.day-card.holiday{border-style:dashed;background:var(--surface-2)}
+.day-card.holiday h4::after{content:" 中秋假期";color:var(--text-3);font-weight:400}
+
+/* ============ 7.4 复盘页 ============ */
+.range-tabs{display:flex;gap:2px;margin-bottom:var(--space-3)}
+.range-tabs button{padding:6px 12px;border:1px solid var(--border);background:var(--surface);
+  border-radius:var(--radius-md);cursor:pointer;font-size:13px;color:var(--text-2)}
+.range-tabs button.active{background:var(--text-1);color:#fff;border-color:var(--text-1)}
+.warn-card{background:color-mix(in srgb,var(--warn-amber) 12%,transparent);
+  border:1px solid var(--warn-amber);border-radius:var(--radius-lg);
+  padding:var(--space-3) var(--space-4);margin-bottom:var(--space-3);font-size:13px}
+.warn-card.empty{background:var(--surface);border-color:var(--border);color:var(--text-2)}
+.deviation-table{width:100%;border-collapse:collapse;font-size:13px}
+.deviation-table th,.deviation-table td{padding:8px;text-align:left;
+  border-bottom:1px solid var(--border)}
+.deviation-table th{background:var(--surface-2);font-weight:500;color:var(--text-2);font-size:12px}
+.deviation-table td.num,.deviation-table th.num{text-align:right}
+.deviation-table tr.under td.dev{color:var(--warn-red);font-weight:600}
+.deviation-table tr.over td.dev{color:var(--warn-amber);font-weight:600}
+.top-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);margin-top:var(--space-3)}
+@media(max-width:600px){.top-grid{grid-template-columns:1fr}}
+.top-card{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);padding:var(--space-3)}
+.top-card h4{font-size:13px;font-weight:600;margin-bottom:var(--space-2)}
+.top-card.over h4{color:var(--warn-amber)}
+.top-card.under h4{color:var(--warn-red)}
+.top-card li{list-style:none;font-size:13px;padding:6px 0;
+  border-bottom:1px dashed var(--border);display:flex;justify-content:space-between}
+.top-card li:last-child{border-bottom:none}
+.suggestion{background:color-mix(in srgb,var(--sub-math) 6%,var(--surface));
+  border:1px solid var(--sub-math);border-radius:var(--radius-lg);
+  padding:var(--space-4);margin-top:var(--space-3)}
+.suggestion p{font-size:14px;margin-bottom:var(--space-3)}
+.suggestion .right{display:flex;gap:var(--space-2)}
+
+/* ============ 7.5 设置页 ============ */
+.setting-row{display:flex;justify-content:space-between;align-items:center;
+  padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border)}
+.setting-row:last-child{border-bottom:none}
+.setting-row .label{font-size:14px}
+.setting-row .hint{font-size:12px;color:var(--text-3);margin-top:2px}
+.setting-row select,.setting-row input[type="number"],.setting-row input[type="time"]{
+  padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--text-1);font-size:13px}
+.baseline-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-2);
+  padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border)}
+.baseline-row:last-child{border-bottom:none}
+.baseline-row input{width:100%;text-align:right;padding:6px;border:1px solid var(--border);
+  border-radius:var(--radius-md);background:var(--surface);color:var(--text-1)}
+.baseline-row label{font-size:13px;color:var(--text-2);display:flex;
+  align-items:center;gap:var(--space-2)}
+.data-row{display:flex;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
+.data-row .grow{flex:1}
+.data-row .hint{font-size:12px;color:var(--text-3);margin-top:2px}
+
+/* ============ 7.6 异常状态 ============ */
+.empty-state{text-align:center;padding:var(--space-6) var(--space-4);
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);margin-bottom:var(--space-3)}
+.empty-state .icon{font-size:32px;color:var(--text-3);margin-bottom:var(--space-3);
+  font-weight:300;line-height:1}
+.empty-state h3{font-size:16px;font-weight:600;margin-bottom:var(--space-2)}
+.empty-state p{font-size:13px;color:var(--text-2);margin-bottom:var(--space-4)}
+.skeleton{background:var(--surface-2);border-radius:var(--radius-lg);
+  height:80px;margin-bottom:var(--space-3);position:relative;overflow:hidden}
+.skeleton::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--surface) 50%,transparent),transparent);
+  animation:shimmer 1.5s infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.skeleton-row{height:14px;background:var(--surface-2);border-radius:3px;
+  margin:14px 16px;width:70%}
+.skeleton-row.short{width:40%}
+
+/* 移动端底部 Tab Bar */
+@media(max-width:640px){
+  .appbar-inner{padding:8px 12px}
+  .brand small{display:none}
+  .tab{font-size:11px;padding:4px 8px}
+  main{padding:12px}
+  .h1{font-size:18px}
+  .topbar .right{font-size:12px}
+  .task{grid-template-columns:1fr;gap:6px}
+  .task .right-est{text-align:left}
+  .parse-actions{flex-direction:column;align-items:stretch}
+  .parse-actions .right{justify-content:flex-end}
+  .result-table{font-size:12px}
+  .result-table th,.result-table td{padding:6px 4px}
+}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar-inner">
+    <div class="brand">学习跟踪 <small>v1 原型</small></div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="board">看板</button>
+      <button class="tab" data-tab="parse">解析</button>
+      <button class="tab" data-tab="list">列表</button>
+      <button class="tab" data-tab="review">复盘</button>
+      <button class="tab" data-tab="settings">设置</button>
+      <button class="tab" data-tab="exceptions">异常</button>
+    </nav>
+    <button class="theme-toggle" id="themeToggle">🌗 深色</button>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ 7.1 今日看板 ============ -->
+<section class="page active" id="page-board">
+
+  <div class="topbar">
+    <div>
+      <h1 class="h1">9月21日 周一</h1>
+      <div class="late-night show">已是凌晨 0:42，注意休息</div>
+    </div>
+    <div class="right"><span class="num">2 / 9</span></div>
+  </div>
+
+  <!-- 非今日到期提醒 -->
+  <div class="warn-strip">
+    <h3>⚠ 本周要做（不在今天）</h3>
+    <ul>
+      <li><span>周四 8:20 · 英语听写（U2 重点短语和句子）</span><span class="badge sub-english">英语</span></li>
+      <li class="overdue"><span>周日 · 数学第一单元综合复习（已发）</span><span class="badge conf-low">⚠ 低置信</span></li>
+    </ul>
+  </div>
+
+  <!-- 进度概览 -->
+  <div class="progress-overview">
+    <div class="progress-meta">
+      <span>已完成 <span class="num">2</span> / 总 <span class="num">9</span></span>
+      <span>估时 <span class="num">175</span> 分 · 已用 <span class="num">60</span> 分</span>
+    </div>
+    <div class="progress-bar">
+      <div class="done" style="flex-basis:28%"></div>
+      <div class="doing" style="flex-basis:11%"></div>
+      <div class="todo"></div>
+    </div>
+  </div>
+
+  <!-- 语文分组 -->
+  <div class="subj-card chinese subj-group">
+    <div class="card subj-card chinese">
+      <div class="card-head">
+        <div class="subj-head-left">
+          <span class="subj-bar"></span>
+          <span class="badge sub-chinese">语文</span>
+          <h2>语文 3/3</h2>
+        </div>
+        <span class="subj-count">估时 <span class="num">80</span> 分</span>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">订正1号作文本《猜猜他是谁》并誊抄到2号本</div>
+          <div class="src">原文: "1号本订正后誊抄到2号本"</div>
+          <div class="meta">
+            <span class="badge status-done"><span class="dot"></span> 已完成</span>
+            <span class="muted">实际</span>
+            <span class="actual-input num" style="border-color:var(--border);background:var(--surface)">42</span>
+            <span class="muted">分钟</span>
+          </div>
+        </div>
+        <div class="right-est num">35<small>预估 分</small></div>
+      </div>
+
+      <div class="task color-amber">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">完成知能 P14</div>
+          <div class="src">原文: "语文知能 P14"</div>
+          <div class="meta">
+            <span class="badge status-doing"><span class="dot"></span> 进行中</span>
+            <span class="badge conf-med" title="推断,建议核对原文">?</span>
+          </div>
+        </div>
+        <div class="right-est num">20<small>预估 分</small></div>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">阅读课外书</div>
+          <div class="src">原文: "课外阅读 25 分钟"</div>
+          <div class="meta">
+            <span class="badge status-todo"><span class="dot"></span> 待做</span>
+          </div>
+        </div>
+        <div class="right-est num">25<small>预估 分</small></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 数学分组 -->
+  <div class="subj-card math subj-group">
+    <div class="card subj-card math">
+      <div class="card-head">
+        <div class="subj-head-left">
+          <span class="subj-bar"></span>
+          <span class="badge sub-math">数学</span>
+          <h2>数学 3/3</h2>
+        </div>
+        <span class="subj-count">估时 <span class="num">50</span> 分</span>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">订正知能 P10-11</div>
+          <div class="src">原文: "订正知能 P10~11"</div>
+          <div class="meta">
+            <span class="badge status-done"><span class="dot"></span> 已完成</span>
+            <span class="muted">实际</span>
+            <span class="actual-input num" style="border-color:var(--border);background:var(--surface)">12</span>
+            <span class="muted">分钟</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">预习书本 P16-17 + 1千米体验记录单</div>
+          <div class="src">原文: "预习 P16-17,完成 1 千米体验记录单"</div>
+          <div class="meta">
+            <span class="badge status-todo"><span class="dot"></span> 待做</span>
+          </div>
+        </div>
+        <div class="right-est num">20<small>预估 分</small></div>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">练计算（学到哪写到哪）</div>
+          <div class="src">原文: "练计算,学到哪儿写到哪儿"</div>
+          <div class="meta">
+            <span class="badge status-todo"><span class="dot"></span> 待做</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 英语分组（含选做） -->
+  <div class="subj-card english subj-group">
+    <div class="card subj-card english">
+      <div class="card-head">
+        <div class="subj-head-left">
+          <span class="subj-bar"></span>
+          <span class="badge sub-english">英语</span>
+          <h2>英语 3/4</h2>
+        </div>
+        <span class="subj-count">估时 <span class="num">60</span> 分</span>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">一起作业</div>
+          <div class="src">原文: "完成一起作业"</div>
+          <div class="meta">
+            <span class="badge status-done"><span class="dot"></span> 已完成</span>
+            <span class="muted">实际</span>
+            <span class="actual-input num" style="border-color:var(--border);background:var(--surface)">18</span>
+            <span class="muted">分钟</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">描写本 P11-12</div>
+          <div class="src">原文: "描写本 P11-12"</div>
+          <div class="meta">
+            <span class="badge status-todo"><span class="dot"></span> 待做</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">背课文 P18-19</div>
+          <div class="src">原文: "背诵课文 P18-19"</div>
+          <div class="meta">
+            <span class="badge status-todo"><span class="dot"></span> 待做</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+
+      <div class="optional-toggle">▾ 选做（1 条）</div>
+
+      <div class="task">
+        <span class="subj-bar"></span>
+        <div>
+          <div class="name">背诵 U2 重点短语和句子</div>
+          <div class="src">原文: "U2 重点短语和句子,周四听写"</div>
+          <div class="meta">
+            <span class="badge status-optional">选</span>
+            <span class="muted">截止 周四 8:20 听写</span>
+          </div>
+        </div>
+        <div class="right-est num">15<small>预估 分</small></div>
+      </div>
+
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ============ 7.2 解析页 ============ -->
+<section class="page" id="page-parse">
+
+  <h1 class="h1">解析作业通知</h1>
+
+  <div class="parse-section">
+    <textarea placeholder="粘贴老师发的作业通知原文到这里…">【9月21日 作业】
+1. 语文：订正1号作文本《猜猜他是谁》并誊抄到2号本（约35分钟）
+2. 语文：完成知能P14（约20分钟）
+3. 语文：阅读课外书（25分钟）
+4. 数学：订正知能P10-11（约15分钟）
+5. 数学：预习书本P16-17，完成1千米体验记录单（约20分钟）
+6. 数学：练计算，学到哪写到哪（约15分钟）
+7. 英语：一起作业（约15分钟）
+8. 英语：描写本P11-12（约15分钟）
+9. 英语：背课文P18-19（约15分钟）
+10. 英语（选做）：背诵U2重点短语和句子，周四听写
+11. 第一单元综合复习（已发，请家长协助监督完成）</textarea>
+    <div class="char-count num">247 / 10000</div>
+
+    <div class="parse-actions">
+      <button class="btn ghost">清空</button>
+      <div class="right">
+        <button class="btn secondary">+ 手动添加</button>
+        <button class="btn primary">⚡ 解析</button>
+      </div>
+    </div>
+    <div class="parse-tip">预计 15~25 秒，请稍候</div>
+  </div>
+
+  <!-- 解析失败示例（默认隐藏，演示用） -->
+  <div class="parse-error show" id="parseError">
+    <div class="icon">⚠</div>
+    <div style="flex:1">
+      <h4>AI 解析失败（错误码 PARSE_TIMEOUT_30s）</h4>
+      <p>解析耗时超过 30 秒上限。已保留粘贴的内容,可重试。</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary">↻ 重试</button>
+        <button class="btn secondary" style="border-color:var(--warn-red);color:var(--warn-red)">+ 手动添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 解析结果确认表格 -->
+  <div class="card">
+    <div class="card-head">
+      <h2>解析结果（11 条）</h2>
+      <span style="margin-left:auto;font-size:12px;color:var(--text-3)">可勾选 / 编辑 / 改日期 / 改预估</span>
+    </div>
+    <div class="card-body">
+      <table class="result-table">
+        <thead>
+          <tr><th class="check-col"></th><th>科目</th><th>任务</th><th>预估(分)</th><th>选做</th><th>置信度</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>语文</option></select></td>
+            <td><input type="text" value="订正1号作文本《猜猜他是谁》并誊抄到2号本"></td>
+            <td><input type="number" class="est-input num" value="35"></td>
+            <td><input type="checkbox"></td>
+            <td><span class="badge sub-chinese" style="border:none;background:none;padding:0">高</span></td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>语文</option></select></td>
+            <td><input type="text" value="完成知能P14"></td>
+            <td><input type="number" class="est-input num" value="20"></td>
+            <td><input type="checkbox"></td>
+            <td><span class="badge conf-med" title="推断">中</span></td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>语文</option></select></td>
+            <td><input type="text" value="阅读课外书"></td>
+            <td><input type="number" class="est-input num" value="25"></td>
+            <td><input type="checkbox"></td>
+            <td>—</td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>数学</option></select></td>
+            <td><input type="text" value="订正知能P10-11"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox"></td>
+            <td>—</td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>数学</option></select></td>
+            <td><input type="text" value="预习书本P16-17 + 1千米体验记录单"></td>
+            <td><input type="number" class="est-input num" value="20"></td>
+            <td><input type="checkbox"></td>
+            <td><span class="badge conf-med" title="推断">中</span></td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>数学</option></select></td>
+            <td><input type="text" value="练计算（学到哪写到哪）"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox"></td>
+            <td><span class="badge conf-med" title="推断">中</span></td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>英语</option></select></td>
+            <td><input type="text" value="一起作业"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox"></td>
+            <td>—</td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>英语</option></select></td>
+            <td><input type="text" value="描写本P11-12"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox"></td>
+            <td>—</td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>英语</option></select></td>
+            <td><input type="text" value="背课文P18-19"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox"></td>
+            <td>—</td>
+          </tr>
+          <tr><td class="check-col"><input type="checkbox" checked></td>
+            <td><select><option>英语</option></select></td>
+            <td><input type="text" value="背诵U2重点短语和句子"></td>
+            <td><input type="number" class="est-input num" value="15"></td>
+            <td><input type="checkbox" checked></td>
+            <td>—</td>
+          </tr>
+          <tr class="conf-low"><td class="check-col"><input type="checkbox"></td>
+            <td><select><option>语文</option><option>数学</option><option>英语</option></select></td>
+            <td><input type="text" value="第一单元综合复习（已发，请家长协助监督完成）"></td>
+            <td><input type="number" class="est-input num" placeholder="?"></td>
+            <td><input type="checkbox"></td>
+            <td><span class="badge conf-low">⚠ 低</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="confirm-bar">
+        <button class="btn ghost">全部不勾选</button>
+        <div class="right">
+          <span class="count">已勾选 <span class="num" id="selCount">10</span> 条</span>
+          <button class="btn primary">确认入库 <span class="num" id="selCount2">10</span> 条</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ============ 7.3 按日/按周列表 ============ -->
+<section class="page" id="page-list">
+
+  <div class="date-switcher">
+    <button>‹</button>
+    <span class="date">9月21日 周一</span>
+    <button>›</button>
+  </div>
+
+  <div class="view-tab">
+    <button class="active">日</button>
+    <button>周</button>
+  </div>
+
+  <!-- 周视图示例 -->
+  <h3 style="font-size:14px;margin-bottom:var(--space-2);color:var(--text-2)">本周</h3>
+  <div class="timeline">
+    <div class="day-card">
+      <h4>9/16 周日</h4>
+      <div class="count num">3 条 · 50 分</div>
+      <div style="margin-top:6px"><span class="badge status-done">2 完成</span></div>
+    </div>
+    <div class="day-card">
+      <h4>9/17 周一</h4>
+      <div class="count num">9 条 · 165 分</div>
+      <div style="margin-top:6px"><span class="badge status-done">9 完成</span></div>
+    </div>
+    <div class="day-card">
+      <h4>9/18 周二</h4>
+      <div class="count num">8 条 · 142 分</div>
+      <div style="margin-top:6px"><span class="badge status-done">8 完成</span></div>
+    </div>
+    <div class="day-card holiday">
+      <h4>9/22</h4>
+      <div class="count muted">假期任务</div>
+    </div>
+    <div class="day-card today">
+      <h4>9/21 周一</h4>
+      <div class="count num">9 条 · 175 分</div>
+      <div style="margin-top:6px"><span class="badge status-done">2 完成</span><span class="badge status-doing" style="margin-left:4px">1 进行</span></div>
+    </div>
+    <div class="day-card">
+      <h4>9/23 周二</h4>
+      <div class="count muted">— 未发 —</div>
+    </div>
+  </div>
+
+  <!-- 当日任务列表（与看板相同组件，无状态切换） -->
+  <h3 style="font-size:14px;margin:var(--space-4) 0 var(--space-2);color:var(--text-2)">9月21日 详情</h3>
+  <div class="card">
+    <div class="card-row">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="badge sub-chinese">语文</span>
+        <span style="font-size:14px">订正1号作文本并誊抄到2号本</span>
+      </div>
+      <div class="meta" style="margin-top:6px"><span class="muted">预估 <span class="num">35</span> 分</span><span class="muted">· 实际 <span class="num">42</span> 分</span><span class="badge status-done">已完成</span></div>
+    </div>
+    <div class="card-row">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="badge sub-math">数学</span>
+        <span style="font-size:14px">预习书本 P16-17 + 1千米体验记录单</span>
+      </div>
+      <div class="meta" style="margin-top:6px"><span class="muted">预估 <span class="num">20</span> 分</span><span class="badge status-todo">待做</span></div>
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ============ 7.4 复盘页 ============ -->
+<section class="page" id="page-review">
+
+  <h1 class="h1">复盘</h1>
+
+  <div class="range-tabs">
+    <button class="active">本周</button>
+    <button>上周</button>
+    <button style="margin-left:auto">自定义</button>
+  </div>
+
+  <div class="warn-card">
+    ⚠ 样本较少，复盘结果仅供参考。建议继续积累，完成 5 条以上实际耗时后回看更准确。
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>预估 vs 实际偏差</h2></div>
+    <div class="card-body">
+      <table class="deviation-table">
+        <thead><tr><th>科目</th><th>任务类型</th><th class="num">预估均值</th><th class="num">实际均值</th><th class="num">偏差</th><th class="num">样本</th></tr></thead>
+        <tbody>
+          <tr class="under"><td><span class="badge sub-chinese">语文</span></td><td>订正</td>
+            <td class="num">30</td><td class="num">42</td><td class="num dev">+40%</td><td class="num">1</td></tr>
+          <tr><td><span class="badge sub-math">数学</span></td><td>订正</td>
+            <td class="num">15</td><td class="num">12</td><td class="num dev">-20%</td><td class="num">1</td></tr>
+          <tr><td><span class="badge sub-english">英语</span></td><td>线上作业</td>
+            <td class="num">15</td><td class="num">18</td><td class="num dev">+20%</td><td class="num">1</td></tr>
+          <tr class="over"><td><span class="badge sub-english">英语</span></td><td>背诵</td>
+            <td class="num">15</td><td class="num">—</td><td class="num dev muted">—</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="top-grid">
+    <div class="top-card over">
+      <h4>低估 TOP 3（实际比预估久）</h4>
+      <ul>
+        <li><span>语文 · 订正作文</span><span class="num">+40%</span></li>
+        <li><span>英语 · 线上作业</span><span class="num">+20%</span></li>
+        <li><span>英语 · 听写准备</span><span class="num">+15%</span></li>
+      </ul>
+    </div>
+    <div class="top-card under">
+      <h4>高估 TOP 3（实际比预估快）</h4>
+      <ul>
+        <li><span>数学 · 订正</span><span class="num">-20%</span></li>
+        <li><span>数学 · 计算练习</span><span class="num">-15%</span></li>
+        <li><span>语文 · 抄写</span><span class="num">-10%</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="suggestion">
+    <p>💡 建议：语文「订正」你平均估 <strong class="num">30</strong> 分钟，实际 <strong class="num">42</strong> 分钟，下次建议估 <strong class="num">42</strong> 分钟。</p>
+    <div class="right">
+      <button class="btn primary">采纳建议</button>
+      <button class="btn ghost">不采纳</button>
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ============ 7.5 设置页 ============ -->
+<section class="page" id="page-settings">
+
+  <h1 class="h1">设置</h1>
+
+  <div class="card">
+    <div class="card-head"><h2>基本信息</h2></div>
+    <div class="setting-row">
+      <div><div class="label">年级</div><div class="hint">v1 仅支持三年级</div></div>
+      <select disabled><option>三年级</option></select>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>单科基线预估（分钟）</h2></div>
+    <div class="baseline-row">
+      <label><span class="dot" style="color:var(--sub-chinese)"></span> 语文</label>
+      <label><span class="dot" style="color:var(--sub-math)"></span> 数学</label>
+      <label><span class="dot" style="color:var(--sub-english)"></span> 英语</label>
+    </div>
+    <div class="baseline-row">
+      <input type="number" class="num" value="30">
+      <input type="number" class="num" value="20">
+      <input type="number" class="num" value="15">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>任务类型基线</h2></div>
+    <div class="setting-row">
+      <div><div class="label">订正</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" class="num" value="20" style="width:60px">
+        <button class="btn ghost">重置</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div><div class="label">预习</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" class="num" value="20" style="width:60px">
+        <button class="btn ghost">重置</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div><div class="label">背诵</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" class="num" value="15" style="width:60px">
+        <button class="btn ghost">重置</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div><div class="label">阅读</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" class="num" value="25" style="width:60px">
+        <button class="btn ghost">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>作息</h2></div>
+    <div class="setting-row">
+      <div><div class="label">默认放学时间</div></div>
+      <input type="time" value="16:30">
+    </div>
+    <div class="setting-row">
+      <div><div class="label">晚饭时间</div></div>
+      <input type="time" value="18:00">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>解析模型</h2></div>
+    <div class="setting-row">
+      <div><div class="label">当前模型</div><div class="hint">MiniMax 文本模型</div></div>
+      <button class="btn secondary">测试连通性</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>数据</h2></div>
+    <div class="data-row">
+      <div class="grow">
+        <div class="label">导出全部数据</div>
+        <div class="hint">上次导出：2026-09-20 21:15</div>
+      </div>
+      <button class="btn primary">导出 JSON</button>
+    </div>
+    <div class="data-row" style="border-top:1px solid var(--border)">
+      <div class="grow">
+        <div class="label" style="color:var(--status-overdue)">清空所有数据</div>
+        <div class="hint">将删除所有任务、复盘、设置。不可恢复。</div>
+      </div>
+      <button class="btn danger">清空…</button>
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ============ 7.6 异常状态 ============ -->
+<section class="page" id="page-exceptions">
+
+  <h1 class="h1">异常状态一览</h1>
+
+  <!-- 空状态 -->
+  <h3 style="font-size:14px;margin-bottom:var(--space-2);color:var(--text-2)">1 · 今日无作业</h3>
+  <div class="empty-state">
+    <div class="icon">▤</div>
+    <h3>今天还没有作业</h3>
+    <p>老师还没发今天的作业通知，或者还没解析。</p>
+    <button class="btn primary">去录入老师通知</button>
+    <p style="font-size:12px;color:var(--text-3);margin-top:var(--space-3)">或者：<a href="#" style="color:var(--sub-math)">手动添加一条作业</a></p>
+  </div>
+
+  <!-- 加载中 -->
+  <h3 style="font-size:14px;margin:32px 0 var(--space-2);color:var(--text-2)">2 · 看板加载中（9 条 skeleton）</h3>
+  <div class="skeleton"><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+  <div class="skeleton"><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+  <div class="skeleton"><div class="skeleton-row"></div><div class="skeleton-row short"></div></div>
+
+  <!-- 解析失败（再次展示，作为异常状态分类） -->
+  <h3 style="font-size:14px;margin:32px 0 var(--space-2);color:var(--text-2)">3 · 解析失败</h3>
+  <div class="parse-error show">
+    <div class="icon">⚠</div>
+    <div style="flex:1">
+      <h4>AI 解析失败（错误码 PARSE_TIMEOUT_30s）</h4>
+      <p>解析耗时超过 30 秒上限。已保留你粘贴的内容,可重试。</p>
+      <p style="font-size:12px;color:var(--text-3)">建议：复制原文 → 重试一次；如仍失败请「手动添加」。</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary">↻ 重试</button>
+        <button class="btn secondary" style="border-color:var(--warn-red);color:var(--warn-red)">+ 手动添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 解析超时（加载中变体） -->
+  <h3 style="font-size:14px;margin:32px 0 var(--space-2);color:var(--text-2)">4 · 解析超时（15s 未返回）</h3>
+  <div class="warn-card" style="background:var(--surface-2);border-color:var(--border);color:var(--text-2)">
+    ⚠ 解析超过 15 秒未返回。可能是网络或服务端问题，已自动取消本次请求。
+    <div style="margin-top:var(--space-2);display:flex;gap:8px">
+      <button class="btn primary">↻ 重试</button>
+      <button class="btn secondary">+ 手动添加</button>
+    </div>
+  </div>
+
+  <!-- 样本不足 -->
+  <h3 style="font-size:14px;margin:32px 0 var(--space-2);color:var(--text-2)">5 · 复盘样本不足</h3>
+  <div class="warn-card">
+    ⚠ 样本太少，复盘结果不准确（当前 <span class="num">3</span> 条，建议完成 <span class="num">5</span> 条以上再看）。
+  </div>
+
+  <!-- 尚未记录实际耗时 -->
+  <h3 style="font-size:14px;margin:32px 0 var(--space-2);color:var(--text-2)">6 · 无任何实际耗时</h3>
+  <div class="warn-card empty">
+    还没有记录实际耗时。完成作业时记得填「实际」输入框，否则复盘结果无法校准预估。
+  </div>
+
+</section>
+
+</main>
+
+<script>
+// Tab 切换（无框架、无依赖）
+const tabs=document.querySelectorAll('.tab');
+const pages=document.querySelectorAll('.page');
+tabs.forEach(t=>t.addEventListener('click',()=>{
+  const id=t.dataset.tab;
+  tabs.forEach(x=>x.classList.toggle('active',x===t));
+  pages.forEach(p=>p.classList.toggle('active',p.id==='page-'+id));
+  window.scrollTo(0,0);
+}));
+
+// 深色模式切换（持久化到 localStorage）
+const root=document.documentElement;
+const tg=document.getElementById('themeToggle');
+const saved=localStorage.getItem('theme');
+if(saved) root.setAttribute('data-theme',saved);
+tg.addEventListener('click',()=>{
+  const cur=root.getAttribute('data-theme');
+  const next=cur==='dark'?'light':'dark';
+  root.setAttribute('data-theme',next);
+  localStorage.setItem('theme',next);
+  tg.textContent=next==='dark'?'☀ 浅色':'🌗 深色';
+});
+tg.textContent=root.getAttribute('data-theme')==='dark'?'☀ 浅色':'🌗 深色';
+
+// 解析页勾选计数（演示用）
+const checks=document.querySelectorAll('.result-table input[type="checkbox"]');
+checks.forEach(c=>c.addEventListener('change',updateSel));
+function updateSel(){
+  // 只算每行第一个 checkbox（任务勾选）
+  let n=0;
+  document.querySelectorAll('.result-table tbody tr').forEach(tr=>{
+    const cb=tr.querySelector('td.check-col input');
+    if(cb && cb.checked) n++;
+  });
+  document.getElementById('selCount').textContent=n;
+  document.getElementById('selCount2').textContent=n;
+}
+
+// 凌晨提示（演示用，根据真实时间判定）
+const ln=document.querySelector('.late-night');
+const hr=new Date().getHours();
+if(hr>=0 && hr<6){ln.classList.add('show');ln.textContent=`已是凌晨 ${hr}:${String(new Date().getMinutes()).padStart(2,'0')}，注意休息`}
+else if(hr>=23){ln.classList.add('show');ln.textContent=`已是 ${hr}:${String(new Date().getMinutes()).padStart(2,'0')}，注意休息`}
+</script>
+
+</body>
+</html>

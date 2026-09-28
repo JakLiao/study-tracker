@@ -1,0 +1,51 @@
+# ====== study-tracker · git 忽略 ======
+
+# 密钥 / 环境变量 (绝对禁止入库)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+*.egg
+.coverage
+htmlcov/
+
+# 数据库 (本地数据不入库)
+data/study.db
+data/study.db-journal
+data/study.db-shm
+data/study.db-wal
+# 任何 study.db* 备份/临时文件 (含 .bak-pre-unicode-fix-时间戳 这类带后缀的)
+data/study.db*
+!data/.gitkeep
+
+# 服务运行时产物 (PID / 日志 / 元信息)
+run/
+
+# pytest 临时目录 (每轮测试会生成上百个 test_study.db)
+tmp/
+.pytest_tmp/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 编辑器 / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 导出数据 (用户本地备份, 不入库)
+data/exports/
+*.log

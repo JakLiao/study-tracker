@@ -1,0 +1,8 @@
+# ====== study-tracker v1 · 运行时依赖 ======
+# 与系统已装版本对齐 (2026-09-28 勘察)
+# 安装: pip install --break-system-packages -r requirements.txt
+
+fastapi==0.135.2
+pydantic==2.12.5
+requests==2.33.1
+uvicorn==0.42.0

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#F5F6F8" />
+  <title>study-tracker · 小学生作业跟踪</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>study-tracker <small>v1</small></h1>
+    <nav id="tabs" role="tablist">
+      <button data-tab="board" class="active" role="tab" aria-selected="true">看板</button>
+      <button data-tab="entry" role="tab" aria-selected="false">解析</button>
+      <button data-tab="list" role="tab" aria-selected="false">列表</button>
+      <button data-tab="weekly" role="tab" aria-selected="false">复盘</button>
+      <button data-tab="settings" role="tab" aria-selected="false">设置</button>
+    </nav>
+    <div id="health-bar" aria-live="polite"></div>
+    <button id="theme-toggle" class="theme-toggle" title="切换深色模式">🌗</button>
+  </header>
+
+  <main>
+    <!-- ====== 看板 ====== -->
+    <section id="view-board" class="view active" role="tabpanel">
+      <div id="board-content"></div>
+    </section>
+
+    <!-- ====== 解析 / 录入 ====== -->
+    <section id="view-entry" class="view" role="tabpanel">
+      <h2>录入作业</h2>
+      <p class="muted">粘贴老师通知原文 → AI 解析 → 逐条确认 → 入库</p>
+      <textarea id="raw-text" rows="10" placeholder="例如:&#10;&#10;【9.21英语】&#10;1. 一起作业; 2. 描写本 P11-12; 3. 背课文 P18-19。"></textarea>
+      <div class="char-count"><span id="char-count-num">0</span> / 10000</div>
+      <div class="row">
+        <button id="btn-parse" class="primary">解析</button>
+        <!-- 手动添加按钮: 设计文档 §9 坑 4 — 始终可见, AI 不可用时加暗红描边 -->
+        <button id="btn-add-manual" class="secondary" title="手动添加一条作业">手动添加</button>
+        <span id="parse-status" class="muted"></span>
+      </div>
+      <div id="parse-result"></div>
+    </section>
+
+    <!-- ====== 列表 ====== -->
+    <section id="view-list" class="view" role="tabpanel">
+      <h2>作业列表</h2>
+      <div class="row">
+        <label>日期
+          <input type="date" id="list-date" />
+        </label>
+        <button id="btn-load-list">加载</button>
+        <button id="btn-load-today" class="ghost">今天</button>
+        <button id="btn-load-yesterday" class="ghost">昨天</button>
+      </div>
+      <div id="list-content"></div>
+    </section>
+
+    <!-- ====== 复盘 ====== -->
+    <section id="view-weekly" class="view" role="tabpanel">
+      <h2>周期复盘</h2>
+      <div class="row">
+        <button data-week="current" class="primary week-btn active">本周</button>
+        <button data-week="last" class="ghost week-btn">上周</button>
+      </div>
+      <div id="weekly-content"></div>
+    </section>
+
+    <!-- ====== 设置 ====== -->
+    <section id="view-settings" class="view" role="tabpanel">
+      <h2>设置</h2>
+      <div id="settings-content"></div>
+      <h3>数据导出</h3>
+      <button id="btn-export" class="primary">下载全部数据 (JSON)</button>
+    </section>
+  </main>
+
+  <!-- ====== 通用 modal (手动添加 / 预览编辑) ====== -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-body">
+      <h3 id="modal-title"></h3>
+      <div id="modal-content"></div>
+      <div class="row">
+        <button id="modal-cancel" class="ghost">取消</button>
+        <button id="modal-ok" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== Toast (设计文档 §9 坑 2 兜底) ====== -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <footer>
+    <small>本地部署 · 单用户 · API: <code id="api-info">/api/health</code></small>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

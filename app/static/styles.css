@@ -1,0 +1,637 @@
+/* =====================================================================
+ * study-tracker 视觉对齐 v1 (2026-09-28 缪斯设计文档)
+ * 配套: docs/02-页面设计.md
+ * 设计基调: 「给家长看的家长会备忘录」 — 不卡通不渐变, 数字对齐, 置信度显眼
+ * =====================================================================
+ */
+
+/* ===== 1. 设计令牌 (颜色 / 间距 / 字号 / 圆角 / 阴影) ===== */
+:root {
+  /* 中性色 */
+  --bg: #F5F6F8;
+  --surface: #FFFFFF;
+  --surface-2: #F0F2F5;
+  --border: #E2E5EA;
+  --text-1: #1F2937;
+  --text-2: #4B5563;
+  --text-3: #9CA3AF;
+
+  /* 科目色 (低饱和 + 等明度) */
+  --c-语: #B4502E;
+  --c-语-soft: #FBEFE9;
+  --c-数: #3B6FA5;
+  --c-数-soft: #EBF1F7;
+  --c-英: #5B8A6B;
+  --c-英-soft: #EFF4F0;
+
+  /* 状态色 */
+  --status-todo: #6B7280;
+  --status-doing: #D97706;
+  --status-done: #059669;
+  --status-optional: #9CA3AF;
+  --status-overdue: #DC2626;
+  --status-overdue-soft: #FEF3F2;
+
+  /* 间距 (4 倍数) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* 阴影 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.04);
+
+  /* 字号 */
+  --fs-h1: 22px;
+  --fs-h2: 18px;
+  --fs-body: 15px;
+  --fs-body-s: 14px;
+  --fs-caption: 13px;
+  --fs-number-l: 22px;
+  --fs-number-s: 14px;
+}
+
+[data-theme="dark"] {
+  --bg: #0F1419;
+  --surface: #1A2027;
+  --surface-2: #222A33;
+  --border: #2D3742;
+  --text-1: #E8ECF1;
+  --text-2: #A5B1BD;
+  --text-3: #6B7785;
+  --c-语: #D17A5C;
+  --c-语-soft: #2B1F1A;
+  --c-数: #6B9DD0;
+  --c-数-soft: #1A2330;
+  --c-英: #85B098;
+  --c-英-soft: #1A2521;
+  --status-todo: #9CA3AF;
+  --status-doing: #F59E0B;
+  --status-done: #34D399;
+  --status-optional: #6B7785;
+  --status-overdue: #F87171;
+  --status-overdue-soft: #2A1818;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ===== 2. 全局重置 ===== */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* 全局 tabular-nums: 数字等宽对齐 (设计文档 §9 坑 1) */
+html { font-feature-settings: "tnum"; }
+body, input, button, textarea, select {
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui,
+               "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+/* ===== 3. 顶部 Header + Tab Bar ===== */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+header h1 {
+  font-size: var(--fs-h2);
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-1);
+}
+header h1 small { color: var(--text-3); font-weight: 400; margin-left: var(--space-1); }
+
+nav#tabs { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+nav#tabs button {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--fs-body-s);
+  min-height: 36px;
+}
+nav#tabs button.active {
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-weight: 600;
+}
+nav#tabs button:hover:not(.active) { background: var(--surface-2); }
+
+#health-bar {
+  margin-left: auto;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+#health-bar.ok-true { color: var(--status-done); }
+#health-bar.ok-false { color: var(--status-doing); }
+
+/* ===== 4. 主内容 ===== */
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  padding-bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0));
+}
+.view { display: none; }
+.view.active { display: block; }
+
+h2 { font-size: var(--fs-h1); margin: 0 0 var(--space-3); font-weight: 600; }
+h3 { font-size: var(--fs-h2); margin: var(--space-5) 0 var(--space-2); font-weight: 600; }
+.muted { color: var(--text-3); font-size: var(--fs-caption); }
+
+/* ===== 5. 输入控件 ===== */
+textarea, input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], select {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  background: var(--surface);
+  color: var(--text-1);
+  min-height: 36px;
+  transition: box-shadow 0.15s;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--text-1);
+}
+input.error { border-color: var(--status-overdue); box-shadow: 0 0 0 2px rgba(220,38,38,0.15); }
+textarea { resize: vertical; min-height: 160px; line-height: 1.5; }
+
+input[type="number"] { width: 88px; }
+
+.row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin: var(--space-3) 0; }
+.row label { display: flex; align-items: center; gap: var(--space-1); font-size: var(--fs-caption); color: var(--text-2); }
+
+/* ===== 6. 按钮 ===== */
+button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--fs-body-s);
+  min-height: 36px;
+  font-family: inherit;
+}
+button:hover:not(:disabled) { background: var(--surface-2); }
+button.primary {
+  background: var(--text-1);
+  color: var(--bg);
+  border-color: var(--text-1);
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) { opacity: 0.88; }
+button.secondary {
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  background: var(--surface);
+}
+button.ghost {
+  background: transparent;
+  color: var(--text-2);
+  border-color: transparent;
+}
+button.ghost:hover:not(:disabled) { background: var(--surface-2); }
+button.danger {
+  color: var(--status-overdue);
+  border-color: var(--status-overdue);
+  background: transparent;
+}
+button.danger:hover:not(:disabled) { background: var(--status-overdue-soft); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 手动添加按钮 — AI 失败时的 tooltip (设计文档 §9 坑 4) */
+button#btn-add-manual {
+  position: relative;
+}
+button#btn-add-manual[disabled-look="true"] {
+  border-color: var(--status-overdue);
+  color: var(--status-overdue);
+}
+
+/* ===== 7. 卡片 ===== */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+}
+.card-title .count {
+  margin-left: auto;
+  font-size: var(--fs-number-s);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.empty {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+.empty .empty-icon {
+  width: 48px; height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; color: var(--text-3);
+}
+
+/* ===== 8. 表格 ===== */
+table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius-md); overflow: hidden; }
+th, td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); font-size: var(--fs-body-s); }
+th { background: var(--surface-2); font-weight: 600; color: var(--text-2); }
+tr:last-child td { border-bottom: none; }
+
+/* ===== 9. 科目徽章 ===== */
+.subject-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  border: 1px solid currentColor;
+}
+.subject-tag.语文 { color: var(--c-语); background: var(--c-语-soft); border-color: transparent; }
+.subject-tag.数学 { color: var(--c-数); background: var(--c-数-soft); border-color: transparent; }
+.subject-tag.英语 { color: var(--c-英); background: var(--c-英-soft); border-color: transparent; }
+
+/* ===== 10. 置信度视觉 (设计文档 §9 坑 3 — 必须显眼) ===== */
+.confidence-row {
+  position: relative;
+  padding-left: var(--space-3) !important;
+  border-left: 3px solid transparent;
+}
+.confidence-row.medium {
+  border-left-color: var(--status-doing);
+}
+.confidence-row.low {
+  background: var(--status-overdue-soft);
+  border-left: 3px solid var(--status-overdue);
+}
+
+.confidence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+}
+.confidence-pill.high { color: var(--text-3); }
+.confidence-pill.medium {
+  color: var(--status-doing);
+  background: rgba(217, 119, 6, 0.1);
+}
+.confidence-pill.low {
+  color: var(--status-overdue);
+  background: rgba(220, 38, 38, 0.12);
+  font-weight: 600;
+}
+.confidence-pill.low::before { content: "⚠"; }
+
+/* 旧兼容 class (test_ai_parsing 等后端字段仍 confidence-{high,medium,low}) */
+.confidence-high { color: var(--status-done); }
+.confidence-medium { color: var(--status-doing); }
+.confidence-low { color: var(--status-overdue); font-weight: 600; }
+
+/* ===== 11. 选做徽章 ===== */
+.optional-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
+  background: var(--surface-2);
+  color: var(--text-2);
+  margin-left: var(--space-1);
+}
+
+/* ===== 12. 任务行 (看板核心组件, 设计文档 §5.1) ===== */
+.assignment-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.assignment-row:last-child { border-bottom: none; }
+
+.assignment-row .row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.assignment-row .row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  flex-wrap: wrap;
+}
+
+.assignment-row .task-name {
+  flex: 1;
+  color: var(--text-1);
+}
+.assignment-row.done .task-name {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+.assignment-row.skipped .task-name { color: var(--text-3); }
+
+/* 英雄数字: 预估/实耗分钟 (设计文档 §3) */
+.assignment-row .est-min {
+  font-size: var(--fs-number-l);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1;
+}
+.assignment-row .est-min::after {
+  content: " 分";
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-weight: 400;
+  margin-left: 2px;
+}
+
+.assignment-row .source-link {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.assignment-row .source-link:hover { color: var(--text-2); }
+
+.assignment-row .row-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* pending_actual 中间态 (设计文档 §9 坑 2): done 但未填实耗时, 输入框高亮 + focus */
+.assignment-row.pending-actual .actual-input {
+  border-color: var(--status-doing);
+  background: rgba(217, 119, 6, 0.06);
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
+}
+.assignment-row.pending-actual::before {
+  content: "⚠ 请补实际耗时";
+  font-size: var(--fs-caption);
+  color: var(--status-doing);
+  font-weight: 500;
+}
+
+/* 状态按钮 */
+.status-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  min-height: 28px;
+}
+.status-btn:hover { background: var(--surface-2); }
+.status-btn.active.todo { background: var(--status-todo); color: var(--surface); border-color: var(--status-todo); }
+.status-btn.active.doing { background: var(--status-doing); color: var(--surface); border-color: var(--status-doing); }
+.status-btn.active.done { background: var(--status-done); color: var(--surface); border-color: var(--status-done); }
+.status-btn.active.skipped { background: var(--status-optional); color: var(--surface); border-color: var(--status-optional); }
+
+/* ===== 13. 进度条 (设计文档 §5.5) ===== */
+.progress-bar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.progress-bar .progress-text {
+  font-size: var(--fs-number-s);
+  font-weight: 500;
+  color: var(--text-1);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+.progress-bar .progress-track {
+  height: 4px;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.progress-bar .progress-fill {
+  height: 100%;
+  background: var(--status-done);
+  border-radius: var(--radius-pill);
+  transition: width 0.2s;
+}
+
+/* ===== 14. 截止时间提醒 ===== */
+.deadline-warn {
+  background: var(--status-overdue-soft);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  border-left: 3px solid var(--status-overdue);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+}
+.deadline-warn strong { color: var(--status-overdue); margin-right: var(--space-2); }
+
+/* ===== 14.5 Spinner (AI 解析加载态 · P1 返工 2026-09-28) ===== */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(220, 38, 38, 0.18);
+  border-top-color: var(--status-overdue, #dc2626);
+  border-radius: 50%;
+  animation: st-spin 0.8s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+@keyframes st-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== 15. 错误 / 成功 Banner ===== */
+.error-banner {
+  background: var(--status-overdue-soft);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-left: 3px solid var(--status-overdue);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.error-banner::before { content: "⚠"; color: var(--status-overdue); font-weight: 600; }
+.success-banner {
+  background: rgba(5, 150, 105, 0.08);
+  border: 1px solid rgba(5, 150, 105, 0.3);
+  border-left: 3px solid var(--status-done);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+  font-size: var(--fs-body-s);
+}
+
+/* ===== 16. Modal ===== */
+.modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 20, 25, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-3);
+}
+.modal.hidden { display: none; }
+.modal-body {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow: auto;
+  box-shadow: var(--shadow-card);
+}
+.modal-body h3 { margin-top: 0; }
+.modal-body .row:last-child { margin-top: var(--space-4); }
+
+/* ===== 17. 预览表 (解析页) ===== */
+.preview-table input, .preview-table select { width: auto; min-width: 80px; }
+.preview-table tr.confidence-low {
+  background: var(--status-overdue-soft);
+}
+.preview-table tr.confidence-low td:first-child {
+  border-left: 3px solid var(--status-overdue);
+}
+
+/* ===== 19. 底部 Tab Bar (移动端, 设计文档 §6) ===== */
+@media (max-width: 639px) {
+  main { padding: var(--space-3); }
+  nav#tabs { order: 3; width: 100%; justify-content: space-around; }
+  nav#tabs button {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-2) 0;
+    font-size: var(--fs-caption);
+  }
+  header { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
+  header h1 { font-size: var(--fs-h2); }
+  #health-bar { font-size: 11px; }
+}
+
+/* ===== 20. Footer ===== */
+footer {
+  text-align: center;
+  padding: var(--space-4);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* ===== 21. 周复盘卡 ===== */
+.advice-card {
+  background: rgba(217, 119, 6, 0.06);
+  border-left: 3px solid var(--status-doing);
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-body-s);
+}
+.diff-pos { color: var(--status-overdue); font-weight: 600; }
+.diff-neg { color: var(--status-done); font-weight: 600; }
+
+/* ===== 22. 深色模式开关 (Footer 旁) ===== */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  padding: var(--space-1) var(--space-2);
+  min-height: 28px;
+  margin-left: var(--space-2);
+}
+
+/* ===== 23. 字符计数 ===== */
+.char-count {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  text-align: right;
+  margin-top: 4px;
+}
+.char-count.warn { color: var(--status-overdue); }
+
+/* ===== 24. Toast (设计文档 §9 坑 2 兜底) ===== */
+.toast {
+  position: fixed;
+  bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0));
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-1);
+  color: var(--bg);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  z-index: 1100;
+  box-shadow: var(--shadow-card);
+  animation: toast-in 0.2s ease-out;
+}
+.toast.hidden { display: none; }
+@keyframes toast-in {
+  from { transform: translate(-50%, 8px); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
