@@ -128,6 +128,7 @@ header h1 {
   margin: 0;
   font-weight: 600;
   color: var(--text-1);
+  letter-spacing: .01em;
 }
 header h1 small { color: var(--text-3); font-weight: 400; margin-left: var(--space-1); }
 
@@ -149,13 +150,27 @@ nav#tabs button.active {
 }
 nav#tabs button:hover:not(.active) { background: var(--surface-2); }
 
+/* 右上角 (2026-09-28 改: 原来显示 "DB ok · 模型 MiniMax-M3 · AI ✓ 可用",
+   是给开发看的运维信息; 家长关心的是"今天是几号", 故主显示日期+星期。
+   AI 状态降级为仅在异常时出现的警告。 */
 #health-bar {
   margin-left: auto;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+  font-size: var(--fs-body-s);
+  color: var(--text-2);
+  white-space: nowrap;
 }
-#health-bar.ok-true { color: var(--status-done); }
-#health-bar.ok-false { color: var(--status-doing); }
+#health-bar .today-label {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+#health-bar .health-warn {
+  font-size: var(--fs-caption);
+  color: var(--status-doing);
+}
+/* 无论 AI 可用与否, 日期本身都用同一色 —— 让"今天几号"保持稳定,
+   不因 AI 状态变化而闪变。 */
+#health-bar.ok-true, #health-bar.ok-false { color: var(--text-2); }
 
 /* ===== 4. 主内容 ===== */
 main {

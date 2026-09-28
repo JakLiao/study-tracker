@@ -1,7 +1,8 @@
 /* ===== flatpickr 主题 (2026-09-28) =====
    把 flatpickr 默认的灰蓝色调覆盖成项目的奶油糖果浅色风格。
-   只覆盖配色与圆角, 不动布局 —— flatpickr 的 DOM 结构由库保证,
-   改结构会在版本升级时碎掉。
+   原则: 不改 DOM 结构(库的渲染逻辑依赖它, 升级会碎), 但允许修
+   布局 —— 2026-09-28 修过一处: months 高度没跟上 current-month
+   的下移, 导致月份压住星期表头。
 
    可读性: 日历是家长高频使用区, 文字对比度按 WCAG AA 校准。
    --text-1 深棕在 --surface 白底上约 10:1, 远高于阈值。 */
@@ -12,6 +13,9 @@
   box-shadow: var(--shadow-card);
   background: var(--surface);
   font-family: inherit;
+  /* 弹层会盖到录入区的 textarea 上, 必须显式抬层级, 否则被后加的
+     表单元素压住(截图里日历边缘就看不见了)。 */
+  z-index: 900;
 }
 
 .flatpickr-calendar.arrowTop::before,
@@ -25,10 +29,18 @@
   border-bottom-color: var(--border);
 }
 
-/* 月份标题栏 */
+/* 月份标题栏。
+   布局陷阱 (2026-09-28 用户截图: "九月 2026" 压住了"周二"):
+   库把 .flatpickr-current-month 做成 absolute + height:34px, 而
+   .flatpickr-months 自身是纯 flex 容器、没有高度。此前我给 months
+   加了 padding-top, 又给 current-month 加了 top, 等于把元素整体下移
+   14px 而容器高度没跟着涨, 下面的星期表头就被盖住了。
+   这里改为: 去掉所有 top 偏移, 让 absolute 元素回到库给定的 34px
+   槽位内, 高度由 months 的 padding 显式撑出来。 */
 .flatpickr-months {
   align-items: center;
   padding: var(--space-2) 0 0;
+  height: 42px;              /* 34px 标题槽 + 上下留白, 托住星期表头 */
 }
 .flatpickr-months .flatpickr-month,
 .flatpickr-current-month {
@@ -37,17 +49,25 @@
   font-weight: 600;
   background: transparent;
   fill: var(--text-1);
-  top: 6px;
+  top: 0;
+  height: 34px;
+  padding-top: 7px;
+  line-height: 1;
 }
-/* 当前月显示为 "9月" 而非 "九月", 更短更好读 */
+/* 月份下拉与年份输入: 库默认给了下划线, 去掉后整行更干净。
+   月份用中文 "9月" 而不是 "九月", 更短更好读。 */
 .flatpickr-current-month span.cur-month { font-weight: 600; }
 .flatpickr-current-month input.cur-year {
   font-weight: 600;
   color: var(--text-1);
   border-bottom: none;
+  width: 3.5em;
+  text-align: center;
 }
 .flatpickr-current-month input.cur-year:focus {
   outline: none;
+  box-shadow: none;
+  border-bottom: 1px solid var(--accent);
 }
 
 .flatpickr-monthDropdown-months,

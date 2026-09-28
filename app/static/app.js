@@ -102,12 +102,33 @@ document.querySelectorAll('#tabs button').forEach(btn => {
 window.switchTab = switchTab;
 
 // ====== Health ======
+// 右上角主显示"当天日期 + 星期"(2026-09-28 用户反馈: 原来显示
+// "DB ok · 模型 MiniMax-M3" 是给开发看的, 家长更关心今天是几号)。
+// AI 可用性降为次要信息: 可用时不占视觉, 不可用时才提示 —— 因为
+// "AI 未配置"是需要提醒的故障, 静默丢掉会让家长以为功能坏了。
+//
+// 复用 todayStr() 而不是自己再拼一遍日期: 它已经处理了 UTC+8
+// 凌晨会退到前一天的问题, 两套实现迟早会漂移。
+function renderToday() {
+  const now = new Date();
+  const week = '日一二三四五六'[now.getDay()];
+  return {
+    date: todayStr(),
+    week: `星期${week}`,
+    short: `${now.getMonth() + 1}月${now.getDate()}日 星期${week}`,
+  };
+}
+
 async function loadHealth() {
   const bar = document.getElementById('health-bar');
+  const t = renderToday();
   try {
     const h = await api('GET', '/health');
-    bar.textContent = `DB ok · 模型 ${h.ai_model || '-'} · AI ${h.ai_reachable ? '✓ 可用' : '✗ 未配置'}`;
-    bar.className = h.ai_reachable ? 'ok-true' : 'ok-false';
+    const aiOk = !!h.ai_reachable;
+    // 主: 日期 + 星期。AI 正常时完全不提, 异常时才补一句警告。
+    bar.innerHTML = `<span class="today-label">${t.short}</span>` +
+      (aiOk ? '' : `<span class="health-warn"> · AI 未配置, 可手动添加</span>`);
+    bar.className = aiOk ? 'ok-true' : 'ok-false';
     // 手动添加按钮 AI 不可用时加暗红描边 (设计文档 §9 坑 4)
     const btnManual = document.getElementById('btn-add-manual');
     if (btnManual) {
@@ -119,7 +140,9 @@ async function loadHealth() {
       }
     }
   } catch (e) {
-    bar.textContent = 'health 失败: ' + e.message;
+    // 失败时也要显示日期 —— 今天是几号跟后端通不通无关, 不能被异常冲掉。
+    bar.innerHTML = `<span class="today-label">${t.short}</span>` +
+      `<span class="health-warn"> · 连接异常</span>`;
     bar.className = 'ok-false';
   }
 }

@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#F5F6F8" />
-  <title>study-tracker · 小学生作业跟踪</title>
+  <title>作业小助手 · 小学生作业跟踪</title>
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/vendor/flatpickr.min.css" />
   <link rel="stylesheet" href="/static/vendor/flatpickr-theme.css" />
 </head>
 <body>
   <header>
-    <h1>study-tracker <small>v1</small></h1>
+    <h1>作业小助手</h1>
     <nav id="tabs" role="tablist">
       <button data-tab="board" class="active" role="tab" aria-selected="true">看板</button>
       <button data-tab="entry" role="tab" aria-selected="false">解析</button>
@@ -116,7 +116,7 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <footer>
-    <small>本地部署 · 单用户 · API: <code id="api-info">/api/health</code></small>
+    <small id="api-info">作业数据保存在本机, 不上传到任何服务器</small>
   </footer>
 
   <script src="/static/vendor/flatpickr.min.js"></script>
