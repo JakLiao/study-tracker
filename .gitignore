@@ -43,6 +43,9 @@ venv/
 .venv/
 env/
 
+# 设计讨论过程产物 (brainstorm 线框图/会话, 不入库)
+.superpowers/
+
 # 编辑器 / OS
 .vscode/
 .idea/
