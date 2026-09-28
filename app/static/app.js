@@ -215,7 +215,7 @@ async function loadBoard() {
           <div class="empty-icon">📋</div>
           <p>${b.is_today ? '今天还没有作业' : '这天没有作业记录'}</p>
           ${b.is_today ? '<button class="primary" data-action="goto-entry">去录入</button>' : ''}
-          <p class="muted">${b.is_today ? '或者手动添加一条作业' : '可以在「列表」页查看其他日期'}</p>
+          <p class="muted">${b.is_today ? '或者手动添加一条作业' : '可以在「日历」页查看其他日期'}</p>
         </div>
       `));
       const go = root.querySelector('[data-action="goto-entry"]');
@@ -883,7 +883,7 @@ const entryDate = document.getElementById('entry-date');
 entryDate.value = todayStr();
 
 if (window.flatpickr && window.zh) {
-  // 中文包默认周日起始, 但列表页的月历是周一起始(后端 first_weekday
+  // 中文包默认周日起始, 但日历页的月历是周一起始(后端 first_weekday
   // 按 Monday=0 返回)。两个日历起点不一致会让家长以为看错了,
   // 这里统一成周一起始, 且必须在 localize 之前改。
   window.zh.firstDayOfWeek = 1;
@@ -891,7 +891,7 @@ if (window.flatpickr && window.zh) {
   initDatePickersIn(document);   // 含 entry-date
 }
 
-// ====== 日历 / 列表 ======
+// ====== 日历 (月历 + 当日详情) ======
 // 当前展示的月份 (null = 本月) 与选中的日期。
 // 记下来是为了切 Tab 回来时保留用户翻到的那个月, 而不是每次都弹回本月。
 let _calYear = null;
@@ -1033,7 +1033,7 @@ function renderDayDetail(root, d, items) {
 }
 
 // 历史日期改状态后要同时刷新日历格子, 但不整页重载,
-// 否则家长点一下"完成"就被弹回列表顶部。
+// 否则家长点一下"完成"就被弹回日历页顶部。
 function refreshCalendarDetail() {
   if (_calData) {
     api('GET', `/assignments/calendar?year=${_calYear}&month=${_calMonth}`)

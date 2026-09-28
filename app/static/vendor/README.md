@@ -47,5 +47,5 @@ curl -sLO https://cdn.jsdelivr.net/npm/flatpickr@<新版本>/dist/l10n/zh.js
    所以绑定时要按 `input.type === 'date'` 过滤，而不是只按类名。
 4. **先赋值再初始化**。组件化后原生框是 hidden，直接写 `.value`
    不会同步到可见框。
-5. **中文包默认周日起始**，而列表页的月历是周一起始。
+5. **中文包默认周日起始**，而日历页的月历是周一起始。
    `app.js` 在 `localize()` 之前把 `zh.firstDayOfWeek` 改成 `1`。

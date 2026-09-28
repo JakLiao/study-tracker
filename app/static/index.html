@@ -15,7 +15,7 @@
     <nav id="tabs" role="tablist">
       <button data-tab="board" class="active" role="tab" aria-selected="true">看板</button>
       <button data-tab="entry" role="tab" aria-selected="false">解析</button>
-      <button data-tab="list" role="tab" aria-selected="false">列表</button>
+      <button data-tab="list" role="tab" aria-selected="false">日历</button>
       <button data-tab="weekly" role="tab" aria-selected="false">复盘</button>
       <button data-tab="settings" role="tab" aria-selected="false">设置</button>
     </nav>
@@ -50,7 +50,9 @@
       <div id="parse-result"></div>
     </section>
 
-    <!-- ====== 列表 (日历 + 当日详情) ====== -->
+    <!-- ====== 日历 (月历 + 当日详情) ======
+         id 仍是 view-list: switchTab('list') 与之绑定, 改名会牵连多处;
+         用户可见的 Tab 名称已改为"日历"(2026-09-28)。 -->
     <section id="view-list" class="view" role="tabpanel">
       <h2>作业日历</h2>
       <div class="cal-head">

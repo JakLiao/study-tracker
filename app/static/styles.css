@@ -417,8 +417,8 @@ tr:last-child td { border-bottom: none; }
 
 /* ===== 11.8 选做 / 必做 底色区分 (2026-09-28) =====
  * 需求: 家长要一眼看出"这项是必须做的, 还是有空再做的"。
- * 看板已把选做放进独立分区, 但展开后与必做行长得一样; 列表页
- * 更是把两者混在同一张表里, 只有任务名后一个小小的"选"字。
+ * 看板已把选做放进独立分区, 但展开后与必做行长得一样; 日历页
+ * 详情区同样把两者分区展示, 靠底色与左侧竖线再强化一次。
  *
  * 配色取舍: 最初想复用 --surface-2 (#FFF1E4), 但它和卡片白 #FFFFFF
  * 差异太小, 实测难以分辨, 且与表头底色撞车。改为独立的琥珀色,
@@ -431,14 +431,6 @@ tr:last-child td { border-bottom: none; }
   padding-left: var(--space-2);
   padding-right: var(--space-2);
   /* 左侧竖线: 底色在低对比屏上可能被弱化, 竖线保证任何背景下都可见 */
-  box-shadow: inset 3px 0 0 var(--row-opt-bar);
-}
-
-/* 列表页表格行: 同一套语言 */
-tr.is-optional td {
-  background: var(--row-opt-bg);
-}
-tr.is-optional td:first-child {
   box-shadow: inset 3px 0 0 var(--row-opt-bar);
 }
 
@@ -948,7 +940,7 @@ footer {
 /* ===== 24. 作业日历 (2026-09-28) =====
    目标: 点一个日期就能看到当天做了什么、完成到什么程度。
    布局顺序刻意是"月历在上、当天详情在下"—— 家长是"先选日子, 再看那天",
-   与列表页的读写顺序一致。 */
+   与看板的读写顺序一致。 */
 .cal-head {
   display: flex;
   align-items: center;

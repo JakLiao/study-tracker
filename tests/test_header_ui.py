@@ -104,6 +104,45 @@ def test_footer_does_not_leak_api_path(index_html):
     assert "/api/health" not in foot
 
 
+# ====== 1b. Tab 名称 (2026-09-28: 列表 -> 日历) ======
+
+def test_list_tab_renamed_to_calendar(index_html):
+    m = re.search(r'<button[^>]*data-tab="list"[^>]*>(.*?)</button>', index_html)
+    assert m, "缺少日历 Tab"
+    assert m.group(1).strip() == "日历", m.group(1)
+
+
+def test_tab_labels_all_chinese(index_html):
+    """五个 Tab 都不该出现英文代号或版本号。"""
+    labels = re.findall(r'<button[^>]*data-tab="[^"]+"[^>]*>(.*?)</button>', index_html)
+    assert labels == ["看板", "解析", "日历", "复盘", "设置"], labels
+    for l in labels:
+        assert not re.search(r"[A-Za-z]", l), l
+
+
+def test_view_id_unchanged(index_html):
+    """用户可见名改了, 但内部 id 必须保持 view-list。
+
+    switchTab('list')、CSS 与测试都按这个 id 定位; 改它牵连多处而无收益。
+    """
+    assert 'id="view-list"' in index_html
+    assert 'data-tab="list"' in index_html
+
+
+def test_no_stale_list_wording_in_ui(index_html, app_js):
+    """界面上不应再出现旧的「列表」叫法。
+
+    只查用户可见部分: 内部 id(view-list / data-tab="list")保留不动。
+    """
+    for src in (index_html, app_js):
+        # 去掉 HTML 注释与 JS 行注释后再查
+        s = re.sub(r"<!--.*?-->", "", src, flags=re.S)
+        s = "\n".join(l for l in s.splitlines() if not l.strip().startswith("//"))
+        # 保留中文引号内的用法, 只找裸的「列表」/列表页/列表」
+        assert "「列表」" not in s, "空状态引导文案仍指向旧 Tab 名"
+        assert "列表页" not in s, "注释或文案仍称列表页"
+
+
 # ====== 2. 右上角日期 + 星期 ======
 
 def test_health_bar_no_longer_shows_dev_info(app_js):

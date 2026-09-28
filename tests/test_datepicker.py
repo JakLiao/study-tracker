@@ -12,7 +12,7 @@
      一组控件, 页面被撑高。
   3. 库不会把实例挂在元素上 (4.6.13 源码里没有 _fpFlatpickr),
      也不提供 getElementById 反查, 必须由我们自己留存实例。
-  4. 周起始要与列表页月历一致 (周一起始), 否则同页两个日历起点不同。
+  4. 周起始要与日历页月历一致 (周一起始), 否则同页两个日历起点不同。
 
 依赖 jsdom; 未安装则整组跳过, 不让本地开发被卡住。
 """
@@ -211,7 +211,7 @@ def test_chinese_weekdays(page):
 
 
 def test_monday_first_matches_board_calendar(page):
-    """与列表页月历(后端 first_weekday=Monday=0)一致。"""
+    """与日历页月历(后端 first_weekday=Monday=0)一致。"""
     assert page["calendar"]["weekdays"][0] == "周一"
 
 
