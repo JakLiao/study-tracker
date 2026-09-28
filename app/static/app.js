@@ -631,11 +631,11 @@ function renderPreviewTable(items, batchId) {
       </td>
       <td><input data-field="task_name" value="${escapeAttr(it.task_name)}" /></td>
       <td>
-        <input data-field="due_date" type="date" class="${noAiDate ? 'need-date' : ''}"
+        <input data-field="due_date" type="date" class="js-datepicker ${noAiDate ? 'need-date' : ''}"
                value="${it.due_date || ''}" placeholder="${batchDate || todayStr()}" />
         ${noAiDate ? '<small class="need-date-hint">AI 未识别归属日, 请确认</small>' : ''}
       </td>
-      <td><input data-field="deadline_time" type="datetime-local" value="${it.deadline_time ? it.deadline_time.slice(0,16) : ''}" /></td>
+      <td><input data-field="deadline_time" type="datetime-local" class="js-datetimepicker" value="${it.deadline_time ? it.deadline_time.slice(0,16) : ''}" /></td>
       <td><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
       <td><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || 15}" /></td>
       <td>${confidencePill(it.confidence)}</td>
@@ -645,6 +645,9 @@ function renderPreviewTable(items, batchId) {
     tr.querySelector('.row-del').addEventListener('click', () => tr.remove());
     tbody.appendChild(tr);
   });
+  // 预览表是动态生成的, 必须在这时才绑定 flatpickr ——
+  // 否则新出现的日期框仍是原生控件。删行不影响已绑定的实例。
+  initDatePickersIn(result);
   result.querySelector('#btn-confirm').addEventListener('click', () => confirmBatch(batchId, result));
   result.querySelector('#btn-discard').addEventListener('click', () => { result.innerHTML = ''; });
 }
@@ -682,8 +685,12 @@ async function confirmBatch(batchId, result) {
     if (!it.due_date) {
       // AI 未识别日期的行现在留空, 这条校验从死代码变成真正的守卫
       toast('有作业未确认归属日, 请先填写');
-      const firstEmpty = result.querySelector('[data-field="due_date"].need-date, [data-field="due_date"]:not([value])');
-      if (firstEmpty) firstEmpty.focus();
+      // 按属性值而非 [value] 属性选择: flatpickr 初始化会重写 value 属性,
+      // 用 :not([value]) 会漏掉这些行, 家长点了没反应。
+      const emptyCell = [...result.querySelectorAll('[data-field="due_date"]')]
+        .find(inp => !inp.value);
+      // 直接把日历弹开 —— 家长点了"入库"却被拒绝, 至少该立刻能选日期
+      if (emptyCell) openDatePicker(emptyCell);
       return;
     }
     if (!it.est_minutes || it.est_minutes < 1 || it.est_minutes > 180) {
@@ -726,11 +733,13 @@ function openManualAddModal() {
     </div>
     <div class="row" style="flex-direction:column; align-items:stretch;">
       <label>任务名 <input id="m-name" placeholder="如: 完成知能 P14" /></label>
-      <label>归属日 <input id="m-due" type="date" value="${todayStr()}" /></label>
-      <label>截止时间 (可选) <input id="m-dl" type="datetime-local" /></label>
+      <label>归属日 <input id="m-due" type="date" class="js-datepicker" value="${todayStr()}" /></label>
+      <label>截止时间 (可选) <input id="m-dl" type="datetime-local" class="js-datetimepicker" /></label>
       <label><input id="m-opt" type="checkbox" /> 选做</label>
     </div>
   `;
+  // modal-content 每次打开都是新 DOM, 所以在这里绑定而不是页面启动时
+  initDatePickersIn(document.getElementById('modal-content'));
   document.getElementById('modal-ok').onclick = async () => {
     const dl = document.getElementById('m-dl').value;
     const items = [{
@@ -757,6 +766,88 @@ function openManualAddModal() {
   };
 }
 
+// ====== 日期选择器 (flatpickr · 2026-09-28) ======
+// 原生 <input type="date"> 在 Windows 上是系统控件: 灰色渐变、系统字体、
+// 图标样式不可控, 且和项目奶油糖果配色完全割裂。改用 flatpickr。
+//
+// 统一走这一个函数初始化, 别处不要各自 new flatpickr —— 配置分散后
+// 很快会出现"录入页好看、预览表还是原生控件"的分裂。
+const datePickerOptions = {
+  // altInput: flatpickr 自己生成可读文本框 (如 "2026-09-28"),
+  // 原生 input 隐藏但保持 value 为 ISO 格式 —— collectRows() 仍在读它。
+  altInput: true,
+  altFormat: 'Y-m-d',
+  dateFormat: 'Y-m-d',
+  locale: 'zh',            // 周一起始 + 中文星期/月份
+  allowInput: true,        // 允许直接键入 2026-09-28
+  // 不锁 min/max: 家长要能补录往年作业
+};
+
+// 已初始化控件的 flatpickr 实例。
+//
+// 库不会把实例挂在元素上(4.6.13 源码里 _fpFlatpickr 出现 0 次),
+// 也不提供 getElementById / DOM 命名空间反查, 所以只能由我们
+// 在初始化时自己留存 —— 这是唯一可靠的方式。
+function initDatePicker(input, opts) {
+  if (!input || input._fpInstance) return input._fpInstance;
+  const inst = flatpickr(input, opts);
+  input._fpInstance = inst;
+  return inst;
+}
+
+// 截止时间用带时分的同一个组件, 避免表里一半奶油一半系统灰。
+const dateTimePickerOptions = {
+  ...datePickerOptions,
+  enableTime: true,
+  time_24hr: true,
+  dateFormat: 'Y-m-d\\TH:i',     // 与 collectRows 里 dlRaw + ':00' 的拼法对齐
+  altFormat: 'Y-m-d H:i',
+  minuteIncrement: 5,
+};
+
+// 扫描任意容器里的日期/时间框并初始化。
+// 解析预览表是动态生成的, 每次渲染后都要重跑, 否则新行的日期框
+// 依然是原生控件 —— 这是接入 flatpickr 时最容易漏的一环。
+//
+// 过滤条件是 type 仍为 date / datetime-local: 库初始化后会把原 input
+// 改成 type=hidden, 并另建一个同样带 js-datepicker 类的 type=text 可见框。
+// 只按 js-datepicker 选会把这两个都扫到, 导致每次扫描多生成一组控件。
+function initDatePickersIn(root) {
+  const scope = root || document;
+  if (!scope.querySelectorAll) return;
+  scope.querySelectorAll('input.js-datepicker').forEach(input => {
+    if (input.type === 'date') initDatePicker(input, datePickerOptions);
+  });
+  scope.querySelectorAll('input.js-datetimepicker').forEach(input => {
+    if (input.type === 'datetime-local') initDatePicker(input, dateTimePickerOptions);
+  });
+}
+
+// 打开某个原生 input 对应的日历。altInput 模式下原生框已被隐藏,
+// 焦点必须落在库生成的可见框上, 否则家长点了没反应。
+function openDatePicker(input) {
+  const inst = input && input._fpInstance;
+  if (!inst) return false;
+  if (inst.altInput && inst.altInput.focus) inst.altInput.focus();
+  if (typeof inst.open === 'function') inst.open();
+  return true;
+}
+
+// 录入页的批次级默认归属日。
+// 顺序要紧: 先赋值再初始化组件。反过来的话, flatpickr 已把原生框改成
+// type=hidden, 直接写 .value 不会再同步到可见框, 日历打开会是空白。
+const entryDate = document.getElementById('entry-date');
+entryDate.value = todayStr();
+
+if (window.flatpickr && window.zh) {
+  // 中文包默认周日起始, 但列表页的月历是周一起始(后端 first_weekday
+  // 按 Monday=0 返回)。两个日历起点不一致会让家长以为看错了,
+  // 这里统一成周一起始, 且必须在 localize 之前改。
+  window.zh.firstDayOfWeek = 1;
+  flatpickr.localize(window.zh);
+  initDatePickersIn(document);   // 含 entry-date
+}
+
 // ====== 日历 / 列表 ======
 // 当前展示的月份 (null = 本月) 与选中的日期。
 // 记下来是为了切 Tab 回来时保留用户翻到的那个月, 而不是每次都弹回本月。
@@ -764,9 +855,6 @@ let _calYear = null;
 let _calMonth = null;
 let _calSelected = null;
 let _calData = null;
-
-// 录入页的批次级默认归属日
-document.getElementById('entry-date').value = todayStr();
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 

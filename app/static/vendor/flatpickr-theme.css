@@ -1,0 +1,204 @@
+/* ===== flatpickr 主题 (2026-09-28) =====
+   把 flatpickr 默认的灰蓝色调覆盖成项目的奶油糖果浅色风格。
+   只覆盖配色与圆角, 不动布局 —— flatpickr 的 DOM 结构由库保证,
+   改结构会在版本升级时碎掉。
+
+   可读性: 日历是家长高频使用区, 文字对比度按 WCAG AA 校准。
+   --text-1 深棕在 --surface 白底上约 10:1, 远高于阈值。 */
+
+.flatpickr-calendar {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  background: var(--surface);
+  font-family: inherit;
+}
+
+.flatpickr-calendar.arrowTop::before,
+.flatpickr-calendar.arrowTop::after,
+.flatpickr-calendar.arrowBottom::before,
+.flatpickr-calendar.arrowBottom::after {
+  border-bottom-color: var(--surface);
+}
+.flatpickr-calendar.arrowTop::before,
+.flatpickr-calendar.arrowBottom::before {
+  border-bottom-color: var(--border);
+}
+
+/* 月份标题栏 */
+.flatpickr-months {
+  align-items: center;
+  padding: var(--space-2) 0 0;
+}
+.flatpickr-months .flatpickr-month,
+.flatpickr-current-month {
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  background: transparent;
+  fill: var(--text-1);
+  top: 6px;
+}
+/* 当前月显示为 "9月" 而非 "九月", 更短更好读 */
+.flatpickr-current-month span.cur-month { font-weight: 600; }
+.flatpickr-current-month input.cur-year {
+  font-weight: 600;
+  color: var(--text-1);
+  border-bottom: none;
+}
+.flatpickr-current-month input.cur-year:focus {
+  outline: none;
+}
+
+.flatpickr-monthDropdown-months,
+.flatpickr-current-month .flatpickr-monthDropdown-months {
+  background: var(--surface);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+}
+.flatpickr-monthDropdown-months .flatpickr-monthDropdown-month {
+  background: transparent;
+  color: var(--text-1);
+}
+.flatpickr-monthDropdown-months .flatpickr-monthDropdown-month:hover,
+.flatpickr-monthDropdown-months .flatpickr-monthDropdown-month:focus {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+/* 上下月箭头: 默认是灰底黑图, 改为粉色描边胶囊 */
+.flatpickr-prev-month,
+.flatpickr-next-month {
+  color: var(--accent);
+  fill: var(--accent);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  top: 2px;
+}
+.flatpickr-prev-month:hover,
+.flatpickr-next-month:hover {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+  fill: var(--warn-ink);
+}
+
+.flatpickr-months .flatpickr-prev-month,
+.flatpickr-months .flatpickr-next-month {
+  z-index: 3;
+}
+
+/* 星期表头 */
+span.flatpickr-weekday {
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  background: transparent;
+  justify-content: center;
+  line-height: 1;
+}
+span.flatpickr-weekday.weekend { color: #C77B8A; }
+
+/* 日期格子 —— 保持正方形, 否则换成选中态时会跳 */
+.dayContainer,
+.flatpickr-days,
+.flatpickr-week,
+.flatpickr-day {
+  width: 100%;
+}
+span.flatpickr-day {
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font-size: var(--fs-body-s);
+  font-weight: 500;
+  border: none;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+}
+span.flatpickr-day:hover,
+span.flatpickr-day:focus,
+span.flatpickr-day.flatpickr-day:hover,
+span.flatpickr-day.nextMonthDay:hover,
+span.flatpickr-day.prevMonthDay:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+span.flatpickr-day.today {
+  border-color: var(--accent);
+  border-width: 2px;
+  color: var(--warn-ink);
+  font-weight: 700;
+}
+span.flatpickr-day.today:hover { background: var(--warn-soft); color: var(--warn-ink); }
+
+/* 选中日: 实心粉, 白字。--accent #FF6B9D 上白字仅 ~2.6:1,
+   故选中态改用 --warn-ink #C2185B (白字 ~5.4:1), 与"完成"绿
+   按钮一样遵循 AA。 */
+span.flatpickr-day.selected,
+span.flatpickr-day.startRange,
+span.flatpickr-day.endRange {
+  background: var(--warn-ink);
+  border-color: var(--warn-ink);
+  color: #fff;
+  font-weight: 700;
+}
+span.flatpickr-day.selected:hover,
+span.flatpickr-day.startRange:hover,
+span.flatpickr-day.endRange:hover {
+  background: var(--warn-ink);
+  color: #fff;
+}
+
+/* 已在看板/日历里排过的日期: 淡粉提示, 帮家长避开重复录入的日子 */
+span.flatpickr-day.flatpickr-day:hover,
+.flatpickr-days span.flatpickr-day.flatpickr-day.today + span.flatpickr-day { }
+
+/* 数字输入框 (直接键入日期) */
+.flatpickr-custom-input {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  font-size: var(--fs-body-s);
+  padding: var(--space-2) var(--space-3);
+}
+.flatpickr-custom-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--warn-soft);
+}
+
+/* 触发按钮: 隐藏原生 input 上的系统日历图标 —— Windows 的灰白
+   图标和奶油配色冲突, 而且点它会走系统弹窗, 绕过 flatpickr。 */
+.flatpickr-input[readonly],
+input[type="date"].flatpickr-input {
+  cursor: pointer;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--surface) no-repeat right 10px center;
+  padding-right: var(--space-6);
+  cursor: pointer;
+}
+/* 有值时右侧显示一个粉色小圆点, 提示"可点开日历" */
+input[type="date"].js-datepicker:not([value=""]):not([value="undefined"]) {
+  background-image: radial-gradient(circle, var(--accent) 4px, transparent 4px);
+  background-position: right 14px center;
+}
+
+/* flatpickr altInput 生成的文本框: 与其它输入框同款 */
+.alt-input-date {
+  min-width: 150px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+/* 窄屏: 日历弹出层不能超出屏幕 */
+@media (max-width: 480px) {
+  .flatpickr-calendar { width: 100%; max-width: 320px; }
+  span.flatpickr-day { font-size: 13px; }
+}

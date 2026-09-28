@@ -19,6 +19,11 @@ build/
 .coverage
 htmlcov/
 
+# Node (仅为前端集成测试装 jsdom, 运行时不需要)
+node_modules/
+package-lock.json
+package.json
+
 # 数据库 (本地数据不入库)
 data/study.db
 data/study.db-journal
