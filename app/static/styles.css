@@ -104,6 +104,11 @@ body, input, button, textarea, select {
   -webkit-font-smoothing: antialiased;
 }
 
+/* SVG 图形库宿主: 只放 <defs>, 自身不渲染任何图形。
+   不能用 display:none —— 部分浏览器会让 display:none 的子树停止解析,
+   <use> 引用不到 <symbol>; 塌成 0x0 才是"仍在文档树里"的隐藏方式。 */
+.svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui,
                "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
@@ -688,13 +693,19 @@ tr.is-optional .muted {
  * 但按钮早已改为语义化(完成/今天不做/选做)且不再带 active 类, 导致那批
  * 规则全部失效, 所有按钮长得一模一样。
  *
- * 现在的语义 (2026-09-28 用户确认):
- *   完成   -> 绿底白字, 唯一的"好结果"动作, 视觉最重
+ * 现在的语义 (2026-09-28 用户确认, 09-29 微调):
+ *   完成   -> 小红花 + 红字, 唯一的"好结果"动作, 视觉最重
  *   今天不做 -> 红底白字, 唯一的"坏结果"动作, 明确是负向操作
  *   选做   -> 中性描边, 它只是个属性标记, 不是状态的终结
  *   撤销   -> 反色描边, 表示可逆
  * "开始"(doing) 按钮已移除: 家长不会特意点"开始", 直接点完成即可。
  * doing 状态后端保留(历史数据可能有), 但前端不再提供进入它的入口。
+ *
+ * 2026-09-29: "完成"从绿底实心块改成小红花贴纸。
+ * 颜色从绿换成红不是随意选的 —— 小红花是这个年龄段的奖励隐喻, 绿色按钮
+ * 对小孩只是"又一个按钮"。配色上刻意用"浅粉底 + 深红字"而不是"红底
+ * 白字": 后者会和"今天不做"的 #C0392B 红撞在一起, 家长在两个红块之间
+ * 会犹豫。浅底让红花像一张贴纸浮在白卡片上, 和描边类负向操作区分开。
  */
 /* ===== 12. 状态按钮 (2026-09-28 按操作频率分档) =====
    用户反馈"完成按钮太小, 其余按钮太抢眼"。于是把按钮分成两档:
@@ -722,25 +733,54 @@ tr.is-optional .muted {
 .status-btn:hover { filter: brightness(.96); }
 .status-btn:disabled { opacity: .55; cursor: not-allowed; }
 
-/* 完成: 绿底白字, 唯一的主操作。放大到 34px 高 + 15px 字。
-   #2A7D38 与白字 5.16:1, 达 WCAG AA
-   (初版用的 #2F8F3E 只有 4.10:1, 小字不达标, 已压暗) */
+/* 完成: 小红花贴纸。浅粉底 + 深红字, 红色留给花朵本身。
+   底色压得很浅是刻意的 —— 见 §12.5 的说明: 红底会和"今天不做"撞色。
+   #B3122F 在 #FFF3F5 上约 6.4:1, 达 WCAG AA (正文 14px/700 属"普通文本")。
+   花朵负责情绪, 文字负责可读性, 两者分工不同所以都保留。 */
 .status-btn.done {
-  background: #2A7D38;
-  border-color: #2A7D38;
-  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: linear-gradient(180deg, #FFF4F6 0%, #FFDBE3 100%);
+  border-color: #F0A3B4;
+  color: #B3122F;
   min-height: 34px;
-  padding: 4px var(--space-4);
+  padding: 3px var(--space-4) 3px var(--space-2);
   font-size: var(--fs-body-s, 14px);
   font-weight: 700;
   /* 主操作要能一眼锁定, 轻阴影让它从平面按钮里浮起来 */
-  box-shadow: 0 1px 3px rgba(42, 125, 56, .28);
+  box-shadow: 0 1px 3px rgba(179, 18, 47, .22);
 }
-.status-btn.done:hover { background: #226B2F; border-color: #226B2F; }
+.status-btn.done:hover {
+  background: linear-gradient(180deg, #FFE9EE 0%, #FFC7D4 100%);
+  border-color: #E4788F;
+  filter: none;
+}
 .status-btn.done:active { transform: translateY(1px); box-shadow: none; }
 
+/* 花朵本体。用 <use> 引用 index.html 里的 symbol, 渐变在那边只定义一次。
+   尺寸跟着按钮档位走: 主操作 20px, 次操作(重做)缩到 13px。
+   hover 时花"开"一下 —— 轻微放大再回弹, 是贴纸被揭起来的手感。
+   不加旋转: 5 瓣花转起来容易看成风车, 小幅缩放更稳。 */
+.status-btn .flower { flex: none; display: block; }
+.status-btn.done .flower {
+  width: 20px;
+  height: 20px;
+  transition: transform .2s cubic-bezier(.34, 1.56, .64, 1);
+}
+.status-btn.done:hover .flower { transform: scale(1.18); }
+.status-btn.done:active .flower { transform: scale(.94); }
+
+/* 花朵开合是纯装饰, 前庭功能敏感的用户开了"减弱动态"就该静止。
+   只关 transform, 底色/边框的 .12s 过渡保留 —— 那是状态反馈不是动画。 */
+@media (prefers-reduced-motion: reduce) {
+  .status-btn.done .flower { transition: none; }
+  .status-btn.done:hover .flower,
+  .status-btn.done:active .flower { transform: none; }
+}
+
 /* 今天不做: 低频操作, 改为描边式而非实心。
-   早先是红底白字大色块, 和"完成"的绿块正面竞争, 两个实心按钮
+   早先是红底白字大色块, 和"完成"的实心块正面竞争, 两个实心按钮
    并排会让家长犹豫点哪个。描边+红字保留了警示语义, 但视觉权重
    明显低于主操作。#C0392B 与白字 4.8:1, #A93226 在白底上 6.0:1。 */
 .status-btn.skipped {
@@ -750,14 +790,20 @@ tr.is-optional .muted {
 }
 .status-btn.skipped:hover { background: #FDEDEC; }
 
-/* 重做: 撤销"完成"。用中性灰描边, 不与"完成"的绿抢视觉 ——
-   它是补救操作, 不该被当成第二个主按钮。 */
+/* 重做: 撤销"完成"。用中性灰描边, 不与"完成"的小红花抢视觉 ——
+   它是补救操作, 不该被当成第二个主按钮。
+   花朵图标同步降级成灰调勾选态(见 index.html 的 #i-flower-done):
+   正向的"给一朵花"和反向的"收回这朵花"在形状上就该不同。 */
 .status-btn.redo {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: var(--surface);
   border-color: var(--border);
   border-style: dashed;
   color: var(--text-2);
 }
+.status-btn.redo .flower { width: 13px; height: 13px; }
 .status-btn.redo:hover {
   background: var(--surface-2);
   border-color: var(--text-3);

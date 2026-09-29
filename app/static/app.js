@@ -425,8 +425,13 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   };
 
   // 完成: todo/doing -> done
+  // 2026-09-29 用户要求把绿底"完成"改成小红花。小红花是这个年龄段的
+  // 奖励隐喻, 比抽象的绿色按钮更能传达"做对了"。但纯图标会丢掉可点击
+  // 的文字线索, 故图标在前、文字在后: 小孩认花形, 家长扫文字。
   if (item.status === 'todo' || item.status === 'doing') {
-    const b = el(`<button class="status-btn done" aria-label="标记为已完成">完成</button>`);
+    const b = el(`<button class="status-btn done" aria-label="标记为已完成">` +
+      `<svg class="flower" viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
+      `<use href="#i-flower"></use></svg><span>完成</span></button>`);
     b.addEventListener('click', () => patchStatus('done', b));
     actions.appendChild(b);
   } else if (item.status === 'done') {
@@ -434,7 +439,11 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     // 点错一次就必须能改, 否则家长只能去数据库里手改。
     // 注意后端在 done -> 非 done 时会清空 actual_minutes,
     // 所以这项会退回"待补实际用时"状态, 属预期行为。
-    const b = el(`<button class="status-btn redo" aria-label="撤销完成, 重新标记为待完成">重做</button>`);
+    // 花朵换成灰调勾选态: 它已经是"送出去的花", 现在提供的是撤回入口,
+    // 不该再用鲜红去吸引注意力 —— 和"完成"的正向诱惑拉开距离。
+    const b = el(`<button class="status-btn redo" aria-label="撤销完成, 重新标记为待完成">` +
+      `<svg class="flower" viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
+      `<use href="#i-flower-done"></use></svg><span>重做</span></button>`);
     b.addEventListener('click', async () => {
       b.disabled = true;
       try {
