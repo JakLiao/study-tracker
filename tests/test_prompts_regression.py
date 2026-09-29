@@ -123,3 +123,41 @@ def test_templates_are_string_template():
 
     assert isinstance(SYSTEM_PROMPT, string.Template)
     assert isinstance(USER_PROMPT_TEMPLATE, string.Template)
+
+
+# ====== 场景 E: 独立作业项必须拆开 (2026-09-29 家长反馈) ======
+# 家长原话: "完成知能 P18-19 并订正 2 听本" 被解析成 1 条, 应该拆成 2 条。
+# 根因: 老 prompt 写了 "跨两步任务 ... 不要拆成两条", 把独立作业误当成连续步骤。
+
+def test_prompt_does_not_forbid_splitting_two_step_tasks():
+    """回归: 老的 "不要拆成两条" 规则必须消失, 否则独立作业又会被合并."""
+    content = build_messages("x")[0]["content"]
+    assert "不要拆成两条" not in content, "老规则『跨两步任务不要拆成两条』会重新引入合并 bug"
+    assert "合并描述" not in content
+
+
+def test_prompt_has_split_criterion_for_independent_items():
+    """场景 E 必须给出可判定的拆分判据, 而不是模糊措辞."""
+    content = build_messages("x")[0]["content"]
+    # 用户报障的原句必须作为样例出现
+    assert "完成知能 P18-19 并订正 2 听本" in content
+    # 判据: 做完一项后是否还需要做另一项
+    assert "家长还需要做另一项吗" in content
+    # 反向锚点: 同一交付物的连续步骤仍然合并, 防止过度拆分
+    assert "连续步骤" in content
+
+
+def test_prompt_split_examples_are_consistent():
+    """拆分示例里的 task_name 必须用 schema 允许的值 (other, 不是中文"其他")."""
+    content = build_messages("x")[0]["content"]
+    # schema 枚举里是 other; 示例里不能出现中文 "其他" 当 task_type
+    assert '"task_type": "其他"' not in content
+    assert '"task_type":"其他"' not in content
+
+
+def test_real_split_sample_builds_without_error():
+    """家长报障原句走 build_messages 必须不抛, 且原文完整进 prompt."""
+    raw = "完成知能P18-19 并订正2听本"
+    msgs = build_messages(raw, today=__import__("datetime").date(2026, 9, 29))
+    assert len(msgs) == 2
+    assert raw in msgs[1]["content"]
