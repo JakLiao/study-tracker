@@ -675,7 +675,14 @@ tr.is-optional .muted {
   align-items: center;
 }
 
-/* pending_actual 中间态 (设计文档 §9 坑 2): done 但未填实耗时, 输入框高亮 + focus */
+/* pending_actual 中间态 (设计文档 §9 坑 2): done 但未填实耗时, 输入框高亮 + focus
+   宽度说明 (2026-09-29 用户批注: "填实际用时"几个字被截断看不全):
+   placeholder "填实际用时" 是 5 个汉字, 按 --fs-body-s (14px) 算约需
+   5 x 14 = 70px, 再加左右内边距 2 x 12px = 24px 与 2px 边框, 合计
+   ~96px。原先 inline style 写死 90px (还压过了下面的 input[type=number]
+   88px 规则), 差一点点就把最后一个字切掉。这里给 110px 留出余量,
+   同时仍窄于"预估 15 分"那一列, 不会把右侧布局挤变形。 */
+.assignment-row .actual-input { width: 110px; }
 .assignment-row.pending-actual .actual-input {
   border-color: var(--status-doing);
   background: rgba(217, 119, 6, 0.06);

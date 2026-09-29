@@ -155,11 +155,19 @@ def test_no_stale_shihan(app_js):
 
 
 def test_wording_is_consistent(app_js):
-    """同一个概念 (actual_minutes) 在界面上只能有一种叫法。"""
+    """同一个概念 (actual_minutes) 在界面上只能有一种叫法。
+
+    2026-09-29 用户批注: pending_actual 的保存按钮文案由「保存用时」
+    缩成「保存」——输入框 placeholder 已写明「填实际用时」, 按钮再重复
+    一遍是冗余, 且四按钮并排时「保存用时」会把行宽顶开。
+    这里只锁"用时"这个概念名不再退化回「实耗」, 不再要求按钮带全称。
+    """
     code = _code(app_js)
-    assert "保存用时" in code
     assert "改用时" in code
     assert "实际用时" in code
+    # 保存按钮已缩短, 但仍必须是「保存」二字, 不能退回带全称的长文案
+    assert "保存用时" not in code, "按钮文案应保持简短「保存」"
+    assert '<button class="primary">保存</button>' in code
 
 
 def test_est_minutes_has_label(app_js):
@@ -170,6 +178,23 @@ def test_est_minutes_has_label(app_js):
 def test_actual_tag_shown_when_filled(app_js):
     assert "actual-tag" in app_js
     assert "actual_minutes != null" in app_js
+
+
+def test_actual_input_placeholder_not_truncated(app_js, styles_css):
+    """用户批注 (2026-09-29): "填实际用时" 5 个字要看全, 别被切掉。
+
+    占位符是 5 个汉字, 在 --fs-body-s (14px) 下约需 70px, 加左右内边距
+    与边框约 96px。宽度必须由 CSS 统一给, 不能再用 inline style 写死
+    —— 否则它会盖掉全局 input[type=number] 规则, 改样式时最容易漏改。
+    """
+    assert 'placeholder="填实际用时"' in app_js
+    # 宽度不再 inline 硬编码, 改由 styles.css 接管
+    assert "actual-input" in app_js
+    assert 'style="width:90px;"' not in app_js, "输入框宽度应交给 CSS, 别 inline 写死"
+    # CSS 里必须有专门给 .actual-input 的宽度, 且放得下 5 个汉字
+    m = re.search(r"\.assignment-row \.actual-input\s*\{\s*width:\s*(\d+)px", styles_css)
+    assert m, "styles.css 应显式给 .actual-input 设宽度"
+    assert int(m.group(1)) >= 96, "宽度需容得下 5 个汉字占位符 + 内边距"
 
 
 # ====== 样式契约 ======

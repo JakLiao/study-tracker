@@ -492,8 +492,8 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   // pending_actual 实际用时输入 (设计文档 §9 坑 2 — 高亮 + 自动 focus)
   if (isPendingActual) {
     const inputWrap = el('<div class="row" style="margin:0;"></div>');
-    const input = el(`<input type="number" class="actual-input" placeholder="填实际用时" min="0" max="240" style="width:90px;" inputmode="numeric" />`);
-    const saveBtn = el('<button class="primary">保存用时</button>');
+    const input = el(`<input type="number" class="actual-input" placeholder="填实际用时" min="0" max="240" inputmode="numeric" />`);
+    const saveBtn = el('<button class="primary">保存</button>');
     const skipBtn = el('<button class="ghost">跳过</button>');
     saveBtn.addEventListener('click', async () => {
       const v = parseInt(input.value, 10);
