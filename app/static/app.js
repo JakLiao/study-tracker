@@ -242,9 +242,12 @@ async function loadBoardDateTabs() {
       box.appendChild(b);
     });
 
-    // 假期提示: 最新有作业的日期不是今天, 说明这几天是假期/无作业。
+    // 假期提示: 今天这张卡没有作业, 说明这几天是假期/无作业。
     // 否则家长会困惑"明明今天有课, 怎么一条作业都没有"。
-    if (dates[0].date !== todayStr()) {
+    // 注意判据是 has_data 而不是 dates[0].date —— 后端现在总会把"今天"
+    // 放在第一位, 用日期比就会永远不触发。
+    const t = dates.find(d => d.is_today);
+    if (t && !t.has_data) {
       box.appendChild(el(`<span class="date-tab-hint">今天没有作业, 下面是最近有记录的日子</span>`));
     }
     return dates;
@@ -260,10 +263,12 @@ async function loadBoard() {
   _boardScroll = scroller ? scroller.scrollTop : 0;
   root.innerHTML = '<p class="muted">加载中…</p>';
   try {
-    await loadBoardDateTabs();
     const b = await api('GET', _boardDate ? `/board?date=${_boardDate}` : '/board/today');
-    // 首次进入时锁定到后端返回的实际日期, 避免重复请求同一天
+    // 首次进入时锁定到后端返回的实际日期, 避免重复请求同一天。
+    // 必须在渲染 Tab 之前定下来: Tab 的高亮跟着 _boardDate 走, 先画 Tab
+    // 再赋值会让深色底停在"第一张"而不是正文真正展示的那一天。
     if (!_boardDate) _boardDate = b.date;
+    await loadBoardDateTabs();
     root.innerHTML = '';
     if (b.is_late_night) {
       root.appendChild(el('<p class="muted">已是凌晨, 注意休息</p>'));
@@ -327,7 +332,7 @@ async function loadBoard() {
       if (!items.length) return;
       const doneN = items.filter(i => i.status === 'done').length;
       const card = el(`<div class="card ${cls || ''}"><div class="card-title">${title}<span class="count">${doneN}/${items.length}</span></div><div class="card-body"></div></div>`);
-      items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
+      items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, null, _focusActualId)));
       root.appendChild(card);
     };
     section('待完成', pending, 'sec-pending');
@@ -342,7 +347,7 @@ async function loadBoard() {
       const opt = b.optional_items;
       const optDone = opt.filter(i => i.status === 'done').length;
       const card = el(`<details class="card optional-card" open><summary class="card-title">选做 (${opt.length})<span class="count">${optDone}/${opt.length}</span></summary><div class="card-body"></div></details>`);
-      opt.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true)));
+      opt.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, null, _focusActualId)));
       root.appendChild(card);
     }
   } catch (e) {
@@ -354,7 +359,12 @@ async function loadBoard() {
 // 渲染任务行 (设计文档 §5.1 + §9 4 个坑)
 // onChange: 状态变更后的回调。看板传 loadBoard, 历史日历传刷新日历+详情,
 // 不传则按钮不重绘 —— 历史页若复用 loadBoard 会把用户弹出日历页。
-function renderAssignment(item, withStatus, onChange) {
+// focusActualFor: 仅当等于 item.id 时, 重绘后自动聚焦这条的"填实际用时"。
+// 由"刚点完成"的那次点击设置 (见 patchStatus), 渲染完即清空 ——
+// 不能无差别自动聚焦, 否则翻看历史日期也会被抢走焦点并滚到底部。
+let _focusActualId = null;
+
+function renderAssignment(item, withStatus, onChange, focusActualFor) {
   // pending_actual: done 但未填实耗时 (设计文档 §9 坑 2)
   const isPendingActual = item.status === 'done' && item.actual_minutes == null;
   const confClass = `confidence-${item.confidence}`; // 给整行加边条 / 底色
@@ -400,10 +410,14 @@ function renderAssignment(item, withStatus, onChange) {
       await api('PATCH', `/assignments/${item.id}/status`, { status: s });
       if (s === 'done' && item.actual_minutes == null) {
         toast('已标记完成, 建议补填实际用时 (不填不影响, 但周复盘不计)');
+        // 只有"刚点完成"这一条才允许重绘后自动聚焦用时框。
+        // 通过回调把 id 传下去, 刷新时才知道该聚焦谁。
+        _focusActualId = item.id;
       } else if (s === 'skipped') {
         toast('已跳过, 不计入完成数');
       }
       await refresh();
+      _focusActualId = null;
     } catch (e) {
       btn.disabled = false;
       toast('状态更新失败: ' + e.message);      // 用 toast 而非 alert, 不打断流程
@@ -494,8 +508,14 @@ function renderAssignment(item, withStatus, onChange) {
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
     inputWrap.append(input, saveBtn, skipBtn);
     actions.appendChild(inputWrap);
-    // 进入视口自动 focus (设计文档 §9 坑 2)
-    setTimeout(() => input.focus(), 50);
+    // 只在"家长刚点了这一条的完成"时才自动 focus (设计文档 §9 坑 2):
+    // 点完成后立刻能敲用时, 是这条设计真正的意图。
+    // 但不能对每条待补用时的作业都自动聚焦 —— 否则只是翻看某一天的
+    // 历史作业, 也会被 50ms 后抢走焦点并把页面滚到底部 (2026-09-29
+    // 用户反馈), 紧接着敲的键还会落进这个输入框。
+    if (focusActualFor === item.id) {
+      setTimeout(() => input.focus(), 50);
+    }
   } else if (item.actual_minutes != null) {
     // 已填, 给修改入口
     const editBtn = el('<button class="ghost">改用时</button>');
@@ -1087,6 +1107,14 @@ async function loadCalendar() {
 function renderCalendar() {
   const grid = document.getElementById('cal-grid');
   const r = _calData;
+  // 记住焦点格子: 下面整块重建会销毁当前聚焦的按钮, 浏览器会把焦点
+  // 交给详情区里第一个可聚焦控件 (某条作业的"实耗"输入框) 并把它滚进
+  // 视野 —— 表现为"点一下日期, 页面却跳到底部", 家长紧接着敲的数字还会
+  // 落进那条作业的时间框里。重建完把焦点还回原格子, 既不跳也不丢键盘可用性。
+  const activeDate = document.activeElement && document.activeElement.closest
+    ? (document.activeElement.closest('.cal-cell') || {}).dataset
+    : null;
+  const keepFocus = activeDate ? activeDate.date : null;
   grid.innerHTML = '';
   // 周一起始: 后端 first_weekday 是 Monday=0, 与 cal-weekdays 表头顺序一致。
   for (let i = 0; i < r.first_weekday; i++) {
@@ -1105,6 +1133,12 @@ function renderCalendar() {
     `);
     cell.addEventListener('click', () => selectDate(ds));
     grid.appendChild(cell);
+  }
+  // 焦点还回同一个日期的新按钮上 (元素已换新, 必须重新查)。
+  // 用 preventScroll: 让浏览器只改焦点, 不要再"顺手"把它滚进视野。
+  if (keepFocus) {
+    const again = grid.querySelector(`.cal-cell[data-date="${keepFocus}"]`);
+    if (again) again.focus({ preventScroll: true });
   }
 }
 
@@ -1157,7 +1191,7 @@ function renderDayDetail(root, d, items) {
     if (!list.length) return;
     const doneN = list.filter(i => i.status === 'done').length;
     const c = el(`<div class="card"><div class="card-title">${title}<span class="count">${doneN}/${list.length}</span></div><div class="card-body"></div></div>`);
-    list.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail)));
+    list.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail, _focusActualId)));
     root.appendChild(c);
   };
   section('待完成', pending);
@@ -1168,20 +1202,22 @@ function renderDayDetail(root, d, items) {
     // open: 与看板选做分组保持一致 —— 同一份数据在两个界面表现不同,
     // 家长会怀疑其中一边显示错了。
     const c = el(`<details class="card optional-card" open><summary class="card-title">选做 (${optional.length})<span class="count">${optDone}/${optional.length}</span></summary><div class="card-body"></div></details>`);
-    optional.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail)));
+    optional.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail, _focusActualId)));
     root.appendChild(c);
   }
 }
 
 // 历史日期改状态后要同时刷新日历格子, 但不整页重载,
 // 否则家长点一下"完成"就被弹回日历页顶部。
+// 必须 return Promise: patchStatus 靠 await 它来决定何时清空
+// _focusActualId, 不返回的话 loadList 的异步渲染还没跑, 标志就被清掉了。
 function refreshCalendarDetail() {
-  if (_calData) {
-    api('GET', `/assignments/calendar?year=${_calYear}&month=${_calMonth}`)
-      .then(r => { _calData = r; renderCalendar(); })
-      .catch(() => {});
-  }
-  loadList(_calSelected);
+  const cal = _calData
+    ? api('GET', `/assignments/calendar?year=${_calYear}&month=${_calMonth}`)
+        .then(r => { _calData = r; renderCalendar(); })
+        .catch(() => {})
+    : Promise.resolve();
+  return Promise.all([cal, loadList(_calSelected)]);
 }
 
 function gotoDate(y, m, day) {

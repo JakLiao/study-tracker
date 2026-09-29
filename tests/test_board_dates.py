@@ -71,9 +71,78 @@ def test_dates_carries_counts_for_tab_badges(app_client):
 
 
 def test_dates_empty_when_no_data(app_client):
+    """库里一条作业都没有时, 仍然返回今天的空卡。
+
+    不再返回 []: "今天永远在第一位" 是接口契约的一部分, 调用方不该
+    依赖"恰好有历史数据"才拿得到今天。前端有 dates.length < 2 的
+    判断, 单卡时整行不渲染, 所以这里的 [] 与 [今天] 视觉上等价。
+    """
     r = app_client.get("/api/board/dates", params={"limit": 3})
     assert r.status_code == 200
-    assert r.json()["dates"] == []
+    days = r.json()["dates"]
+    assert len(days) == 1
+    assert days[0]["date"] == date.today().isoformat()
+    assert days[0]["label"] == "今天"
+    assert days[0]["total"] == 0
+    assert days[0]["has_data"] is False
+
+
+def test_dates_keeps_today_even_without_homework(app_client):
+    """今天没作业时, 第一张卡也必须是"今天" (2026-09-29 用户反馈)。
+
+    回归点: SQL 的 GROUP BY due_date 会把零作业的日子抹掉, 于是第一张
+    卡变成"昨天", 前端又默认高亮第一张 —— 深色底 + "昨天" 会被读成
+    "今天是空白的一天", 家长以为今天的作业被漏掉了。
+    """
+    today = date.today()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    _add(app_client, yesterday, "昨天的作业")
+
+    r = app_client.get("/api/board/dates", params={"limit": 3})
+    days = r.json()["dates"]
+    assert days[0]["date"] == today.isoformat(), "今天必须占住第一位"
+    assert days[0]["label"] == "今天"
+    assert days[0]["is_today"] is True
+    assert days[0]["has_data"] is False
+    assert days[0]["total"] == 0
+    # 昨天的记录仍然保留, 家长还能切回去
+    assert any(d["date"] == yesterday for d in days)
+
+
+def test_dates_injected_today_respects_limit(app_client):
+    """补出来的今天卡也占 limit 的名额, 不能渲染成 limit+1 张。"""
+    today = date.today()
+    for i in range(1, 6):          # 只造历史, 今天留空
+        _add(app_client, (today - timedelta(days=i)).isoformat(), f"历史{i}")
+    r = app_client.get("/api/board/dates", params={"limit": 3})
+    days = r.json()["dates"]
+    assert len(days) == 3
+    assert days[0]["date"] == today.isoformat()
+    # 被挤掉的是最旧的那天
+    assert (today - timedelta(days=5)).isoformat() not in [d["date"] for d in days]
+
+
+def test_dates_ignores_future_dates(app_client):
+    """未来日期不能挤掉今天 —— 否则深色底又落到非今天的那张卡上。"""
+    today = date.today()
+    _add(app_client, today.isoformat(), "今天的作业")
+    _add(app_client, (today + timedelta(days=2)).isoformat(), "两天后的作业")
+
+    r = app_client.get("/api/board/dates", params={"limit": 3})
+    days = r.json()["dates"]
+    assert days[0]["date"] == today.isoformat()
+    assert all(d["date"] <= today.isoformat() for d in days), "不应返回未来日期"
+
+
+def test_dates_marks_days_with_data(app_client):
+    """has_data 让前端能区分"空卡"和"真有作业但没做完"。"""
+    today = date.today()
+    _add(app_client, today.isoformat(), "甲")
+    _add(app_client, (today - timedelta(days=1)).isoformat(), "乙")
+    days = app_client.get("/api/board/dates", params={"limit": 3}).json()["dates"]
+    by_date = {d["date"]: d for d in days}
+    assert by_date[today.isoformat()]["has_data"] is True
+    assert by_date[(today - timedelta(days=1)).isoformat()]["has_data"] is True
 
 
 def test_board_by_date_matches_today_shape(app_client):

@@ -473,17 +473,25 @@ def delete_assignment(assignment_id: int) -> dict:
 # ====== 看板 ======
 
 def list_recent_dates(limit: int = 3, today: date | None = None) -> list[dict]:
-    """最近 N 个"有作业"的日期, 倒序 (最新在前).
+    """最近 N 个日期, 倒序 (最新在前)。"今天"永远在第一位。
 
-    为什么取"有作业的日期"而不是日历日 (2026-09-28 用户确认):
+    除了今天以外只取"有作业"的日期, 而不是日历日 (2026-09-28 用户确认):
     长假期间 (国庆、春节) 连续多天没有作业, 若按日历日取, 看板会连着
     几天空白, 白白占掉 3 个位置里的 2 个。改成只取有数据的日期, 这样
     无论是否放假, 打开看板永远能看到最近 3 天的实际记录。
+
+    但"今天"必须无条件保留 (2026-09-29 用户反馈):
+    SQL 的 GROUP BY due_date 会把零作业的日子整个抹掉, 于是今天没
+    作业时第一张卡变成"昨天", 而前端默认高亮第一张 —— 深色底 + "昨天"
+    会被读成"今天是空白的一天", 家长以为今天没作业被漏掉了, 实际是
+    昨天有作业而今天确实没有。现在补一张 total=0 的今天卡, 深色底
+    才对得上"今天", 下面的空状态("今天还没有作业")也有了对应的 Tab。
 
     每项含轻量统计, 供前端直接渲染 Tab 徽标, 不必再为每一天单独请求看板。
     """
     if limit < 1:
         return []
+    today = today or datetime.now().astimezone().date()
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -493,13 +501,13 @@ def list_recent_dates(limit: int = 3, today: date | None = None) -> list[dict]:
                    SUM(status = 'skipped') AS skipped,
                    SUM(is_optional = 1)    AS optional
             FROM assignments
+            WHERE due_date <= ?
             GROUP BY due_date
             ORDER BY due_date DESC
             LIMIT ?
             """,
-            (limit,),
+            (today.isoformat(), limit),
         ).fetchall()
-    today = today or datetime.now().astimezone().date()
     out: list[dict] = []
     for r in rows:
         d = date.fromisoformat(r["due_date"])
@@ -511,7 +519,23 @@ def list_recent_dates(limit: int = 3, today: date | None = None) -> list[dict]:
             "skipped": r["skipped"] or 0,
             "optional": r["optional"] or 0,
             "is_today": d == today,
+            "has_data": True,
         })
+    # 今天没有作业时 SQL 查不到它, 补一张空卡占住第一位。
+    # 补完再截到 limit: 否则会变成 limit+1 张卡, 让 ?limit=3 渲染出 4 张,
+    # 挤掉本该保留的历史记录。丢掉的是最旧的那天, 代价最小。
+    if not out or out[0]["date"] != today.isoformat():
+        out.insert(0, {
+            "date": today.isoformat(),
+            "label": "今天",
+            "total": 0,
+            "done": 0,
+            "skipped": 0,
+            "optional": 0,
+            "is_today": True,
+            "has_data": False,
+        })
+        out = out[:limit]
     return out
 
 

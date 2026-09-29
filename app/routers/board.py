@@ -52,9 +52,11 @@ def board_by_date(date: str = Query(...)) -> dict:
 
 @router.get("/board/dates")
 def board_dates(limit: int = Query(3, ge=1, le=30)) -> dict:
-    """最近 N 个有作业的日期, 最新在前.
+    """最近 N 个日期, 最新在前, "今天"永远在第一位。
 
-    只返回"有作业"的日期而非日历日: 长假期间连续多天无作业,
-    按日历日取会让 3 个 Tab 里有一半是空的。
+    今天没有作业时也会返回一张 0/0 的空卡 (has_data=false): 前端默认
+    高亮第一张, 若第一张是"昨天", 深色底会被读成"今天是空白的一天"。
+    其余日期只取"有作业"的 —— 长假期间连续多天无作业, 按日历日取
+    会让 3 个 Tab 里有一半是空的。
     """
     return {"dates": assignment_service.list_recent_dates(limit, _local_today())}
