@@ -85,3 +85,16 @@ SUBJECTS = ("语文", "数学", "英语")
 STATUSES = ("todo", "doing", "done", "skipped")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 TASK_TYPES = ("订正", "背诵", "预习", "阅读", "计算", "抄写", "observation", "other")
+
+# task_type 关键词兜底表 (功能设计 §7.2 规划项, 此前未实现).
+# AI 没给 task_type (或给 other) 时, 按这个顺序在 task_name / source_span 里找第一个命中词.
+# 顺序有讲究: 具体动作词排前面, "阅读" 这种泛词排最后 ——
+# 否则 "抄写阅读心得" 会被判成 阅读, 而家长实际要记的是 抄写.
+TASK_TYPE_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("订正", "订正"),
+    ("背诵", "背诵"),
+    ("预习", "预习"),
+    ("计算", "计算"),
+    ("抄写", "抄写"),
+    ("阅读", "阅读"),
+)

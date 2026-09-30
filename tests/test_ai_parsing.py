@@ -80,9 +80,15 @@ def test_coerce_invalid_subject_fallback():
 
 
 def test_coerce_est_minutes_out_of_range():
+    """AI 给的越界值必须被拒, 且不能原样落库.
+
+    注: 2026-09-29 起解析结果不再回 None —— 越界值先作废, 再按科目基线兜底
+    (语文 20), 避免前端那个写死的 15 又冒出来. 断言重点是"999 没被接受".
+    """
     raw = {"subject": "语文", "task_name": "写作", "source_span": "写作", "est_minutes": 999}
     out = _coerce_item(raw)
-    assert out["est_minutes"] is None
+    assert out["est_minutes"] == 20
+    assert out["est_minutes"] != 999
 
 
 def test_coerce_is_optional_string_truthy():

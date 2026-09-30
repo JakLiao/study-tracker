@@ -78,6 +78,49 @@ function confidencePill(level) {
   return `<span class="confidence-pill ${level}" title="${conf.tip}">${label}</span>`;
 }
 
+// ====== 看板提示语 (2026-09-29) ======
+// 目标读者是小学生, 但"你今天欠了 3 件事"这种表述不该出现在首页 ——
+// 它只陈述缺口, 不给出路。改为两条原则:
+//  1. 先报"还剩多少"再报"要多久": 光有数量无从下手, 带上剩余预估
+//     分钟数, 孩子能判断"现在开始还来不来得及", 提示语才真正有用。
+//  2. 语气随进度递进, 但只往"放松"方向递进, 不往"催促"方向递进:
+//     剩得多时不粉饰(那是事实), 只给可执行的起点; 剩得少时把"就快完了"
+//     明确说出来 —— 越接近终点越需要让人安心, 而不是越需要被催。
+//     (2026-09-29 反馈: 原先的"冲一把 💪"太冲, 已改为"慢慢完成就好 🌿")
+// isToday 必须由调用方传入: 看板可翻历史日期, 那时说"今天"是错的。
+// done / skipped 也由调用方传入, 用来区分"真的做完了"和"跳过了"。
+function boardHint({ isToday, pending, done = 0, skipped = 0, estRemaining }) {
+  const dayWord = isToday ? '今天' : '这天';
+  if (pending <= 0) {
+    // 全部收尾。只剩"跳过"时说"太棒了"会让孩子觉得跳过也算完成,
+    // 反而削弱了跳过按钮的分量 —— 这种情况只陈述"处理完了"。
+    const skippedOnly = skipped > 0 && done === 0;
+    return {
+      cls: skippedOnly ? 'all-clear all-clear-dim' : 'all-clear',
+      html: skippedOnly
+        ? `${dayWord}的必做都处理完啦 ✓`
+        : `${dayWord}的必做全部完成, 太棒了! 🎉`,
+    };
+  }
+  const timeNote = estRemaining > 0 ? `, 大约还要 <strong>${estRemaining}</strong> 分钟` : '';
+  if (pending === 1) {
+    return {
+      cls: 'last-one',
+      html: `就差最后 <strong>1</strong> 项啦${timeNote}, 慢慢完成就好 🌿`,
+    };
+  }
+  if (pending <= 3) {
+    return {
+      cls: 'almost',
+      html: `还剩 <strong>${pending}</strong> 项${timeNote}, 加油! ✨`,
+    };
+  }
+  return {
+    cls: 'many',
+    html: `${dayWord}还有 <strong>${pending}</strong> 项${timeNote}, 一件一件来`,
+  };
+}
+
 // Toast 兜底 (设计文档 §9 坑 2)
 let toastTimer = null;
 function toast(msg, ms = 3000) {
@@ -275,12 +318,15 @@ async function loadBoard() {
     }
     if (!b.has_data) {
       // 空状态 (设计文档 §7.6)
+      // "今天没有作业"是坏消息式的空态, 但对小孩来说"今天不用做作业"
+      // 本身就是好消息 —— 措辞按"没有作业"这个事实来庆祝, 而不是
+      // 显示一个像是丢了东西的空状态。
       root.appendChild(el(`
         <div class="empty">
-          <div class="empty-icon">📋</div>
-          <p>${b.is_today ? '今天还没有作业' : '这天没有作业记录'}</p>
+          <div class="empty-icon">${b.is_today ? '🌈' : '📋'}</div>
+          <p>${b.is_today ? '今天没有作业, 好好休息一下' : '这天没有作业记录'}</p>
           ${b.is_today ? '<button class="primary" data-action="goto-entry">去录入</button>' : ''}
-          <p class="muted">${b.is_today ? '或者手动添加一条作业' : '可以在「日历」页查看其他日期'}</p>
+          <p class="muted">${b.is_today ? '老师还没发通知, 或者手动添加一条' : '可以在「日历」页查看其他日期'}</p>
         </div>
       `));
       const go = root.querySelector('[data-action="goto-entry"]');
@@ -322,10 +368,20 @@ async function loadBoard() {
     const pending = all.filter(i => !isSettled(i));
     const settled = all.filter(i => isSettled(i));
 
-    if (pending.length) {
-      root.appendChild(el(`<div class="board-hint">今日还有 <strong>${pending.length}</strong> 项要做</div>`));
-    } else if (all.length) {
-      root.appendChild(el('<div class="board-hint all-clear">今日必做已全部收尾 ✓</div>'));
+    // 提示条 (2026-09-29 改为分档鼓励语, 原为"今日还有 N 项要做")
+    // 口径提示: all 只含必做(by_subject), 选做不在内, 与进度条分母一致。
+    // 剩余预估只累加"还没收尾"的条目 —— 已完成的那部分不该再计进待做时间,
+    // 否则提示条会一直显示当天的总估时, 孩子做完后数字却不降, 反而更泄气。
+    if (pending.length || all.length) {
+      const estRemaining = pending.reduce((s, i) => s + (i.est_minutes || 0), 0);
+      const hint = boardHint({
+        isToday: b.is_today,
+        pending: pending.length,
+        done: settled.filter(i => i.status === 'done').length,
+        skipped: settled.filter(i => i.status === 'skipped').length,
+        estRemaining,
+      });
+      root.appendChild(el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`));
     }
 
     const section = (title, items, cls) => {
@@ -529,14 +585,24 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     // 已填, 给修改入口
     const editBtn = el('<button class="ghost">改用时</button>');
     editBtn.addEventListener('click', async () => {
-      const v = prompt('改成实际用时多少分钟 (0~240)', item.actual_minutes);
-      if (v == null) return;
-      const n = parseInt(v, 10);
-      if (isNaN(n) || n < 0 || n > 240) { toast('用时需在 0~240 分钟之间'); return; }
+      const n = await promptNumber({
+        title: '修改实际用时',
+        label: `实际用时 (${item.task_name})`,
+        value: item.actual_minutes,
+        min: 0,
+        max: 240,
+        hint: '0 ~ 240 分钟; 周复盘的"预估 vs 实际"按这个数统计。',
+      });
+      if (n === null) return;                        // 取消 / Esc: 不动原有记录
+      editBtn.disabled = true;
       try {
         await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: n });
-        refresh();
-      } catch (e) { toast('保存失败: ' + e.message); }
+        toast(`已改为 ${n} 分钟`);
+        await refresh();
+      } catch (e) {
+        editBtn.disabled = false;
+        toast('保存失败: ' + e.message);
+      }
     });
     actions.appendChild(editBtn);
   }
@@ -548,11 +614,27 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     // 操作, 不该和"完成"抢视觉权重。
     const delBtn = el('<button class="status-btn danger">删除</button>');
     delBtn.addEventListener('click', async () => {
-      if (!confirm(`确定删除 "${item.task_name}"?`)) return;
+      // 弹窗里把科目和任务名都摆出来, 而不是只丢一句"确定删除 X?" ——
+      // 作业名常有重复(比如多张卷子同名), 不看清科目就分不清删的是哪条。
+      const ok = await confirmDialog({
+        title: '删除这条作业?',
+        lead: '这条作业会从看板和统计里一并移除, 且无法恢复。',
+        target: item.task_name,
+        subject: item.subject,
+        note: item.actual_minutes != null ? `已记录的 ${item.actual_minutes} 分钟实际用时也会一起消失。` : '',
+        okText: '删除',
+        danger: true,
+      });
+      if (!ok) return;
+      delBtn.disabled = true;                      // 请求锁: 防连点产生重复 DELETE
       try {
         await api('DELETE', `/assignments/${item.id}`);
+        toast('已删除');
         refresh();
-      } catch (e) { toast('删除失败: ' + e.message); }
+      } catch (e) {
+        delBtn.disabled = false;
+        toast('删除失败: ' + e.message);
+      }
     });
     actions.appendChild(delBtn);
   }
@@ -591,7 +673,10 @@ function openSourceModal(item) {
 //   confirm —— 输入弹窗: 保留「取消」+「确定」, 由调用方接确定按钮的 onclick
 // 不能简单地删掉取消按钮: 手动添加弹窗里"取消"(放弃)与"确定"(提交)
 // 是两种不同操作, 合并会丢掉"放弃这次编辑"的语义。
-function setModalActions({ mode, onOk = null }) {
+// okText / danger 是 2026-09-29 为确认弹窗加的: 危险操作的确认键要写
+// 「删除」而不是「确定」, 且要用实心红 —— 让家长在按下之前再看一眼
+// 自己要做什么, 而不是靠"确定"两个字去猜。
+function setModalActions({ mode, onOk = null, okText = null, danger = false }) {
   const cancel = document.getElementById('modal-cancel');
   const ok = document.getElementById('modal-ok');
   if (mode === 'close') {
@@ -599,18 +684,129 @@ function setModalActions({ mode, onOk = null }) {
     ok.textContent = '返回';
     ok.classList.remove('primary');
     ok.classList.add('ghost', 'modal-solo-btn');
-    ok.onclick = () => document.getElementById('modal').classList.add('hidden');
+    ok.classList.remove('modal-danger');
+    ok.onclick = () => closeModal();
   } else {
     cancel.classList.remove('hidden');
     ok.textContent = '确定';
     ok.classList.add('primary');
     ok.classList.remove('ghost', 'modal-solo-btn');
+    ok.classList.toggle('modal-danger', danger);
+    if (okText) ok.textContent = okText;
     ok.onclick = onOk;
   }
 }
 
+// ====== 弹窗关闭的统一出口 (2026-09-29) ======
+// 弹窗一共有四条关闭路径: 取消按钮 / 确定按钮 / Esc / 点遮罩。此前每处
+// 都自己写 classList.add('hidden'), 彼此不通 —— 改成 Promise 化的
+// confirmDialog / promptNumber 之后, 关闭必须能把结果 notify 回调用方,
+// 否则 `await confirmDialog(...)` 会永远挂起, 点取消等于卡死。
+// 收口到这一个函数后, 无论从哪条路关闭, Promise 都有结果且只结算一次。
+
+// "被取消"的哨兵。closeModal 只知道弹窗关了, 并不知道该给调用方回什么
+// 类型: 确认弹窗要 boolean, 数字输入弹窗要 null —— 而后者不能拿 falsy
+// 当取消, 因为 0 是合法用时。用显式哨兵把"取消"和"取到值"分开, 由每个
+// 弹窗自己翻译, 就不会出现"取消被当成 0 提交上去"这类静默错误。
+const CANCELLED = Symbol('modal-cancelled');
+
+let _modalCloser = null;
+
+function closeModal(result = CANCELLED) {
+  const m = document.getElementById('modal');
+  if (m) {
+    m.classList.add('hidden');
+    // 窄版样式只属于确认/输入弹窗。在这里(而不是各开启处)收掉,
+    // 就不必担心它残留到下一次打开的原文或手动添加弹窗上。
+    m.classList.remove('confirm-modal');
+  }
+  const fn = _modalCloser;
+  _modalCloser = null;          // 先清空再回调: 回调里若又开了新弹窗, 不会被顶掉
+  if (fn) fn(result);
+}
+
+// 通用确认弹窗 —— 替代浏览器原生 confirm()。
+// 原生弹窗由浏览器绘制, 完全脱离页面样式: 在这套奶油色调里是一块突兀的
+// 系统灰, 按钮顺序还随平台变, 且无法做任何防误触处理。放进自己的弹窗后
+// 才做得到"红色实心删除键 + 默认焦点落在取消 + 回车不直接删"。
+function confirmDialog({ title, lead, target = '', subject = '', note = '', okText = '确定', danger = false }) {
+  // 已有弹窗在等确认时, 忽略重复点击: 否则第二次点击会覆盖 _modalCloser,
+  // 第一个 Promise 再无人结算, 调用方的 await 就永久挂起了。
+  if (_modalCloser) return Promise.resolve(false);
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-content').innerHTML = `
+    <div class="confirm-body${danger ? ' danger' : ''}">
+      <div class="confirm-icon" aria-hidden="true">⚠</div>
+      <div class="confirm-text">
+        <p class="confirm-lead">${escapeAttr(lead)}</p>
+        ${target ? `<p class="confirm-target">${subject ? `<span class="subject-tag ${escapeAttr(subject)}">${escapeAttr(subject)}</span>` : ''}<span>${escapeAttr(target)}</span></p>` : ''}
+        ${note ? `<p class="confirm-note">${escapeAttr(note)}</p>` : ''}
+      </div>
+    </div>`;
+  m.classList.remove('hidden');
+  m.classList.add('confirm-modal');
+  return new Promise((resolve) => {
+    // 只把"确认"翻译成 true, 其余(取消/Esc/遮罩)一律 false
+    _modalCloser = (r) => resolve(r === true);
+    setModalActions({ mode: 'confirm', okText, danger, onOk: () => closeModal(true) });
+    // 焦点默认落在「取消」: 不可逆操作不该让家长随手一敲回车就删掉
+    document.getElementById('modal-cancel').focus();
+  });
+}
+
+// 通用数字输入弹窗 —— 替代原生 prompt()。
+// 原生 prompt 的输入框是系统控件, 字体/圆角/间距全都不受页面控制, 在
+// 触屏上更是割裂。这里用弹窗 + number 输入, 回车提交, 取消/Esc 返回 null。
+function promptNumber({ title, label, value, min = 0, max = 240, hint = '', okText = '保存' }) {
+  if (_modalCloser) return Promise.resolve(null);
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-content').innerHTML = `
+    <div class="prompt-body">
+      <label class="prompt-label" for="prompt-num">${escapeAttr(label)}</label>
+      <input id="prompt-num" type="number" inputmode="numeric" min="${min}" max="${max}" value="${escapeAttr(value)}" />
+      ${hint ? `<p class="prompt-hint">${escapeAttr(hint)}</p>` : ''}
+    </div>`;
+  m.classList.remove('hidden');
+  m.classList.add('confirm-modal');
+  return new Promise((resolve) => {
+    // 取消翻译成 null 而不是 false/0 —— 调用方靠 === null 判"没填",
+    // 若这里回 0, 家长点一下取消就会把用时改成 0 分钟。
+    _modalCloser = (r) => resolve(r === CANCELLED ? null : r);
+    const input = document.getElementById('prompt-num');
+    const submit = () => {
+      const n = Number(input.value);
+      // 越界要留在弹窗里报错, 不能直接关掉: 悄悄关掉会让家长以为改完了,
+      // 实际什么也没改, 还得再点一次「改用时」才发现。
+      if (input.value.trim() === '' || !Number.isFinite(n) || n < min || n > max) {
+        input.classList.add('error');
+        toast(`请填 ${min}~${max} 之间的数字`);
+        return;
+      }
+      closeModal(n);
+    };
+    setModalActions({ mode: 'confirm', okText, onOk: submit });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    input.focus();
+    input.select();
+  });
+}
+
 document.getElementById('modal-cancel').addEventListener('click', () => {
-  document.getElementById('modal').classList.add('hidden');
+  closeModal();
+});
+
+// Esc 与点遮罩关闭 —— 弹窗的标准行为, 此前这两条路都不通。
+// Esc 只在弹窗打开时响应, 否则会误吞页面其他地方的 Esc。
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const m = document.getElementById('modal');
+  if (m && !m.classList.contains('hidden')) closeModal();
+});
+// e.target === e.currentTarget 才算点到遮罩: 点击弹窗内容(冒泡上来)不能关
+document.getElementById('modal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
 });
 
 // ====== 录入 / 解析 ======
@@ -674,6 +870,9 @@ async function parseRaw() {
       result.appendChild(el('<div class="muted">未识别到作业, 可手动添加</div>'));
       return;
     }
+    // 渲染前先把设置页的基线拉下来 —— 预览表里 AI 没给时长的行要用它兜底,
+    // 顺序反了会让这一批行先渲染成旧的魔法数 15.
+    await loadBaselines();
     renderPreviewTable(items, data.batch_id);
   } catch (e) {
     clearTimeout(timeoutId);
@@ -758,11 +957,45 @@ function fallbackCopy(text) {
   toast(ok ? '已复制原文' : '复制失败, 请手动选中');
 }
 
+// AI 没给预估时长时的兜底: 优先用家长在设置页配的基线, 而不是写死的 15.
+// 后端 _resolve_est_minutes 已经按 "任务类型基线 > AI 估值 > 科目基线" 填过一次,
+// 这层只在连科目基线都没有时兜底, 但它必须读真实配置 ——
+// 写死 15 会让家长在设置页调完数字后, 仍然看到与配置无关的时长.
+let _baselineCache = null;
+
+function setBaselineCache(obj) { _baselineCache = obj; }
+
+function estDefault(item) {
+  const b = _baselineCache || {};
+  const byType = b.task_type || {};
+  const bySubject = b.subject || {};
+  return byType[item && item.task_type]
+    || bySubject[item && item.subject]
+    || 15;  // 配置全缺时的最后兜底 (与后端 DEFAULT_TASK_TYPE_BASELINE 同量级)
+}
+
+async function loadBaselines() {
+  try {
+    const r = await api('GET', '/settings');
+    const pick = k => {
+      const hit = r.items.find(x => x.key === k);
+      if (!hit) return {};
+      try {
+        const v = JSON.parse(hit.value);
+        return (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+      } catch (e) { return {}; }
+    };
+    setBaselineCache({ task_type: pick('task_type_baseline_minutes'), subject: pick('subject_baseline_minutes') });
+  } catch (e) {
+    // 空 catch 是刻意的: 拉不到配置不该阻断解析, estDefault 会退回最后兜底
+  }
+}
+
 function renderPreviewTable(items, batchId) {
   const result = document.getElementById('parse-result');
   result.innerHTML = `
     <h3>预览 / 编辑 (${items.length} 条)</h3>
-    <p class="muted">低置信度行会高亮, 默认未勾选 (设计 §9 坑 3)</p>
+    <p class="muted">带 ⚠ 的几行 AI 没能完全读准, 已经高亮出来并且没有勾选, 麻烦你确认一下</p>
     <table class="preview-table">
       <thead><tr>
         <th>勾</th><th>科目</th><th>任务名</th><th>归属日</th>
@@ -790,25 +1023,36 @@ function renderPreviewTable(items, batchId) {
     // 「周四早读 8:20 听写」这类信息只有 AI 能提取出来, 家长在表里点不出来的。
     // 存到 data- 属性, collectRows 原样带进入库请求。
     tr.dataset.dl = it.deadline_time || '';
+    // data-label 只给窄屏卡片布局用(见 styles.css §26c): 表格变成一张张
+    // 卡片后表头就消失了, 每格必须自带标签才认得出是什么。
+    // 桌面端不读这个属性, 所以对宽屏零影响。
     tr.innerHTML = `
-      <td><input data-field="checked" type="checkbox" ${checkedDefault ? 'checked' : ''} /></td>
-      <td>
+      <td data-label="入库"><input data-field="checked" type="checkbox" ${checkedDefault ? 'checked' : ''} /></td>
+      <td data-label="科目">
         <select data-field="subject">
           <option ${it.subject==='语文'?'selected':''}>语文</option>
           <option ${it.subject==='数学'?'selected':''}>数学</option>
           <option ${it.subject==='英语'?'selected':''}>英语</option>
         </select>
       </td>
-      <td><input data-field="task_name" value="${escapeAttr(it.task_name)}" /></td>
-      <td>
+      <td data-label="任务"><input data-field="task_name" value="${escapeAttr(it.task_name)}" /></td>
+      <td data-label="归属日">
         <input data-field="due_date" type="date" class="js-datepicker ${noAiDate ? 'need-date' : ''}"
                value="${it.due_date || ''}" placeholder="${batchDate || todayStr()}" />
-        ${noAiDate ? '<small class="need-date-hint">AI 未识别归属日, 请确认</small>' : ''}
+        ${
+          // 归属日列只有 ~130px, 而 td 是 nowrap + overflow:hidden ——
+          // 原来那句"AI 未识别归属日, 请确认"会被截成"AI 未识别归属日, 请",
+          // 半句话比不提示更让人困惑。改成短标签, 完整说明进 title。
+          // 颜色已经由 .need-date(红框红底) 传达了, 这里只补文字。
+          noAiDate
+            ? '<small class="need-date-hint" title="AI 未识别归属日, 请家长确认">待确认</small>'
+            : ''
+        }
       </td>
-      <td><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
-      <td><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || 15}" /></td>
-      <td class="col-conf">${confidenceDot(it.confidence)}</td>
-      <td class="col-src"><small title="${escapeAttr(it.source_span || '')}">${escapeAttr(it.source_span || '')}</small></td>
+      <td data-label="选做"><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
+      <td data-label="预计(分)"><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || estDefault(it)}" /></td>
+      <td class="col-conf" data-label="置信">${confidenceDot(it.confidence)}</td>
+      <td class="col-src" data-label="原文"><small title="${escapeAttr(it.source_span || '')}">${escapeAttr(it.source_span || '')}</small></td>
       <td class="col-del"><button class="ghost row-del" aria-label="删除这一行">删</button></td>
     `;
     tr.querySelector('.row-del').addEventListener('click', () => tr.remove());
@@ -920,7 +1164,7 @@ function openManualAddModal() {
       </label>
       <label>
         <span class="form-label">预计用时</span>
-        <input id="m-est" type="number" value="15" min="1" max="180" inputmode="numeric" />
+        <input id="m-est" type="number" value="${estDefault({ task_type: 'other' })}" min="1" max="180" inputmode="numeric" />
       </label>
       <label>
         <span class="form-label">任务名</span>
@@ -1196,6 +1440,20 @@ function renderDayDetail(root, d, items) {
     </div>
   </div>`));
 
+  // 提示条与看板同源 (2026-09-29): 同一份数据在两个界面给出不同的话,
+  // 家长会以为其中一边算错了。isToday 由 d 与今天比较得出, 不能写死。
+  if (pending.length || required.length) {
+    const estRemaining = pending.reduce((s, i) => s + (i.est_minutes || 0), 0);
+    const hint = boardHint({
+      isToday: d === todayStr(),
+      pending: pending.length,
+      done: settled.filter(i => i.status === 'done').length,
+      skipped: settled.filter(i => i.status === 'skipped').length,
+      estRemaining,
+    });
+    root.appendChild(el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`));
+  }
+
   const section = (title, list) => {
     if (!list.length) return;
     const doneN = list.filter(i => i.status === 'done').length;
@@ -1287,19 +1545,25 @@ async function loadWeekly(week) {
       root.appendChild(el(`<div class="muted">${r.note || '本周无完成数据'}</div>`));
       return;
     }
-    const tbl = el(`<table>
-      <tr><th>科目</th><th>类型</th><th>样本</th><th>估</th><th>实</th><th>偏差</th><th>建议</th></tr>
+    // data-label / col-advice 只给窄屏卡片布局用(见 styles.css §26g):
+    // 7 列里"建议"是一整段中文, 挤进 344px 后会被压成一列一个字,
+    // 完全读不了。窄屏改成每行一张卡, 表头收起, 标签由 data-label 提供。
+    // 宽屏不读这两个属性, 对桌面零影响。
+    const tbl = el(`<table class="weekly-table">
+      <thead><tr><th>科目</th><th>类型</th><th>样本</th><th>估</th><th>实</th><th>偏差</th><th>建议</th></tr></thead>
+      <tbody></tbody>
     </table>`);
+    const tbody = tbl.querySelector('tbody');
     r.by_type.forEach(b => {
       const diffCls = b.diff_minutes > 0 ? 'diff-pos' : 'diff-neg';
-      tbl.appendChild(el(`<tr>
-        <td><span class="subject-tag ${b.subject}">${b.subject}</span></td>
-        <td>${b.task_type}</td>
-        <td>${b.sample_size}</td>
-        <td>${b.avg_est_minutes}</td>
-        <td>${b.avg_actual_minutes}</td>
-        <td class="${diffCls}">${b.diff_minutes > 0 ? '+' : ''}${b.diff_minutes}分 (${b.diff_pct}%)</td>
-        <td><small>${b.advice}</small></td>
+      tbody.appendChild(el(`<tr>
+        <td data-label="科目"><span class="subject-tag ${b.subject}">${b.subject}</span></td>
+        <td data-label="类型">${b.task_type}</td>
+        <td data-label="样本">${b.sample_size}</td>
+        <td data-label="估">${b.avg_est_minutes}</td>
+        <td data-label="实">${b.avg_actual_minutes}</td>
+        <td data-label="偏差" class="${diffCls}">${b.diff_minutes > 0 ? '+' : ''}${b.diff_minutes}分 (${b.diff_pct}%)</td>
+        <td data-label="建议" class="col-advice"><small>${b.advice}</small></td>
       </tr>`));
     });
     root.appendChild(tbl);
@@ -1405,8 +1669,11 @@ async function loadSettings() {
           try {
             // 修真修真修真: JSON.stringify(parsed) 重新序列化, 始终 ensure_ascii=False
             await api('PATCH', `/settings/${it.key}`, { value: JSON.stringify(newObj) });
+            // 同步刷新解析页的兜底缓存, 否则家长改完配置,
+            // 下一次解析仍会按旧值填那些 AI 没给时长的行.
+            loadBaselines();
             toast('已保存');
-          } catch (e) { alert('保存失败: ' + e.message); }
+          } catch (e) { toast('保存失败: ' + e.message); }
         });
         kvWrap.appendChild(saveBtn);
         card.appendChild(kvWrap);
@@ -1435,7 +1702,7 @@ async function loadSettings() {
           try {
             await api('PATCH', `/settings/${it.key}`, { value: field.value });
             toast('已保存');
-          } catch (e) { alert('保存失败: ' + e.message); }
+          } catch (e) { toast('保存失败: ' + e.message); }
         });
       }
 

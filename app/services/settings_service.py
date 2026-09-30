@@ -46,6 +46,18 @@ def update_setting(key: str, raw_value: str) -> dict:
                 raise BadSettingValueError(f"{key} 必须是 JSON 对象")
         except json.JSONDecodeError as e:
             raise BadSettingValueError(f"{key} JSON 解析失败: {e.msg}") from None
+        # 每项必须是 1~180 的整数 —— 这份配置直接决定解析出的 est_minutes,
+        # 放进 {"订正": "abc"} 或 {"订正": 999} 会在入库时被 DB CHECK 挡下, 家长只看到一句报错.
+        # 在这里就拒掉, 错误信息能指到具体是哪个键.
+        for k, v in data.items():
+            if not str(k).strip():
+                raise BadSettingValueError(f"{key} 含空键")
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                raise BadSettingValueError(f"{key} 的 {k!r} 必须是整数分钟, 当前是 {v!r}") from None
+            if not 1 <= iv <= 180:
+                raise BadSettingValueError(f"{key} 的 {k!r} 必须在 1~180 分钟, 当前是 {iv}")
     if key in ("school_dismiss_time", "dinner_time"):
         # 形如 HH:MM
         try:

@@ -145,6 +145,26 @@ def test_header_no_wrap(styles):
     assert "white-space: nowrap" in b, "表头缺少 nowrap, 长表头会折行"
 
 
+def test_task_column_gets_usable_width(styles):
+    """任务名列必须真的"吃到剩余", 而不是被固定列挤成一条缝。
+
+    桌面 main 上限 720px, 表格实得 688px。固定列原来合计 560px,
+    "任务名吃掉剩余"实际只吃到 128px —— 七个汉字就被截断, 家长
+    根本没法核对是哪条作业, 而这恰恰是预览表唯一存在的理由。
+
+    这条锁的是**预算关系**而不是某个绝对值: 桌面端各列还要按内容微调
+    (控件列不能低于装下控件的下限, 见下面两条), 一改就会连锁反应。
+    真正不能破的是"固定列 + 任务名下限 <= 688px"。
+    """
+    widths = _col_widths(styles)
+    fixed = sum(int(re.sub(r"px$", "", w)) for c, w in widths.items() if c != 3)
+    assert fixed + 180 <= 688, (
+        f"固定列合计 {fixed}px, 加上任务名下限 180px 超出桌面表格的 688px, "
+        f"表格会横向溢出: {widths}"
+    )
+    assert widths[3] == "auto", "任务名列仍应是 auto(吃掉剩余)"
+
+
 def test_est_column_wide_enough(styles):
     """「预计用时」四字 + 单元格内边距, 列宽要放得下。
 
@@ -178,6 +198,37 @@ def test_action_column_header_and_width(styles, app_js):
     assert w.isdigit(), widths[9]
     # 「操作」两字约 28px + 左右内边距约 24px
     assert int(w) >= 52, f"第 9 列(操作) 宽度 {w}px 放不下两字表头"
+
+
+def test_subject_select_not_squeezed_to_one_char(styles):
+    """科目列里装的是 select, 列宽之外还得给控件自己的内边距留位置。
+
+    78px 的列扣掉单元格左右各 12px 只剩 54px; select 再扣掉基础样式
+    的左右各 12px, 内容区只剩 30px —— 放不下"语文"两个字加右侧下拉
+    箭头, 浏览器实际只渲染出一个"语"字, 家长分不清语文还是数学。
+    这就是只锁列宽不够、必须同时收窄表内 select 内边距的原因。
+    """
+    widths = _col_widths(styles)
+    raw = re.sub(r"px$", "", widths[2])
+    assert raw.isdigit(), f"第 2 列(科目) 宽度应为固定像素: {widths[2]}"
+    col = int(raw)
+
+    # 注意要匹配"只以 .preview-table select 开头"的那条规则。
+    # 上面还有一条 `.preview-table input, .preview-table select { width:100% }`,
+    # 用 `\.preview-table select \{` 会先撞上它, 拿到的是没有 padding 的宽度规则。
+    m = re.search(r"^\.preview-table select \{([^}]*)\}", styles, re.M)
+    assert m, "预览表内未找到针对 select 的样式"
+    rule = m.group(1)
+    pads = re.findall(r"padding-(?:left|right):\s*(\d+)px", rule)
+    assert len(pads) == 2, f"应同时收窄 select 的左右内边距: {rule.strip()}"
+    pad = max(int(p) for p in pads)
+
+    # 单元格左右 12px + select 左右 pad, 再留 46px 给"语文"+箭头
+    content = col - 24 - 2 * pad
+    assert content >= 46, (
+        f"科目列 {col}px 扣掉单元格与 select 内边距后只剩 {content}px, "
+        f"装不下两字科目加下拉箭头 (select padding-left/right={pads})"
+    )
 
 
 # ====== 3b. 「预估分」->「预计用时」(2026-09-28) ======
@@ -335,9 +386,16 @@ def test_rows_have_named_classes(app_js):
 
 
 def test_source_cell_has_title(app_js):
-    """截断了就得能看全文。"""
+    """截断了就得能看全文。
+
+    用正则而不是字面量拼接: 原来断言的是 'class="col-src"><small title=',
+    要求 class 与 > 紧挨着 —— 2026-09-29 给这个 td 加了 data-label
+    (窄屏卡片布局的标签, 见 styles.css §26c) 之后, 中间多了一个属性,
+    字面量就断了。契约本身没变: col-src 单元格里第一个元素仍是带 title
+    的 <small>。这里放宽的只是"属性之间可以有别的东西", 不是放宽语义。
+    """
     code = _code(app_js)
-    assert 'class="col-src"><small title=' in code
+    assert re.search(r'class="col-src"[^>]*>\s*<small title=', code)
 
 
 # ====== 5. 删行按钮中性色 ======

@@ -207,7 +207,74 @@ def _extract_json(text: str) -> Any:
         raise AIFormatError(f"AI 返回 JSON 解析失败: {e.msg}") from e
 
 
-def _coerce_item(raw: dict) -> dict:
+def _clean_baseline(raw: dict) -> dict[str, int]:
+    """把家长配的基线洗成 {str: int}, 只保留 1~180 的合法值.
+
+    设置页的键值表允许自由增删键 (前端不做枚举校验), 所以这里必须自己兜住:
+    家长存了 {"订正": "abc"} 或 {"订正": 999} 时, 静默丢弃该项而不是让解析崩掉.
+    """
+    out: dict[str, int] = {}
+    for k, v in (raw or {}).items():
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= iv <= 180:
+            out[str(k).strip()] = iv
+    return out
+
+
+def _resolve_est_minutes(
+    task_type: str | None,
+    subject: str | None,
+    ai_value: Any,
+    baselines: tuple[dict[str, int], dict[str, int]] | None = None,
+) -> int | None:
+    """定 est_minutes: 家长配置 > AI 估值 > 科目基线.
+
+    优先级 (家长在设置页配的数是硬约束, 见 01-功能设计 §7.2):
+    1. task_type 命中 task_type_baseline_minutes -> 直接用配置值
+    2. 否则用 AI 给的 est_minutes (仅当落在 1~180)
+    3. 否则按 subject 查 subject_baseline_minutes
+    4. 都没有 -> None, 由家长在预览表里填
+
+    baselines 由调用方传入以便一次解析只读一次 DB; 省略时内部自取 (单测可直接调).
+    """
+    if baselines is None:
+        baselines = _load_baselines()
+    type_baseline, subject_baseline = baselines
+
+    # 1. 任务类型基线 (强制覆盖 AI 估值)
+    if task_type and task_type in type_baseline:
+        return type_baseline[task_type]
+
+    # 2. AI 估值 (越界/非法一律视为没有)
+    if ai_value is not None and ai_value != "":
+        try:
+            ai_int = int(ai_value)
+        except (TypeError, ValueError):
+            ai_int = None
+        if ai_int is not None and 1 <= ai_int <= 180:
+            return ai_int
+
+    # 3. 科目基线
+    if subject and subject in subject_baseline:
+        return subject_baseline[subject]
+
+    return None
+
+
+def _load_baselines() -> tuple[dict[str, int], dict[str, int]]:
+    """读设置页的两份基线. 延迟导入避免 ai_client <-> services 循环依赖."""
+    from .services import settings_service
+
+    return (
+        _clean_baseline(settings_service.get_task_type_baseline()),
+        _clean_baseline(settings_service.get_subject_baseline()),
+    )
+
+
+def _coerce_item(raw: dict, baselines: tuple[dict[str, int], dict[str, int]] | None = None) -> dict:
     """把单条 AI 输出尽量归一化到 schema. 无法归一化的字段置 None / 默认值.
 
     - subject: 必须在 SUBJECTS, 否则置 '英语' (兜底, 家长确认页必改)
@@ -215,10 +282,12 @@ def _coerce_item(raw: dict) -> dict:
     - due_date: 字符串 -> date; 多种格式尽力解析; 失败置 None
     - deadline_time: 字符串 -> datetime; 失败置 None
     - is_optional: bool, 兜底 False
-    - est_minutes: int in [1, 180], 越界置 None
-    - task_type: str <= 50
+    - task_type: 归一到 TASK_TYPES; 缺失/other 时用关键词兜底
+    - est_minutes: 家长配的任务类型基线 > AI 估值 > 科目基线
     - source_span: 必填, 缺失用 task_name
     - confidence: 必须在三档, 否则 'medium'
+
+    baselines 形参用于一次解析内复用同一份基线 (避免每条都读一次 DB).
     """
     out: dict[str, Any] = {}
 
@@ -265,23 +334,33 @@ def _coerce_item(raw: dict) -> dict:
     else:
         out["is_optional"] = False
 
-    # est_minutes
-    em = raw.get("est_minutes")
-    if em is None or em == "":
-        out["est_minutes"] = None
-    else:
-        try:
-            em_int = int(em)
-            if 1 <= em_int <= 180:
-                out["est_minutes"] = em_int
-            else:
-                out["est_minutes"] = None
-        except (TypeError, ValueError):
-            out["est_minutes"] = None
-
     # task_type
-    tt = raw.get("task_type")
-    out["task_type"] = str(tt).strip()[:50] if tt else None
+    # 必须先于 est_minutes 归一化 —— 预估时长要按 task_type 查家长配的基线,
+    # 顺序反了就会退化成"AI 自由发挥 + 前端兜底 15".
+    # 缺失/other 时用关键词兜底 (功能设计 §7.2 规划项, 此前一直没实现).
+    tt = str(raw.get("task_type") or "").strip()
+    if tt not in config.TASK_TYPES or tt == "other":
+        # 只扫 task_name, 绝不扫 source_span ——
+        # source_span 常含同一条通知里**别的作业**的原文 (场景 E 要求 AI 拆开,
+        # 但它经常整句照抄). 拿它做匹配会把邻居的类型安到本条头上:
+        # 实测 "完成知能P15-16（部分课上已完成），订正前面作业" 会因为邻居的
+        # "订正" 被判成 订正, 进而用 25 覆盖掉场景 C 下调后的 18 分钟.
+        for kw, label in config.TASK_TYPE_KEYWORDS:
+            if kw in name:
+                tt = label
+                break
+        else:
+            # 兜底不中: 保留 AI 原值 (可能是合法枚举或 other), 不强行改写
+            tt = tt if tt in config.TASK_TYPES else None
+    out["task_type"] = tt[:50] if tt else None
+
+    # est_minutes
+    # 家长在设置页配的基线是硬约束 (强制覆盖), AI 的估值只在没配基线时才用:
+    #   1. task_type 命中 task_type_baseline_minutes -> 用配置值, 忽略 AI 估值
+    #   2. 否则用 AI 给的合法值 (1~180)
+    #   3. 还没有 -> 按 subject 查 subject_baseline_minutes
+    #   4. 仍没有 -> None, 交家长在预览表里填
+    out["est_minutes"] = _resolve_est_minutes(out.get("task_type"), out.get("subject"), raw.get("est_minutes"), baselines)
 
     # source_span (必填, 兜底用 task_name)
     span = str(raw.get("source_span", "")).strip()
@@ -372,11 +451,13 @@ def parse_ai_response(content: str) -> list[dict]:
         raise AIFormatError(f"AI 返回既不是数组也不是对象: {type(parsed).__name__}")
 
     normalized: list[dict] = []
+    # 基线只读一次, 循环内复用 (每条都读 DB 会在长通知上放大成 N 次查询)
+    baselines = _load_baselines()
     for raw in parsed:
         if not isinstance(raw, dict):
             continue
         try:
-            normalized.append(_coerce_item(raw))
+            normalized.append(_coerce_item(raw, baselines))
         except ValueError:
             # 单条无法归一化, 跳过 (让其他条进来)
             continue

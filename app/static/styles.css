@@ -313,6 +313,17 @@ th, td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom
 th { background: var(--surface-2); font-weight: 600; color: var(--text-2); }
 tr:last-child td { border-bottom: none; }
 
+/* 复盘偏差表: 数字与短标签列一律不换行, 只有"建议"列允许折行。
+   2026-09-29 桌面复核发现: 这张表是 table-layout:auto 且没有列宽约束,
+   "类型"/"样本"两个两字列各只分到 50px, 扣掉左右各 12px 内边距
+   剩 26px, 放不下 28px 的"类型"二字, 于是被竖排成"类/型"两行 ——
+   单字成行比不写还难认。改用 nowrap 让 auto 布局按内容分配宽度。
+   (与预览表"单元格不换行"同一原则; 窄屏卡片布局另有一份
+   white-space:normal 覆盖, 见 §26g。) */
+.weekly-table th,
+.weekly-table td { white-space: nowrap; }
+.weekly-table td.col-advice { white-space: normal; }
+
 /* ===== 9. 科目徽章 ===== */
 .subject-tag {
   display: inline-flex;
@@ -489,6 +500,9 @@ tr.is-optional .muted {
 }
 
 /* ===== 11.5 看板分区 (2026-09-28) ===== */
+/* 提示条分档 (2026-09-29): 颜色随"离终点还有多远"从暖橙推向绿。
+   原先所有未完成态共用一个 --warn-soft 粉底, 剩 1 项和剩 8 项长得
+   一样, 提示语失去了"快做完了"的视觉推力。 */
 .board-hint {
   background: var(--warn-soft);
   color: var(--warn-ink);
@@ -498,9 +512,30 @@ tr.is-optional .muted {
   font-weight: 600;
   margin-bottom: var(--space-3);
 }
+/* 剩得多: 保留原来的粉, 不粉饰工作量 */
+.board-hint.many {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+/* 剩 2~3 项: 琥珀, 比粉轻、比橙暖, 暗示"进入状态了" */
+.board-hint.almost {
+  background: #FFF2DC;
+  color: #8A5200;
+}
+/* 只剩 1 项: 高饱和暖橙 —— 冲刺档, 是四个态里最想让人点下去的 */
+.board-hint.last-one {
+  background: #FFE3C7;
+  color: #A34400;
+  box-shadow: inset 0 0 0 1px #FFC79A;
+}
+/* 全部收尾: 绿。done = 0 时(全靠跳过收尾)降一档, 避免虚假的成就感 */
 .board-hint.all-clear {
   background: #E8F6EC;
   color: #2E7D32;
+}
+.board-hint.all-clear.all-clear-dim {
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 .sec-settled {
   opacity: .92;
@@ -937,6 +972,10 @@ tr.is-optional .muted {
   width: 100%;
   max-width: 560px;
   max-height: 85vh;
+  /* 移动端浏览器的 vh 含地址栏那条空白, 85vh 的弹窗会被地址栏压住底部,
+     按钮正好落在被遮住的位置。dvh 量的才是真实可见区;
+     写在下一行, 老浏览器不认 dvh 时自动沿用上面的 vh。 */
+  max-height: 85dvh;
   overflow: auto;
   box-shadow: var(--shadow-card);
 }
@@ -948,7 +987,107 @@ tr.is-optional .muted {
    这是与系统单按钮对话框一致的做法。 */
 .modal-body .row:last-child .modal-solo-btn { min-width: 96px; }
 
-/* ===== 17b. 弹窗表单 (手动添加作业) =====
+/* 确认弹窗比表单弹窗窄: 确认只需要说清"要做什么", 给一大块空白
+   反而会让人以为里面还有没显示的内容。 */
+#modal.confirm-modal .modal-body { max-width: 420px; }
+
+/* ===== 17a. 危险操作确认弹窗 (2026-09-29) =====
+   替代浏览器原生 confirm() —— 原生弹窗由浏览器绘制, 完全脱离这套
+   奶油色调的页面, 在深浅色下都是一块突兀的系统灰, 按钮顺序还随平台
+   变化, 且没有任何防误触余地。改成自己的弹窗后, 不可逆操作才做得到
+   "看清对象 + 红色确认键 + 默认焦点落在取消"这三件事。 */
+.confirm-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+/* 提示图标: 中性问号圈。普通确认用中性色, 只有 danger 才转红 ——
+   红色本身是稀缺资源, 到处用就等于没有强调。 */
+.confirm-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 17px;
+  line-height: 1;
+}
+.confirm-body.danger .confirm-icon {
+  background: var(--status-overdue-soft);
+  color: var(--status-overdue);
+}
+.confirm-text { min-width: 0; }
+.confirm-lead {
+  margin: 0;
+  font-size: var(--fs-body-s);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+/* 被删对象: 主体是任务名, 科目色块在前面做视觉锚点 ——
+   作业名重复度高, 只看名字分不清删的是哪一条。 */
+.confirm-target {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body-s);
+  font-weight: 600;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.confirm-target .subject-tag { flex: none; }
+.confirm-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 危险确认键: 实心红而非描边红。行内的「删除」用描边(低频、弱),
+   而弹窗里这一步是最终决定 —— 描边红会和旁边的取消键糊在一起,
+   等于没给"按下去就真删了"一个视觉台阶。 */
+button.primary.modal-danger {
+  background: var(--status-overdue);
+  border-color: var(--status-overdue);
+  color: #FFF8F0;
+  font-weight: 600;
+}
+button.primary.modal-danger:hover:not(:disabled) {
+  opacity: 0.9;
+  background: var(--status-overdue);
+}
+
+/* ===== 17b. 数字输入弹窗 (替代原生 prompt) ===== */
+.prompt-body { margin: var(--space-2) 0; }
+.prompt-label {
+  display: block;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin-bottom: var(--space-2);
+}
+.prompt-body input {
+  width: 100%;
+  height: 44px;              /* 比常规输入框高: 这是弹窗里唯一的输入,
+                                触屏上要留足点击面积 */
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.prompt-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+/* ===== 17c. 弹窗表单 (手动添加作业) =====
    2026-09-28 用户反馈: 表单内容没对齐。根因是复用了通用的 .row + label,
    而 .row label 本身是 display:flex, 标签文字和输入框排在同一行且标签
    没有固定宽度 —— 「科目」被输入框挤到只剩一字宽, 于是竖排成
@@ -1011,18 +1150,47 @@ tr.is-optional .muted {
 .preview-table { table-layout: fixed; width: 100%; }
 .preview-table input, .preview-table select { width: 100%; min-width: 0; }
 
+/* 表内下拉框单独收窄左右内边距。
+   基础样式给所有控件 12px 左右内边距, 在固定列宽布局里会被逐级扣掉:
+   科目列 78px 扣掉单元格自己的 12px*2 只剩 54px, 扣掉控件的 12px*2
+   只剩 30px —— 装不下"语文"两个字加右侧下拉箭头, 实际渲染成一个"语"字,
+   家长根本看不出这条是语文还是数学。日期列是原生控件有固有最小宽度,
+   不能这么收, 所以只收 select。 */
+.preview-table select { padding-left: 4px; padding-right: 4px; }
+
 /* 各列宽度: 勾选/选做/置信/操作 都是窄列, 任务名吃掉剩余。
    「截止」列已移除(家长用不上, 且 148px 宽却常年空着), 省下的空间
-   全部还给任务名列 —— 它是唯一需要读全文的列。 */
-.preview-table th:nth-child(1), .preview-table td:nth-child(1) { width: 34px; }   /* 勾 */
+   全部还给任务名列 —— 它是唯一需要读全文的列。
+
+   宽度预算 (2026-09-29 桌面端复核): 固定列原来合计 560px, 而桌面
+   main 上限 720px 减去内边距后表格只有 688px —— "任务名吃掉剩余"
+   实际只吃到 128px, 七个汉字就被截断, 家长根本没法核对是哪条作业。
+   移动端早就转成卡片了(§26c), 这套固定列宽只服务桌面, 必须按桌面
+   的 688px 重算: 让任务名拿到 ~185px, 其余列挤一挤。
+
+   挤的顺序是有讲究的, 不能一刀切(第一版就把 预计用时 压到 72px,
+   结果数字输入框只剩 48px、"25"被截成"2"; 科目压到 72px 后下拉框
+   只显示得出一个字; 操作压到 48px 则表头"操作"二字被截):
+     - 原文 92 -> 58: 本来就单行截断 + title 兜底, 入库后看板能看全文
+     - 归属日 130 -> 124: 原生日期控件的下限, 再窄就显示不全
+     - 勾 34->32 / 选做 46->42 / 置信 42->36: 纯图标列
+   科目(78)、预计用时(82)、操作(52)维持原宽 —— 前两个装的是控件,
+   操作装的是"操作"二字表头, 压窄了都不是截断就是装不下。
+   (下限由 test_preview_table 的 test_est_column_wide_enough /
+    test_action_column_header_and_width 锁住, 别再往下压。)
+
+   注意 78px 对科目来说并不宽裕: 它要同时装下单元格内边距和 select
+   自身的内边距, 所以上面单独给表内 select 收了左右 padding ——
+   只压列宽而不收内边距, 下拉框里就只剩一个字。 */
+.preview-table th:nth-child(1), .preview-table td:nth-child(1) { width: 32px; }   /* 勾 */
 .preview-table th:nth-child(2), .preview-table td:nth-child(2) { width: 78px; }   /* 科目 */
-.preview-table th:nth-child(3), .preview-table td:nth-child(3) { width: auto; }    /* 任务名 */
-.preview-table th:nth-child(4), .preview-table td:nth-child(4) { width: 130px; }  /* 归属日 */
-.preview-table th:nth-child(5), .preview-table td:nth-child(5) { width: 46px; }   /* 选做 */
+.preview-table th:nth-child(3), .preview-table td:nth-child(3) { width: auto; min-width: 180px; }  /* 任务名 */
+.preview-table th:nth-child(4), .preview-table td:nth-child(4) { width: 124px; }  /* 归属日 */
+.preview-table th:nth-child(5), .preview-table td:nth-child(5) { width: 42px; }   /* 选做 */
 .preview-table th:nth-child(6), .preview-table td:nth-child(6) { width: 82px; }   /* 预计用时 */
-.preview-table th:nth-child(7), .preview-table td:nth-child(7) { width: 42px; }   /* 置信 */
-.preview-table th:nth-child(8), .preview-table td:nth-child(8) { width: 92px; }   /* 原文 */
-.preview-table th:nth-child(9), .preview-table td:nth-child(9) { width: 56px; }   /* 操作 */
+.preview-table th:nth-child(7), .preview-table td:nth-child(7) { width: 46px; }   /* 置信 */
+.preview-table th:nth-child(8), .preview-table td:nth-child(8) { width: 52px; }   /* 原文 */
+.preview-table th:nth-child(9), .preview-table td:nth-child(9) { width: 52px; }   /* 操作 */
 
 /* 单元格不换行: 换行正是行高暴涨的元凶, 一律截断 + title 兜底 */
 .preview-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1174,15 +1342,44 @@ tr.is-optional .muted {
   .setting-row { flex: 1 1 100%; }
 }
 
-/* ===== 19. 底部 Tab Bar (移动端, 设计文档 §6) ===== */
-@media (max-width: 639px) {
-  main { padding: var(--space-3); }
-  nav#tabs { order: 3; width: 100%; justify-content: space-around; }
+/* ===== 19. 底部 Tab Bar (移动端, 设计文档 §6) =====
+   main 与 .toast 早就为"固定底栏"留了 56px 底部空间, 但 nav 一直只是
+   header 里换行排列的一行 —— 预留的空间被白白浪费, 导航还落在拇指够不到
+   的屏幕顶端(header 实测占 88px, 667px 高的屏上白吃掉 13%)。
+   这里把它真正固定到底部: position:fixed 让它脱离文档流, header 立刻
+   瘦回单行, 底部空间也终于物归其用。
+
+   断点用"宽度 <=767px 或 高度 <=500px"而不是单看宽度 —— 手机横过来
+   之后宽度会涨到 667~932px, 只写 max-width:639px 的话, iPhone SE 横屏
+   (667x375) 和 Pro Max 横屏 (932x430) 都会漏掉, 底栏消失、触控目标
+   一夜回到 36px。视口"矮"本身就是横屏手机的可靠信号, 用逗号取或。 */
+@media (max-width: 767px), (max-height: 500px) {
+  main {
+    padding: var(--space-3);
+    /* 底栏浮在内容之上, 必须留出等高内边距, 否则最后一行作业会被压在栏下 */
+    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+  }
+  nav#tabs {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 900;
+    order: 3;
+    width: 100%;
+    margin: 0;
+    gap: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 12px rgba(15, 20, 25, 0.04);
+    /* 手势条/home indicator 压在这条 padding 里, 按钮本体不会被顶到屏外 */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
   nav#tabs button {
     flex: 1;
     min-width: 0;
+    min-height: 52px;          /* 拇指目标: 比通用 44px 再高一点, 更好按 */
     padding: var(--space-2) 0;
     font-size: var(--fs-caption);
+    border-radius: 0;
   }
   header { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   header h1 { font-size: var(--fs-h2); }
@@ -1375,5 +1572,271 @@ footer {
   .cal-cell.partial::after     { background: var(--cal-part-ink); }
   .cal-cell.all-done::after    { background: var(--cal-done-ink); }
   .cal-cell.optional-only::after { background: var(--cal-opt-ink); }
-  .cal-cell { min-height: 34px; }
+  /* 44px 触控下限: 480px 宽下 7 列格子每格约 63px 宽, 抬到 44px 高
+     仍放得下 6 行月历, 不会把日历撑到需要滚动。 */
+  .cal-cell { min-height: 44px; }
+}
+
+/* ===== 26. 移动端 ergonomics (2026-09-29) =====
+   这一段全部来自 375px 真实测量, 不是凭感觉调的:
+     - 40 个可点元素低于 44px (次操作按钮 22px、原文链接 26x19、tab 36px)
+     - 输入框字号 14px / 13.3px → iOS Safari 聚焦时自动放大且不还原
+     - 预览表 640px 塞进 334px 视口, 横向滚动近一倍屏宽
+   桌面的紧凑密度是有意为之(见 test_row_actions 的 22px 断言), 不该被
+   顺手改掉 —— 所以下面全部只在窄屏生效, 桌面版一行不动。 */
+
+/* --- 26a. 触控目标 ≥44px ---
+   逐个列出修饰类而不是只写 .status-btn: .status-btn.done 是双类选择器
+   (特异度 0,2,0), 裸 .status-btn (0,1,0) 压不住它, 34px 会原样留着。
+
+   断点与第 19 节保持一致(宽 <=767px 或 矮 <=500px), 否则横屏手机
+   会退回桌面密度。 */
+@media (max-width: 767px), (max-height: 500px) {
+  button,
+  .row-actions button,
+  .status-btn,
+  .status-btn.done,
+  .status-btn.skipped,
+  .status-btn.redo,
+  .status-btn.undo,
+  .status-btn.opt-toggle,
+  .status-btn.danger {
+    min-height: 44px;
+  }
+  /* nav#tabs button 故意不在这个列表里: 第 19 节已经给了它 52px,
+     同特异度下这条会把它压回 44px, 主导航值得那 8px。 */
+  .status-btn { padding: 0 var(--space-3); }
+  .row-actions { gap: var(--space-2); }   /* 8px 最小间隔, 避免误触相邻操作 */
+
+  /* "原文"是个裸 <span>, 视觉上只有 26x19 —— 比它承载的"点开弹窗"
+     这个动作该有的代价小得多。撑成行内块, 点击区随之长大,
+     文字本身的大小不变, 不会把行高顶开。
+     横向也要补: 只加 min-height 的话它仍只有 34px 宽。 */
+  .assignment-row .source-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+    padding: 0 var(--space-2);
+  }
+}
+
+/* --- 26b. 输入控件: 字号 16px 起, 高度 44px 起 ---
+   iOS Safari 对 < 16px 的输入框会在聚焦时自动放大页面, 且失焦后不还原,
+   于是家长点一下"实际用时"就被留在放大态, 之后整个页面都是错的。
+   16px 是唯一能规避的取值, 代价仅是字号大一点。
+   选择器与第 5 节的基础规则逐条对齐 —— 只写裸 input 会被
+   input[type="text"] (0,1,1) 压过去, 等于没改。
+   断点同样用"宽 <=767px 或 矮 <=500px", 见第 19 节说明。 */
+@media (max-width: 767px), (max-height: 500px) {
+  input,
+  select,
+  textarea,
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"],
+  /* 设置页的紧凑输入框自带 14px 字号, 类选择器 (0,1,0) 压得住裸
+     input (0,0,1); 漏掉它就等于这块设置页仍在被 iOS 自动放大。 */
+  .setting-input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  /* 与 .setting-card .save-btn 同为双类 (0,2,0): 必须原样带上前缀,
+     写成 .save-btn 会被基础规则的 34px 压回去。 */
+  .setting-card .save-btn { min-height: 44px; }
+  /* 481~639px 这一段基础规则是 40px, 也在 639px 查询里补齐 */
+  .cal-cell { min-height: 44px; }
+  /* 桌面端为省空间把数字框限到 88px, 手机上 16px 字号放不下三位数+单位 */
+  .assignment-row .actual-input { width: 100%; }
+  .prompt-body input { height: 52px; }
+  .preview-table input[type="number"] { max-width: none; }
+
+  /* 复选框单独处理: 它是原生控件, 撑到 44px 高会被浏览器画成一个
+     又高又窄的怪方块。给 24px(仍是默认的近两倍), 由 44px 高的
+     网格行提供视觉间距。这是刻意的取舍 —— 主操作(完成/删除/确认)
+     全部拿到完整 44px, 复选框是次级开关。 */
+  input[type="checkbox"] {
+    min-height: 24px;
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* --- 26c. 预览表: 横向滚动 -> 卡片 ---
+   9 列固定布局在 334px 可用宽度里只能横向滚, 而滚过去的列恰恰是
+   家长最不需要的(置信/原文/操作), 留在屏幕里的反而是任务名 —— 正好
+   反了。窄屏改成每条作业一张卡, 标签由 data-label 提供。 */
+@media (max-width: 640px) {
+  #parse-result { overflow-x: visible; }
+  .preview-table { min-width: 0; display: block; }
+  .preview-table thead { display: none; }
+  .preview-table tbody,
+  .preview-table tr { display: block; width: auto; }
+  /* 宽度必须用 :nth-child(n) 复位。基础规则是
+     `.preview-table td:nth-child(8) { width: 92px }` —— (0,2,1),
+     比裸的 `.preview-table td` (0,1,1) 高一级, 直接写 width:auto 会被
+     压回去: 单元格仍卡在 92px, 里面的网格只剩不到一个字宽, 原文
+     变成"一列一个字", 单张卡片能撑到 774px。
+     这里只复位宽度, 不能顺手写 display —— 那样 (0,2,1) 会反过来
+     压掉下面 (0,1,1) 的 display:grid, 标签和输入框就变成上下两行堆叠。 */
+  .preview-table td:nth-child(n) { width: auto; }
+  .preview-table tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+  /* 桌面端为了压行高给 td 强制了 nowrap + 省略号, 卡片里必须放开:
+     任务名常有二三十字, 截断了家长就没法核对是哪条作业了。 */
+  .preview-table td {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    border: 0;
+    padding: 3px 0;
+  }
+  .preview-table td::before {
+    content: attr(data-label);
+    font-size: var(--fs-caption);
+    color: var(--text-3);
+  }
+  .preview-table .col-src small {
+    white-space: normal;      /* 同上: 原文要能看全 */
+    display: inline;
+  }
+  /* 删除键自带 aria-label, 再加一列"操作"标签纯属噪音 */
+  .preview-table td.col-del::before { content: ''; }
+  .preview-table .row-del { min-height: 44px; padding: 0 var(--space-3); }
+
+  /* 归属日下面那句红字提示要占满整卡宽度。挤在标签右边的窄列里会
+     被折成"AI 未识别 / 归属日, 请 / 确认"三行, 反而比不提示更抢眼。 */
+  .preview-table .need-date-hint {
+    grid-column: 1 / -1;
+    margin: 2px 0 0;
+    font-size: var(--fs-caption);
+    line-height: 1.4;
+  }
+}
+
+/* --- 26g. 复盘偏差表: 7 列 -> 卡片 ---
+   和 26c 是同一类问题, 但更严重: 预览表最宽的一列是原文, 复盘表最宽
+   的是"建议" —— 一整段中文。table 只有 width:100%, 没有任何列宽约束,
+   浏览器按内容分配后"建议"只剩约 30px, 于是整段被压成"实/际/比/预/
+   估/多/6/分/钟…"一行一个字, 单行撑到 250px, 整页没法看。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .weekly-table { display: block; }
+  .weekly-table thead { display: none; }
+  .weekly-table tbody,
+  .weekly-table tr { display: block; width: auto; }
+  .weekly-table tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+  .weekly-table td {
+    display: grid;
+    grid-template-columns: 3.2em minmax(0, 1fr);
+    align-items: center;
+    /* 网格项默认在行内轴 stretch, .subject-tag 会被拉成一条横贯整行的
+       色带(语文/数学两字占满 311px)。让值列按内容宽度排布。 */
+    justify-items: start;
+    gap: var(--space-2);
+    border: 0;
+    padding: 3px 0;
+    white-space: normal;
+  }
+  .weekly-table td::before {
+    content: attr(data-label);
+    font-size: var(--fs-caption);
+    color: var(--text-3);
+  }
+  /* "建议"是一段话, 不是个值。给它整行, 标签反而多余。 */
+  .weekly-table td.col-advice {
+    display: block;
+    grid-column: 1 / -1;
+    margin-top: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px dashed var(--border);
+    color: var(--text-2);
+    font-size: var(--fs-body-s);
+    line-height: 1.55;
+  }
+  .weekly-table td.col-advice::before { content: ''; }
+}
+
+/* --- 26h. 设置页字典编辑器: 消除整页横向滚动 ---
+   键/值两列各塞一个 <input>, input 的固有宽度约 170px, 两个加起来就
+   超过 344px 可用宽度, 整页被迫横向滚动 —— 手机上最糟的一类问题。
+   table-layout:fixed 让列宽由表格算法均分, input 收成 width:100%,
+   才吃得下。删除键那列固定窄一点, 剩下的都给两个输入框。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .settings-kv-table { table-layout: fixed; width: 100%; }
+  .settings-kv-table th,
+  .settings-kv-table td { padding: 3px var(--space-1); }
+  .settings-kv-table th:last-child,
+  .settings-kv-table td:last-child { width: 52px; text-align: center; }
+  .settings-kv-table input {
+    width: 100%;
+    min-width: 0;
+    padding: 0 var(--space-2);
+  }
+  .settings-kv-table .kv-del { min-height: 44px; width: 100%; padding: 0; }
+}
+
+/* --- 26d. 触屏手感与安全区 ---
+   touch-action: manipulation 去掉移动端 ~300ms 的双击缩放等待;
+   tap-highlight 去掉 iOS 点击时那层灰闪(它会让"点了没反应"的感觉更明显);
+   touch-callout 干掉长按弹出的"拷贝/查找"菜单 —— 按钮不是文本,
+   不该能被选中。 */
+button, .source-link, .date-tab, .cal-cell, .row-del, input, select, textarea {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+button, .status-btn, nav#tabs button, .date-tab, .cal-cell, .row-del, .source-link {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* 固定在顶部的 header 要躲开刘海/灵动岛, 底部 footer 躲开手势条。
+   桌面端 env() 一律回退 0, 不产生任何影响。 */
+header {
+  padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
+  padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
+}
+footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px)); }
+
+/* --- 26e. 横屏 ---
+   375px 高的屏上, header(88px) + 底栏(52px) 一度吃掉三成。
+   竖屏时按顺序读标题→内容, 横屏空间不够, 先压缩 chrome。
+   这里只留"矮视口"这一个条件就够了 —— 26a/26b 已经用
+   "宽 <=767px 或 矮 <=500px" 覆盖了横屏, 本节只负责再压一档。 */
+@media (max-height: 500px) {
+  header { padding-top: calc(var(--space-2) + env(safe-area-inset-top, 0px)); padding-bottom: var(--space-2); }
+  header h1 { font-size: var(--fs-body); }
+  main { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+  nav#tabs button { min-height: 44px; padding: var(--space-1) 0; }
+}
+
+/* --- 26f. 降低动效偏好 ---
+   前面已经为完成按钮的花瓣动画做过一份; 这里补上浮雕/阴影类的过渡,
+   避免"减少动效"开启后仍有元素在动。 */
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar .progress-fill,
+  .toast,
+  button,
+  .status-btn {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
