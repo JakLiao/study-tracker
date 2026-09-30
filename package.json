@@ -1,0 +1,13 @@
+{
+  "name": "study-tracker-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "study-tracker 前端集成测试依赖 (仅测试用; 运行服务不需要 Node)",
+  "scripts": {
+    "postinstall": "echo 'study-tracker: 依赖仅供 pytest 前端集成测试使用, 运行服务不需要 Node。'",
+    "test:js": "node tests/test_board_hint_regression.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.1"
+  }
+}

@@ -20,9 +20,9 @@ build/
 htmlcov/
 
 # Node (仅为前端集成测试装 jsdom, 运行时不需要)
+# package.json / package-lock.json 必须入库: 否则 fresh clone 拿不到 jsdom 依赖声明,
+# tests/ 里的 jsdom 用例会静默 skip (pytest.mark.skipif), 看着全绿其实没跑。
 node_modules/
-package-lock.json
-package.json
 
 # 数据库 (本地数据不入库)
 data/study.db

@@ -57,7 +57,7 @@
 | OS | WSL2 / Linux / macOS |
 | Python | 3.12+ |
 | 依赖 | `fastapi` `pydantic` `requests` `uvicorn`（见 `requirements.txt`） |
-| Node | 不需要。仅前端集成测试用 jsdom 时才装 |
+| Node | 运行服务不需要。只有跑前端集成测试（jsdom）时才需要，见 §6 |
 
 > WSL2 用户的 pip 可能报 `externally-managed-environment`，加 `--break-system-packages`，或用虚拟环境（见下）。
 
@@ -164,12 +164,21 @@ bash service.sh start --host 0.0.0.0 --port 8876
 ## 6. 测试
 
 ```bash
+# 1. 先装前端集成测试依赖 (仅 jsdom, 一次即可; 依赖声明在 package.json)
+npm install
+
+# 2. 跑测试
 python3 -m pytest tests/ -q
+
+# 单独跑纯 JS 回归用例 (不需要 jsdom, 只用 Node 内置模块)
+npm run test:js
 ```
 
 `tests/conftest.py` 会为每个测试分配独立临时数据库并默认关闭真实 AI 调用，所以跑测试不会动你的数据、也不会消耗 token。
 
 覆盖范围：AI Prompt 与 JSON 解析、解析接口、入库与去重、看板与进度口径、月历汇总、状态流转、设置、前端渲染与路由（Node + jsdom）。
+
+> **为什么 `package.json` 要入库**：jsdom 用例是 `pytest.mark.skipif` 保护的 —— 没装 jsdom 时它们**静默 skip**，pytest 依然显示全绿，但前端断言一条都没跑。依赖声明入库后，`npm install` 一步就能补齐。若看到 `-rs` 输出里成片的 `SKIPPED ... 需要 node 与 jsdom`，就是这一步没做。
 
 > `tests/e2e/test_real_ai_parsing.py` 是**手工脚本不是 pytest 用例**（文件内无 `test_` 函数，pytest 收集到 0 条）——它会真打 AI 并消耗额度，故刻意不转成 pytest。需真实打 AI 时用 `python3 tests/e2e/test_real_ai_parsing.py` 手工跑。
 
