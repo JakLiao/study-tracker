@@ -149,6 +149,12 @@ class AssignmentEdit(BaseModel):
     due_date: date | None = None
     deadline_time: datetime | None = None
     subject: Subject | None = None
+    # 2026-10-02: 编辑弹窗补上「是否选做」, 与手动添加对齐。
+    # 类型必须是 bool | None 而不是 bool: 这个模型靠 model_fields_set
+    # 区分"没传"与"传了", 而 is_optional 是 False 才是合法值 —— 写成
+    # bool 会让 False 与"没传"都落进同一个默认值, 取消选做就永远发不出去。
+    # 之前只能走行内按钮的 /optional 专用接口, 这里补齐后两个弹窗字段一致。
+    is_optional: bool | None = None
 
     @field_validator("task_name")
     @classmethod

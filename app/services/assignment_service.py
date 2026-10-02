@@ -460,6 +460,12 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
                 edit.deadline_time.isoformat() if edit.deadline_time else None,
                 row["deadline_time"],
             )
+        # is_optional 同理是"出现即写入", 但它不会为 null —— 表单里只有
+        # 勾选/不勾选两种, 前端传的是 true/false。判定用 is not None 而不是
+        # if edit.is_optional: 后者会把「取消选做」(False) 当成没传, 勾选
+        # 永远取消不掉。SQLite 用 0/1 存布尔。
+        if edit.is_optional is not None:
+            _put("is_optional", 1 if edit.is_optional else 0, row["is_optional"])
 
         if not fields:
             return {"id": assignment_id, "noop": True}
