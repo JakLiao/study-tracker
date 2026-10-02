@@ -119,6 +119,105 @@ def test_backend_serves_index_for_pages(app_client, page):
     assert "text/html" in r.headers["content-type"]
 
 
+# ====== 2b. 静态资源缓存策略 (2026-10-02) ======
+#
+# 背景: 改完 app.js 刷新页面看不到变化。FastAPI StaticFiles 默认不发
+# Cache-Control, 浏览器对"无缓存指令"的启发式策略是尽量复用本地副本,
+# 普通刷新往往根本不重新校验 —— 于是代码改对了、界面却还是旧的。
+
+
+def test_static_js_sends_no_cache(app_client):
+    """app.js 必须显式声明 no-cache, 否则改了代码刷新也看不到。"""
+    r = app_client.get("/static/app.js")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache", \
+        f"app.js 缺少 Cache-Control: {r.headers.get('cache-control')!r}"
+
+
+def test_static_css_sends_no_cache(app_client):
+    """样式表同样会改, 不能只管 JS。"""
+    r = app_client.get("/static/styles.css")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+def test_index_html_sends_no_cache(app_client):
+    """首页也要。
+
+    index.html 走 FileResponse 而不是 StaticFiles 挂载, 是两条不同的代码
+    路径。只在 StaticFiles 上加头, HTML 仍会被缓存 —— 结果是"页面结构是旧
+    的、但引用到的 app.js 是新的"这种半新半旧状态, 排障时更难看出问题在哪。
+    """
+    r = app_client.get("/")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+def test_conditional_get_still_works(app_client):
+    """no-cache 不等于每次都全量重下: 内容没变应回 304。
+
+    no-cache 的语义是"每次使用前必须校验", 而不是"不许存"。配合 ETag,
+    浏览器带 If-None-Match 来问一次, 服务端回 304 且不带 body。这条锁住
+    的就是"加缓存头没有把带宽吃满" —— 若哪天改成 no-store, 这里会失败。
+    """
+    first = app_client.get("/static/app.js")
+    etag = first.headers.get("etag")
+    assert etag, "StaticFiles 应自带 ETag, 没有它 no-cache 就退化成每次全量下载"
+
+    second = app_client.get(
+        "/static/app.js",
+        headers={"If-None-Match": etag},
+    )
+    assert second.status_code == 304, \
+        f"内容未变却没回 304, 实际 {second.status_code}"
+    assert second.content == b"", "304 不应带 body"
+
+
+def test_never_immutable(app_client):
+    """不能用 immutable —— 静态资源是固定文件名, 没有内容指纹。
+
+    immutable 等于告诉浏览器"这文件永远不变, 别再问了"。项目里资源叫
+    app.js 而不是 app.<hash>.js, 内容和文件名没有绑定关系, 一旦发出去
+    就再也更新不了, 比现在的缓存问题更严重。这条是防线, 防止日后有人
+    为了"性能更好"顺手加上。
+    """
+    cc = app_client.get("/static/app.js").headers.get("cache-control", "")
+    assert "immutable" not in cc, f"不得使用 immutable: {cc!r}"
+
+
+def test_head_requests_also_carry_header(app_client):
+    """HEAD 只取头不取 body, 但缓存指令同样要带上。"""
+    r = app_client.head("/static/app.js")
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+@pytest.mark.parametrize("page", TABS)
+def test_alias_pages_send_no_cache(app_client, page):
+    """菜单页(/board 等)也是 HTML, 同样会被浏览器缓存, 别只管首页。"""
+    r = app_client.get(f"/{page}")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+
+
+def test_api_responses_not_touched(app_client):
+    """中间件按路径收窄, 不能顺手给 API 也挂上。
+
+    接口响应本来就该实时, 额外挂一条 no-cache 只会给每次请求白加一次
+    校验往返。这条锁住范围 —— 若中间件改成"所有 GET 都加头", 这里会失败。
+    """
+    r = app_client.get("/api/health")
+    assert r.status_code == 200
+    assert "cache-control" not in r.headers, \
+        f"API 响应不该由静态资源中间件管: {r.headers.get('cache-control')!r}"
+
+
+def test_404_response_not_marked(app_client):
+    """中间件只看路径, 不该给 404 也打上"静态资源"标签。"""
+    r = app_client.get("/definitely-not-a-page")
+    assert r.status_code == 404
+    assert "cache-control" not in r.headers
+
+
 # ====== 3. 运行时 (jsdom) ======
 
 node = shutil.which("node")

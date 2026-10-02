@@ -91,6 +91,43 @@ def create_app() -> FastAPI:
             content=error_payload("5000", f"服务异常: {type(exc).__name__}"),
         )
 
+    # 静态资源的缓存策略 (2026-10-02)
+    #
+    # 背景: 改完 app.js 刷新页面看不到变化, 排查发现浏览器拿的是旧副本。
+    # 原因是 FastAPI StaticFiles 不发 Cache-Control, 浏览器对"无缓存指令"
+    # 的启发式策略是尽量复用本地副本 —— 普通刷新往往根本不重新校验。
+    #
+    # 用 no-cache 而不是 no-store: 前者允许浏览器存副本, 但每次使用前必须
+    # 向服务器校验; 服务器有 ETag, 内容没变就回 304(不传 body)。这样改完
+    # 代码刷新必定生效, 又不至于每次都全量重下几百 KB。
+    #
+    # 刻意不用 immutable: 那等于告诉浏览器"这文件永远不会变, 别再问了"。
+    # 本项目的静态资源是固定文件名(app.js 而非 app.<hash>.js), 没有内容
+    # 指纹, 一旦发出去就再也更新不了 —— 比现在的缓存问题更严重。
+    # 哪天真要上 immutable, 得先把构建改成带 hash 的文件名。
+    #
+    # 只拦 GET/HEAD: 静态资源的读取本来就只有这两种方法。
+    #
+    # 刻意按路径而不是"全部 GET"来收窄: 首页和菜单页走 FileResponse
+    # (路径是 / 、/board), 静态资源走挂载 (路径是 /static/*), 两者都要覆盖
+    # —— 只在 StaticFiles 上加头会漏掉 index.html, 于是出现"页面结构是旧的、
+    # 但它引用的 app.js 是新的"这种半新半旧状态, 排障时更难看出问题在哪。
+    # 而 /api/* 不该由这里管: 接口响应本来就该实时, 额外挂一条 no-cache
+    # 只会给每次请求白加一次校验往返。
+    @app.middleware("http")
+    async def static_cache_control(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        # FRONTEND_PAGES 存的是不带斜杠的裸名("board"), 而 url.path 是
+        # "/board" —— 直接 `path in FRONTEND_PAGES` 永远不成立, 菜单页会被
+        # 漏掉。lstrip("/") 去掉前导斜杠再比。
+        bare = path.lstrip("/")
+        is_static = path.startswith("/static/") or path == "/static"
+        is_page = path == "/" or bare in FRONTEND_PAGES
+        if request.method in ("GET", "HEAD") and (is_static or is_page):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     # 静态资源
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
