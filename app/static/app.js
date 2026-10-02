@@ -607,6 +607,18 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     actions.appendChild(editBtn);
   }
 
+  // 编辑 —— 改这条作业本身的字段 (描述/估时/日期/类型), 不是改它的状态。
+  //
+  // 放在「删除」之前而不是行首: 行内已有"完成/重做/今天不做/选做"四个
+  // 状态类操作, 编辑是内容纠错, 与它们语义不同, 排在一起容易误点。
+  //
+  // 所有状态都给了入口 (含 done/skipped): 已完成的那条若描述写错了,
+  // 同样需要能改 —— 而删除对 done 是被后端禁止的 (4010), 若这里也不给
+  // 编辑, 家长就彻底动不了这条记录了。
+  const editBtn = el('<button class="status-btn edit" aria-label="编辑这条作业">编辑</button>');
+  editBtn.addEventListener('click', () => openEditAssignmentModal(item, refresh));
+  actions.appendChild(editBtn);
+
   // 删除 —— 已完成的作业后端强制禁止删除 (4010), 所以这里直接不渲染,
   // 否则就是给用户一个"点了必然报错"的按钮。
   if (item.status !== 'done') {
@@ -650,6 +662,117 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   return row;
 }
 
+// ====== 编辑作业弹窗 ======
+// 与「手动添加」共用 #modal 和 .form-grid, 字段口径保持一致 —— 家长在
+// 两处看到的是同一套字段, 不用记"哪个弹窗能改哪个"。
+//
+// 语义是"改这一条", 所以表单要带出当前值而不是留空: 家长是来纠正
+// AI 解析结果的(描述写错了、估时猜错了), 不是重填一遍。
+function openEditAssignmentModal(item, onSaved) {
+  if (_modalCloser) return;                  // 已有弹窗在等确认, 别覆盖它
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = '编辑作业';
+  // deadline_time 存的是带秒的 ISO, 而 flatpickr 的 datetime 控件要的是
+  // YYYY-MM-DDTHH:mm。截到 16 位正好去掉 ":ss", 直接塞进去会显示空白。
+  // 秒本来就是补齐用的(见 openManualAddModal 的 dl + ':00'), 丢掉无损。
+  const dlVal = item.deadline_time ? String(item.deadline_time).slice(0, 16) : '';
+  document.getElementById('modal-content').innerHTML = `
+    <div class="form-grid">
+      <label>
+        <span class="form-label">科目</span>
+        <select id="ed-subject">
+          ${['语文', '数学', '英语']
+            .map(s => `<option ${s === item.subject ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </label>
+      <label>
+        <span class="form-label">任务名</span>
+        <input id="ed-name" maxlength="200" value="${escapeAttr(item.task_name)}" />
+      </label>
+      <label>
+        <span class="form-label">预计用时</span>
+        <input id="ed-est" type="number" min="1" max="180" inputmode="numeric"
+               value="${item.est_minutes != null ? item.est_minutes : ''}" />
+      </label>
+      <label>
+        <span class="form-label">归属日</span>
+        <input id="ed-due" type="date" class="js-datepicker" value="${escapeAttr(item.due_date)}" />
+      </label>
+      <label>
+        <span class="form-label">截止时间</span>
+        <input id="ed-dl" type="datetime-local" class="js-datetimepicker" value="${dlVal}" />
+      </label>
+      <label>
+        <span class="form-label">类型</span>
+        <input id="ed-type" list="ed-type-list" maxlength="50" placeholder="背诵 / 订正 / 计算…"
+               value="${escapeAttr(item.task_type || '')}" />
+      </label>
+    </div>
+    <datalist id="ed-type-list">
+      ${['订正', '背诵', '预习', '计算', '抄写', '阅读']
+        .map(t => `<option value="${t}"></option>`).join('')}
+    </datalist>
+    <p class="muted" style="margin:0">改完点「保存」。选做请用行内的「选做」按钮, 那里也能一键切换。</p>
+  `;
+  m.classList.remove('hidden');
+  // 刻意不加 confirm-modal: 那是确认/单输入框的窄版布局(见 styles.css §16),
+  // 六个字段的表单需要整幅宽度, 与「手动添加」保持一致。
+  initDatePickersIn(document.getElementById('modal-content'));
+  setModalActions({
+    mode: 'confirm',
+    okText: '保存',
+    onOk: async () => {
+      const name = document.getElementById('ed-name').value.trim();
+      if (!name) { toast('任务名不能为空'); return; }   // 留在弹窗里, 别静默关掉
+      const est = parseInt(document.getElementById('ed-est').value, 10);
+      if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
+      const due = document.getElementById('ed-due').value;
+      if (!due) {
+        toast('归属日必填');
+        openDatePicker(document.getElementById('ed-due'));
+        return;
+      }
+      const dl = document.getElementById('ed-dl').value;
+      // 归属日与截止时间的先后关系在前端也拦一次: 与后端 insert/edit 同一口径,
+      // 但这里能立刻定位到是哪个框填错了, 不必等服务端报错再猜。
+      if (dl && dl.slice(0, 10) < due) {
+        toast('截止时间不能早于归属日');
+        return;
+      }
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.disabled = true;                            // 请求锁: 防连点提交两次
+      try {
+        // 只发送"确实和原值不同"的字段。PATCH 接口靠 model_fields_set 判定
+        // 哪些列要写, 全部回传会让清空操作(deadline_time) 表达不出来。
+        const patch = {};
+        const setIfChanged = (k, v) => { if (v !== item[k]) patch[k] = v; };
+        setIfChanged('task_name', name);
+        setIfChanged('est_minutes', est);
+        setIfChanged('subject', document.getElementById('ed-subject').value);
+        setIfChanged('due_date', due);
+        // 截到分钟再补秒, 与手动添加的写法对齐(见 openManualAddModal)
+        setIfChanged('deadline_time', dl ? `${dl}:00` : null);
+        setIfChanged('task_type', document.getElementById('ed-type').value.trim() || null);
+
+        if (Object.keys(patch).length === 0) {
+          closeModal();
+          toast('没有改动');
+          return;
+        }
+        await api('PATCH', `/assignments/${item.id}`, patch);
+        closeModal();
+        // 改 due_date 会让这条作业从当前看的这一天里搬走, 必须重载整页,
+        // 否则行还留在原处, 看起来像没生效。
+        toast('已保存');
+        if (onSaved) await onSaved();
+      } catch (e) {
+        okBtn.disabled = false;
+        toast('保存失败: ' + e.message);               // 留在弹窗里让家长改完再试
+      }
+    },
+  });
+}
+
 // 原文 modal (设计文档 §9 坑 3: 低置信度行可点开原文核对)
 function openSourceModal(item) {
   const m = document.getElementById('modal');
@@ -679,6 +802,13 @@ function openSourceModal(item) {
 function setModalActions({ mode, onOk = null, okText = null, danger = false }) {
   const cancel = document.getElementById('modal-cancel');
   const ok = document.getElementById('modal-ok');
+  // 每次开弹窗都要把确定键恢复可点。
+  // modal-ok 是 index.html 里那个常驻节点, 不会随弹窗内容一起重建, 而
+  // 提交类弹窗会把它 disabled 当"请求锁"防连点 —— 那个锁若不在这里收回,
+  // 一次成功提交之后确定键就永久变灰: 家长第二次点「编辑」/「删除」/「改用时」
+  // 会看到弹窗正常打开、但确定键点不动, 表现为"功能坏了"。
+  // 收回放在这个统一出口, 而不是各弹窗自己记着, 才不会漏。
+  ok.disabled = false;
   if (mode === 'close') {
     cancel.classList.add('hidden');
     ok.textContent = '返回';
@@ -712,6 +842,41 @@ const CANCELLED = Symbol('modal-cancelled');
 
 let _modalCloser = null;
 
+// 收起还开着的 flatpickr 日历浮层。
+//
+// flatpickr 把日历挂在 body 下而不是输入框所在的弹窗里, 所以
+// closeModal 给 #modal 加 .hidden 收不住它: 浮层会带着 display:block
+// 继续浮在页面上, 轻则遮住看板, 重则挡住"保存"按钮的点击命中
+// (实测点保存会 hit test 到日历里的数字 span, 按钮点不动)。
+// 手动添加和编辑作业两个弹窗都初始化了日期控件, 所以在这里统一收口。
+//
+// 实例从我们自己存的 _fpInstance 拿, 而不是从浮层元素上找:
+// 实测浮层元素上没有任何 flatpickr 私有属性(库没挂), 猜
+// el._flatpickr 只会永远走兜底分支, 跳过库自己的关闭流程。
+//
+// 也不能写 querySelectorAll('input._fpInstance'): 那是 CSS 属性选择器,
+// 只匹配真实 HTML attribute, 而 _fpInstance 是 initDatePicker 挂的
+// JS 属性, 选择器一个都选不到(实测返回空)。只能取全部 input 再逐个读。
+function closeAnyOpenDatePicker() {
+  const inputs = document.querySelectorAll('input, [type="hidden"]');
+  let closed = 0;
+  inputs.forEach(input => {
+    const inst = input._fpInstance;
+    if (!inst || typeof inst.close !== 'function') return;
+    // 只关还开着的: close() 有 blur 等副作用, 对已关闭的浮层
+    // 没有必要再走一遍。
+    if (!inst.isOpen) return;
+    inst.close();
+    closed += 1;
+  });
+  // 兜底: 万一有浮层没对应的 input 记录(理论上不该发生),
+  // 至少把 open 类摘掉, 别让它留在页面上挡住点击。
+  document.querySelectorAll('.flatpickr-calendar.open').forEach(el => {
+    el.classList.remove('open', 'animate');
+  });
+  return closed;
+}
+
 function closeModal(result = CANCELLED) {
   const m = document.getElementById('modal');
   if (m) {
@@ -720,6 +885,8 @@ function closeModal(result = CANCELLED) {
     // 就不必担心它残留到下一次打开的原文或手动添加弹窗上。
     m.classList.remove('confirm-modal');
   }
+  // 必须在 #modal 隐藏之后: 浮层在 body 下, 不受 modal 的 hidden 影响。
+  closeAnyOpenDatePicker();
   const fn = _modalCloser;
   _modalCloser = null;          // 先清空再回调: 回调里若又开了新弹窗, 不会被顶掉
   if (fn) fn(result);

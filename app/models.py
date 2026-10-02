@@ -132,12 +132,35 @@ class OptionalPatch(BaseModel):
 
 
 class AssignmentEdit(BaseModel):
+    """局部更新一条已入库的作业.
+
+    所有字段默认 None, 且必须区分"没传"与"传了 null"两种情况:
+      没传               -> 保持原值 (PATCH 语义)
+      deadline_time=null -> 清空截止时间
+      task_type=null     -> 清空类型
+    靠 model_fields_set 判定字段是否出现在请求里, 见 assignment_service.edit_assignment。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     task_name: Annotated[str | None, Field(default=None, min_length=1, max_length=200)] = None
     est_minutes: Annotated[int | None, Field(default=None, ge=1, le=180)] = None
     task_type: str | None = Field(default=None, max_length=50)
     due_date: date | None = None
     deadline_time: datetime | None = None
     subject: Subject | None = None
+
+    @field_validator("task_name")
+    @classmethod
+    def _strip_task_name(cls, v: str | None) -> str | None:
+        # 去首尾空白后再判非空: 否则 "   " 能过 min_length=1 入库,
+        # 看板只显示一个空标签, 家长完全看不出这条作业叫什么。
+        if v is None:
+            return None
+        v2 = v.strip()
+        if not v2:
+            raise ValueError("task_name 不能为空")
+        return v2
 
 
 # ====== Settings ======

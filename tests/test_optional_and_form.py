@@ -157,19 +157,31 @@ def test_form_inputs_fill_column(styles):
     assert "min-width: 0" in block, "缺 min-width:0, 日期框会把网格撑破"
 
 
+def _manual_form_html(app_js: str) -> str:
+    """取出「手动添加」弹窗里那一段 .form-grid。
+
+    必须按 openManualAddModal 这个函数去截, 不能取文件里第一个 form-grid:
+    编辑弹窗(openEditAssignmentModal)也用同一套网格, 且定义在前面,
+    全文首个匹配会落到编辑表单上, 于是这里断言的其实是另一个弹窗 ——
+    手动添加真丢了字段也不会被发现。
+    """
+    m = re.search(r"function openManualAddModal\(\) \{(.*?)\n\}", app_js, re.S)
+    assert m, "未找到 openManualAddModal"
+    grid = re.search(r'<div class="form-grid">(.*?)</div>', m.group(1), re.S)
+    assert grid, "openManualAddModal 内未找到 .form-grid 表单"
+    return grid.group(1)
+
+
 def test_manual_form_labels_marked(app_js):
     """每个字段都要有 .form-label 标签文字, 否则网格第一列空着。"""
-    block = re.search(r'<div class="form-grid">(.*?)</div>', app_js, re.S)
-    assert block, "未找到 .form-grid 表单"
-    html = block.group(1)
+    html = _manual_form_html(app_js)
     for text in ("科目", "预计用时", "任务名", "归属日", "截止时间"):
         assert f'<span class="form-label">{text}</span>' in html, f"{text} 缺少标签"
 
 
 def test_manual_form_all_fields_present(app_js):
     """五个字段的 id 不能因改布局丢失 —— 提交逻辑按 id 取值。"""
-    block = re.search(r'<div class="form-grid">(.*?)</div>', app_js, re.S)
-    html = block.group(1)
+    html = _manual_form_html(app_js)
     for fid in ("m-subject", "m-est", "m-name", "m-due", "m-dl", "m-opt"):
         assert f'id="{fid}"' in html, f"{fid} 丢失, 提交会取不到值"
 

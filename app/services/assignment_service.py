@@ -403,39 +403,77 @@ def update_optional(assignment_id: int, is_optional: bool) -> dict:
 
 
 def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
+    """按 PATCH 语义局部更新一条作业.
+
+    判定"改哪些字段"必须看 model_fields_set 而不是"值是否为 None":
+    两者在"清空字段"这个场景下会给出相反的结果。deadline_time 与 task_type
+    都允许为空, 家长在弹窗里删掉截止时间后会传 deadline_time: null ——
+    若按 `is not None` 判断, 这次清空会被当成"没传"而静默忽略, 家长
+    看到弹窗关了以为改成功, 刷新后截止时间又回来了。
+
+    反过来, due_date / est_minutes / task_name / subject 是 NOT NULL 列,
+    传 null 属于非法输入, 直接拒掉而不是让 SQLite 抛 IntegrityError。
+    """
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
         if not row:
             raise AssignmentNotFoundError()
+
+        provided = edit.model_fields_set
         fields: dict[str, Any] = {}
         old_summary: dict[str, Any] = {}
         new_summary: dict[str, Any] = {}
+
+        def _put(key: str, value: Any, old: Any) -> None:
+            fields[key] = value
+            old_summary[key] = old
+            new_summary[key] = value
+
+        # --- NOT NULL 列: 传 null 视为非法 ---
+        for key, val in (
+            ("task_name", edit.task_name),
+            ("est_minutes", edit.est_minutes),
+            ("due_date", edit.due_date),
+            ("subject", edit.subject),
+        ):
+            if key in provided and val is None:
+                raise MissingFieldError(f"{key} 不能为空")
+
         if edit.task_name is not None:
-            fields["task_name"] = edit.task_name
-            old_summary["task_name"] = row["task_name"]
-            new_summary["task_name"] = edit.task_name
+            _put("task_name", edit.task_name, row["task_name"])
         if edit.est_minutes is not None:
-            fields["est_minutes"] = edit.est_minutes
-            old_summary["est_minutes"] = row["est_minutes"]
-            new_summary["est_minutes"] = edit.est_minutes
-        if edit.task_type is not None:
-            fields["task_type"] = edit.task_type
-            old_summary["task_type"] = row["task_type"]
-            new_summary["task_type"] = edit.task_type
-        if edit.due_date is not None:
-            fields["due_date"] = edit.due_date.isoformat()
-            old_summary["due_date"] = row["due_date"]
-            new_summary["due_date"] = edit.due_date.isoformat()
-        if edit.deadline_time is not None:
-            fields["deadline_time"] = edit.deadline_time.isoformat()
-            old_summary["deadline_time"] = row["deadline_time"]
-            new_summary["deadline_time"] = edit.deadline_time.isoformat()
+            _put("est_minutes", edit.est_minutes, row["est_minutes"])
         if edit.subject is not None:
-            fields["subject"] = edit.subject
-            old_summary["subject"] = row["subject"]
-            new_summary["subject"] = edit.subject
+            _put("subject", edit.subject, row["subject"])
+        if edit.due_date is not None:
+            _put("due_date", edit.due_date.isoformat(), row["due_date"])
+
+        # --- 可空列: 出现即写入, null 即清空 ---
+        # task_type 用空串兜成 null: 表单里清空输入框传出的是 "",
+        # 直接写库会留下一条"有类型但内容为空"的脏数据, 而周复盘按
+        # task_type 分组, 空串会单独占一组。
+        if "task_type" in provided:
+            _put("task_type", (edit.task_type or "").strip() or None, row["task_type"])
+        if "deadline_time" in provided:
+            _put(
+                "deadline_time",
+                edit.deadline_time.isoformat() if edit.deadline_time else None,
+                row["deadline_time"],
+            )
+
         if not fields:
             return {"id": assignment_id, "noop": True}
+
+        # 归属日与截止时间的先后关系要在落库前校验。
+        # 单独改 due_date 而不动 deadline_time 时, 新的归属日可能已经晚于
+        # 原截止时间 —— 这条作业从此变成"截止时间在归属日之前", 而看板的
+        # "未来 7 天到期"提醒正是按 deadline_time 排序的, 会算出错的提示。
+        # 口径与 insert_assignments 保持一致。
+        new_due = fields.get("due_date", row["due_date"])
+        new_dl = fields.get("deadline_time", row["deadline_time"])
+        if new_dl and date.fromisoformat(new_dl[:10]) < date.fromisoformat(new_due):
+            raise FieldOutOfRangeError("deadline_time 早于 due_date")
+
         fields["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         conn.execute("BEGIN")
@@ -449,7 +487,7 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
         except Exception:
             conn.execute("ROLLBACK")
             raise
-    return {"id": assignment_id, **{k: v for k, v in new_summary.items()}}
+    return {"id": assignment_id, **new_summary}
 
 
 def delete_assignment(assignment_id: int) -> dict:

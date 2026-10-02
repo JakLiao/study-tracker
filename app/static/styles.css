@@ -860,6 +860,23 @@ tr.is-optional .muted {
 }
 .status-btn.undo:hover { background: #FDEDEC; }
 
+/* 编辑: 改内容 (描述/估时/日期), 不是改状态。
+   与 .redo 一样用虚线描边 —— 虚线在这套按钮语言里表达"这是个附带入口,
+   不改变作业当前所处的状态", 选做开关也用同一记号, 语义一致。
+   刻意不给实心或高饱和色: 行内真正的主操作是"完成"的小红花,
+   编辑再抢一份视觉权重就分不清主次了。 */
+.status-btn.edit {
+  background: var(--surface);
+  border-color: var(--border);
+  border-style: dashed;
+  color: var(--text-2);
+}
+.status-btn.edit:hover {
+  background: var(--surface-2);
+  border-color: var(--text-3);
+  color: var(--text-1);
+}
+
 /* 删除: 用次操作档尺寸 + danger 的红色语义。
    显式写出来而不是靠"button.danger 在前、.status-btn 在后"的顺序 ——
    两者特异性相同(0,1,1), 顺序一变颜色就会被 .status-btn 覆盖掉。 */
@@ -1600,6 +1617,7 @@ footer {
   .status-btn.redo,
   .status-btn.undo,
   .status-btn.opt-toggle,
+  .status-btn.edit,
   .status-btn.danger {
     min-height: 44px;
   }
