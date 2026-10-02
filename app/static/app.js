@@ -679,6 +679,10 @@ function openEditAssignmentModal(item, onSaved) {
   document.getElementById('modal-content').innerHTML = `
     <div class="form-grid">
       <label>
+        <span class="form-label">归属日</span>
+        <input id="ed-due" type="date" class="js-datepicker" value="${escapeAttr(item.due_date)}" />
+      </label>
+      <label>
         <span class="form-label">科目</span>
         <select id="ed-subject">
           ${['语文', '数学', '英语']
@@ -686,8 +690,15 @@ function openEditAssignmentModal(item, onSaved) {
         </select>
       </label>
       <label>
-        <span class="form-label">任务名</span>
+        <span class="form-label">作业项</span>
         <input id="ed-name" maxlength="200" value="${escapeAttr(item.task_name)}" />
+      </label>
+      <label>
+        <span class="form-label">作业类型</span>
+        <span class="form-field">
+          ${taskTypeComboHtml('ed-type', item.task_type || '', '背诵 / 订正 / 计算…')}
+          <span class="form-hint">周复盘按类型分组, 可留空</span>
+        </span>
       </label>
       <label>
         <span class="form-label">预计用时</span>
@@ -695,35 +706,34 @@ function openEditAssignmentModal(item, onSaved) {
                value="${item.est_minutes != null ? item.est_minutes : ''}" />
       </label>
       <label>
-        <span class="form-label">归属日</span>
-        <input id="ed-due" type="date" class="js-datepicker" value="${escapeAttr(item.due_date)}" />
+        <span class="form-label">是否选做</span>
+        <span class="form-field">
+          <span class="form-check">
+            <input id="ed-opt" type="checkbox" ${item.is_optional ? 'checked' : ''} /> <span>选做</span>
+          </span>
+          <span class="form-hint">不勾选即必做, 计入今日进度</span>
+        </span>
       </label>
       <label>
         <span class="form-label">截止时间</span>
-        <input id="ed-dl" type="datetime-local" class="js-datetimepicker" value="${dlVal}" />
-      </label>
-      <label>
-        <span class="form-label">类型</span>
-        <input id="ed-type" list="ed-type-list" maxlength="50" placeholder="背诵 / 订正 / 计算…"
-               value="${escapeAttr(item.task_type || '')}" />
+        <span class="form-field">
+          <input id="ed-dl" type="datetime-local" class="js-datetimepicker" value="${dlVal}" />
+          <span class="form-hint">清空即取消截止时间</span>
+        </span>
       </label>
     </div>
-    <datalist id="ed-type-list">
-      ${['订正', '背诵', '预习', '计算', '抄写', '阅读']
-        .map(t => `<option value="${t}"></option>`).join('')}
-    </datalist>
-    <p class="muted" style="margin:0">改完点「保存」。选做请用行内的「选做」按钮, 那里也能一键切换。</p>
   `;
   m.classList.remove('hidden');
   // 刻意不加 confirm-modal: 那是确认/单输入框的窄版布局(见 styles.css §16),
   // 六个字段的表单需要整幅宽度, 与「手动添加」保持一致。
   initDatePickersIn(document.getElementById('modal-content'));
+  initCombos(document.getElementById('modal-content'));
   setModalActions({
     mode: 'confirm',
     okText: '保存',
     onOk: async () => {
       const name = document.getElementById('ed-name').value.trim();
-      if (!name) { toast('任务名不能为空'); return; }   // 留在弹窗里, 别静默关掉
+      if (!name) { toast('作业项不能为空'); return; }   // 留在弹窗里, 别静默关掉
       const est = parseInt(document.getElementById('ed-est').value, 10);
       if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
       const due = document.getElementById('ed-due').value;
@@ -753,6 +763,12 @@ function openEditAssignmentModal(item, onSaved) {
         // 截到分钟再补秒, 与手动添加的写法对齐(见 openManualAddModal)
         setIfChanged('deadline_time', dl ? `${dl}:00` : null);
         setIfChanged('task_type', document.getElementById('ed-type').value.trim() || null);
+        // 选做也能在这里改。setIfChanged 依赖两边同类型: 接口返回的
+        // is_optional 是真布尔(models.py 里 bool(row[...]) 转换过), 而
+        // .checked 也是布尔, 所以 !== 比较成立; 若哪天 DTO 改成 0/1,
+        // 这里会恒为"有改动", 退化成每次保存都写 —— 不会丢数据, 但
+        // 「没有改动」的提示会失效。
+        setIfChanged('is_optional', document.getElementById('ed-opt').checked);
 
         if (Object.keys(patch).length === 0) {
           closeModal();
@@ -1141,6 +1157,215 @@ function estDefault(item) {
     || 15;  // 配置全缺时的最后兜底 (与后端 DEFAULT_TASK_TYPE_BASELINE 同量级)
 }
 
+// 作业类型候选 (2026-10-02)。
+//
+// 候选不再写死一份, 而是直接取设置页「各作业类型预估用时」里的键 ——
+// 家长在设置里加过自定义类型(如「听写」), 这里的候选必须跟着变, 否则
+// 新增/编辑弹窗里选不到那个类型, 也就永远命中不了它的预估值。
+// 写死 ['订正','背诵',...] 的话, 配置孤岛问题会以"选得到但没预填"
+// 的形式复发一次 —— 那正是 2026-09-29 报障的同一个坑。
+function taskTypeOptions() {
+  const byType = (_baselineCache || {}).task_type || {};
+  const keys = Object.keys(byType);
+  // 配置没拉到(loadBaselines 还没回来/接口挂了)时给一份常见值兜底,
+  // 宁可让家长有候选可选, 也不要一个空 datalist。
+  return keys.length ? keys : ['订正', '背诵', '预习', '阅读', '计算', '抄写'];
+}
+
+// 作业类型下拉的 HTML 骨架 (自绘, 不用 <datalist>)。
+//
+// 为什么不用 datalist: 它的候选面板由操作系统绘制, **无法用 CSS 改任何一处**
+// —— 底色、文字、圆角、高亮都不是我们的。项目里已经因为同样的原因把原生
+// prompt() 和 <input type="date"> 换成了自绘控件 (见 promptNumber 与 flatpickr
+// 段落)。datalist 是同一类问题: 在 Windows Chrome 上它是一块近黑底浅色字的
+// 系统面板, 落在奶油糖果配色里像贴错了别的应用的截图。
+//
+// 结构: 一个真 input (仍可自由输入, 不只是选) + 一个 .combo-menu 浮层。
+// 保留自由输入很重要: 家长可能想写一个设置里还没有的类型。
+function taskTypeComboHtml(id, value, placeholder) {
+  return `
+    <span class="combo" data-combo>
+      <input id="${id}" class="combo-input" maxlength="50" autocomplete="off"
+             placeholder="${escapeAttr(placeholder || '')}"
+             value="${escapeAttr(value || '')}"
+             role="combobox" aria-expanded="false" aria-autocomplete="list" aria-haspopup="listbox" />
+      <button type="button" class="combo-toggle" tabindex="-1" aria-label="展开作业类型候选"></button>
+      <ul class="combo-menu" role="listbox" hidden></ul>
+    </span>`;
+}
+
+// 绑定下拉交互。抽成函数而不是内联 onclick, 是为了编辑/新增两处复用同一套
+// 键盘与关闭逻辑 —— 复制两份必然分叉。
+//
+// @param root  .combo 容器
+// @param onPick 选中候选后的回调(用来触发预计用时重新预填)
+function bindCombo(root, onPick) {
+  if (!root) return;
+  const input = root.querySelector('.combo-input');
+  const toggle = root.querySelector('.combo-toggle');
+  const menu = root.querySelector('.combo-menu');
+  if (!input || !menu) return;
+
+  let options = taskTypeOptions();   // 当前候选(每次展开时从设置重取)
+  let active = -1;                   // 键盘高亮项下标, -1 = 无
+  let suppressOpen = false;          // 选中候选后短暂阻止 focus 重新展开
+
+  const close = () => {
+    menu.hidden = true;
+    root.classList.remove('is-open');
+    input.setAttribute('aria-expanded', 'false');
+    active = -1;
+  };
+
+  const render = () => {
+    const q = input.value.trim();
+    // 输入框已有内容时用它过滤: 家长打到"背"只应看到"背诵"。
+    // 全部匹配则显示全部候选, 免得"输了字反而候选变少"的反直觉。
+    const list = q
+      ? options.filter(o => o.includes(q))
+      : options;
+    menu.innerHTML = list.length
+      ? list.map((o, i) => `<li class="combo-option" role="option" data-value="${escapeAttr(o)}"
+             aria-selected="false">${escapeAttr(o)}</li>`).join('')
+      : `<li class="combo-empty" role="presentation">没有匹配的候选, 可直接输入</li>`;
+    active = -1;
+    menu.hidden = false;
+    root.classList.add('is-open');
+    input.setAttribute('aria-expanded', 'true');
+  };
+
+  const open = () => { options = taskTypeOptions(); render(); };
+
+  const pick = (value) => {
+    // 先关闸门再干活: onPick 会派发 input 事件、input.focus() 又会触发
+    // focus 监听, 两者都会调 open() 把浮层弹回来。顺序上必须让
+    // suppressOpen 先就位, 否则"选中后浮层立刻重新展开", 看起来像
+    // 点不中选项。
+    suppressOpen = true;
+    input.value = value;
+    close();
+    // 手动赋值不会触发 input 事件, 预填链路要显式通知一次。
+    if (onPick) onPick(value);
+    input.focus();
+    suppressOpen = false;
+  };
+
+  const highlight = (next) => {
+    const items = [...menu.querySelectorAll('.combo-option')];
+    if (!items.length) return;
+    active = (next + items.length) % items.length;
+    items.forEach((el, i) => {
+      el.classList.toggle('is-active', i === active);
+      el.setAttribute('aria-selected', i === active ? 'true' : 'false');
+    });
+    // scrollIntoView 在真实浏览器里滚动浮层, 但 jsdom 没实现它, 调了会抛
+    // TypeError 并中断整个 keydown 处理 —— 键盘导航会随之失灵。防御性跳过。
+    if (typeof items[active].scrollIntoView === 'function') {
+      items[active].scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  // 点外面关闭。用 capture 阶段的 document 监听, 因为选项自身的 click
+  // 处理器也在冒泡阶段, 若在冒泡里判断 contains 会因为顺序问题误关。
+  document.addEventListener('pointerdown', (e) => {
+    if (!root.contains(e.target)) close();
+  }, true);
+
+  toggle.addEventListener('click', () => {
+    menu.hidden ? open() : close();
+  });
+  input.addEventListener('focus', () => { if (!suppressOpen) open(); });
+  // input 也要看闸门: pick() 内部会派发 input 通知预填, 那时不该顺带
+  // 把浮层重新撑开(否则"选完就又弹回来", 家长要点两下才能收起)。
+  input.addEventListener('input', () => { if (!suppressOpen) open(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { close(); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); menu.hidden ? open() : highlight(active + 1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active - 1); return; }
+    if (e.key === 'Enter') {
+      // 展开且有高亮项时, Enter 是"选中"; 否则让表单正常提交。
+      if (!menu.hidden && active >= 0) {
+        e.preventDefault();
+        const el = menu.querySelectorAll('.combo-option')[active];
+        if (el) pick(el.dataset.value);
+      }
+      return;
+    }
+    if (e.key === 'Tab') close();   // 切走时收起, 别把浮层留在别的框下面
+  });
+  menu.addEventListener('click', (e) => {
+    const li = e.target.closest('.combo-option');
+    if (li) pick(li.dataset.value);
+  });
+  menu.addEventListener('pointerover', (e) => {
+    const li = e.target.closest('.combo-option');
+    if (!li) return;
+    const items = [...menu.querySelectorAll('.combo-option')];
+    active = items.indexOf(li);
+    items.forEach((el, i) => el.classList.toggle('is-active', i === active));
+  });
+}
+
+// 一次性把弹窗里的作业类型下拉都接上。必须在 innerHTML 写入之后调用。
+// onPick 统一走 bindEstAutofill 里的重算, 保证选中候选后预计用时立刻更新。
+function initCombos(scope) {
+  (scope || document).querySelectorAll('[data-combo]').forEach((root) => {
+    const input = root.querySelector('.combo-input');
+    bindCombo(root, () => {
+      // 复用 input 事件路径: 派发一个 input 让 autofill 的监听器收到。
+      // 直接调 apply() 会与 autofocus 的实现耦合, 这里保持单一入口。
+      if (input) input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  });
+}
+
+// 「预计用时」随作业类型自动预填 (2026-10-02 用户需求)。
+//
+// 口径: **只在输入框为空时**才填, 家长已经敲进去的数字绝不覆盖。
+// 覆盖手输值是这类"智能预填"最容易被投诉的地方 —— 家长刚填 40,
+// 改了下类型变成 30, 他会以为系统改了他的输入。
+//
+// 触发时机是 input 而非 change: 类型框是可自由输入的(datalist 只是
+// 候选), 边打边匹配才对; 只监听 change 的话, 家长选完候选要等失焦
+// 才看到数字变化, 像是没生效。
+//
+// @param estInput   预计用时输入框
+// @param typeInput  作业类型输入框
+// @param subjectInput 科目控件, 用于类型没命中时退回科目基线
+function bindEstAutofill(estInput, typeInput, subjectInput) {
+  if (!estInput || !typeInput) return;
+  // 关键: 分辨"这个数字是我填的"和"这个数字是家长敲的"。
+  // 只用 `value !== ''` 判断是不够的 —— 首次预填后框里就有数字了,
+  // 于是家长从"背诵"改成"订正"时会被当成手输值而拒绝更新, 数字永远
+  // 停在第一次的结果(实测 背诵=15 改订正=25 却仍显示 15)。
+  // 所以自己填的时候打标记, 家长一动就撤掉标记。
+  //
+  // 撤掉标记后要立刻按新类型重填: 家长主动清空再选类型, 意图是
+  // "重新按这个类型给一个默认值", 而不是"从此不再自动填"。否则清空
+  // 一次之后预填就永久失灵, 只能手动敲 —— 这与需求原意相悖。
+  // (需求说的是"如果为空就预填", 清空后正是"为空"。)
+  let touched = estInput.value.trim() !== '';
+  const apply = () => {
+    if (touched) return;              // 家长敲过非空值, 绝不覆盖
+    const type = typeInput.value.trim();
+    const subject = subjectInput ? subjectInput.value : '';
+    // estDefault 内部就是「类型基线 > 科目基线 > 15」的优先级, 与后端
+    // _resolve_est_minutes 同口径, 不在这里另写一套。
+    const v = estDefault({ task_type: type, subject });
+    estInput.value = v == null ? '' : String(v);
+  };
+  estInput.addEventListener('input', () => {
+    // 清空算"交回控制权": touched 复位, 让后续选类型能重新预填。
+    touched = estInput.value.trim() !== '';
+    if (!touched) apply();
+  });
+  typeInput.addEventListener('input', apply);
+  typeInput.addEventListener('change', apply);
+  // 科目也参与兜底: 类型留空时, 换科目应给出该科的基线值。
+  if (subjectInput) subjectInput.addEventListener('change', apply);
+  apply();   // 打开即按当前科目/类型填一次
+}
+
 async function loadBaselines() {
   try {
     const r = await api('GET', '/settings');
@@ -1326,36 +1551,62 @@ function openManualAddModal() {
   document.getElementById('modal-content').innerHTML = `
     <div class="form-grid">
       <label>
-        <span class="form-label">科目</span>
-        <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
-      </label>
-      <label>
-        <span class="form-label">预计用时</span>
-        <input id="m-est" type="number" value="${estDefault({ task_type: 'other' })}" min="1" max="180" inputmode="numeric" />
-      </label>
-      <label>
-        <span class="form-label">任务名</span>
-        <input id="m-name" placeholder="如: 完成知能 P14" />
-      </label>
-      <label>
         <span class="form-label">归属日</span>
         <input id="m-due" type="date" class="js-datepicker" value="${todayStr()}" />
       </label>
       <label>
-        <span class="form-label">截止时间</span>
-        <input id="m-dl" type="datetime-local" class="js-datetimepicker" />
+        <span class="form-label">科目</span>
+        <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
       </label>
       <label>
-        <span class="form-label">类型</span>
-        <span class="form-check">
-          <input id="m-opt" type="checkbox" /> <span>选做</span>
+        <span class="form-label">作业项</span>
+        <input id="m-name" placeholder="如: 完成知能 P14" />
+      </label>
+      <label>
+        <span class="form-label">作业类型</span>
+        <span class="form-field">
+          ${taskTypeComboHtml('m-type', '', '背诵 / 订正 / 计算…')}
+          <span class="form-hint">决定预计用时的默认值, 可留空</span>
+        </span>
+      </label>
+      <label>
+        <span class="form-label">预计用时</span>
+        <span class="form-field">
+          <input id="m-est" type="number" min="1" max="180" inputmode="numeric" placeholder="按作业类型自动预填" />
+          <span class="form-hint">留空时按设置里的类型基线自动填</span>
+        </span>
+      </label>
+      <label>
+        <span class="form-label">是否选做</span>
+        <span class="form-field">
+          <span class="form-check">
+            <input id="m-opt" type="checkbox" /> <span>选做</span>
+          </span>
+          <span class="form-hint">默认否 —— 勾选后作业可晚几天补</span>
+        </span>
+      </label>
+      <label>
+        <span class="form-label">截止时间</span>
+        <span class="form-field">
+          <input id="m-dl" type="datetime-local" class="js-datetimepicker" />
+          <span class="form-hint">可以不填, 留空表示当天完成</span>
         </span>
       </label>
     </div>
-    <p class="muted" style="margin:0">截止时间可以不填。</p>
   `;
   // modal-content 每次打开都是新 DOM, 所以在这里绑定而不是页面启动时
   initDatePickersIn(document.getElementById('modal-content'));
+  // 作业类型下拉要在 DOM 建好之后接上, 并排在 bindEstAutofill 之前 ——
+  // initCombos 只挂交互, 但顺序上让"先有候选、再有预填"读起来更顺。
+  initCombos(document.getElementById('modal-content'));
+  // 预计用时留空, 由作业类型自动预填 (2026-10-02 用户需求)。
+  // 刻意不给初值: 一旦写死 15, 下面 bindEstAutofill 的"空才填"就永远
+  // 不成立, 类型基线配置就永远不生效 —— 那正是 2026-09-29 报障的形态。
+  bindEstAutofill(
+    document.getElementById('m-est'),
+    document.getElementById('m-type'),
+    document.getElementById('m-subject'),
+  );
   // 显式恢复成"取消 + 确定": 必须调 setModalActions, 不能只赋 onclick ——
   // 家长若先点过"原文"(只读弹窗, 那里隐藏了取消并把确定改成"返回"),
   // 这里不重置就会看到一个没有取消按钮、写着"返回"的提交弹窗。
@@ -1363,8 +1614,16 @@ function openManualAddModal() {
     mode: 'confirm',
     onOk: async () => {
       const dl = document.getElementById('m-dl').value;
+      const type = document.getElementById('m-type').value.trim();
+      const subject = document.getElementById('m-subject').value;
+      // 预计用时改成"可留空"后, 提交时必须兜住空值: 后端 est_minutes 是
+      // 必填 (ge=1), 直接把 parseInt('') 的 NaN 发过去会得到 4003, 而
+      // 家长看到的只是"入库失败", 完全不知道是哪个框的问题。
+      // 兜底口径与自动预填一致(类型 > 科目 > 15), 保证"留空也能存"。
+      const estRaw = document.getElementById('m-est').value.trim();
+      const est = estRaw === '' ? estDefault({ task_type: type, subject }) : parseInt(estRaw, 10);
       const items = [{
-        subject: document.getElementById('m-subject').value,
+        subject,
         task_name: document.getElementById('m-name').value.trim(),
         due_date: document.getElementById('m-due').value,
         // 修正: 原写法 (v || '') + ':00' || null 因 + 优先级高于 ||,
@@ -1372,12 +1631,16 @@ function openManualAddModal() {
         // 后端 pydantic 解析 ":00" 失败 -> 4003, 手动添加不填截止时间必失败。
         deadline_time: dl ? dl + ':00' : null,
         is_optional: document.getElementById('m-opt').checked,
-        est_minutes: parseInt(document.getElementById('m-est').value, 10),
+        est_minutes: est,
+        // 作业类型一起入库: 不发的话周复盘按类型分组时这条会落进
+        // "无类型"组, 而家长明明在弹窗里选过类型。
+        task_type: type || null,
         source_span: '(手动添加)',
         confidence: 'high',
       }];
-      if (!items[0].task_name) { toast('任务名必填'); return; }
+      if (!items[0].task_name) { toast('作业项必填'); return; }
       if (!items[0].due_date) { toast('归属日必填'); return; }
+      if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
       try {
         await api('POST', '/assignments/batch', { batch_id: null, items });
         m.classList.add('hidden');

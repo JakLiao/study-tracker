@@ -38,6 +38,9 @@
 
   /* 主操作色 */
   --accent: #FF6B9D;
+  /* 主色的浅底: 选中态/焦点环用。#FF6B9D 直接当背景太艳 (对比度不足),
+     浅化后既能看出"当前项"又不会抢文字。 */
+  --accent-soft: #FFE3EC;
   --warn-soft: #FFF0F4;
   --warn-ink: #C2185B;
 
@@ -1112,13 +1115,18 @@ button.primary.modal-danger:hover:not(:disabled) {
 
    改成两列网格: 标签固定一列、控件占其余宽度。网格而非 flex 是因为
    各行标签宽度天然不等(选做 vs 归属日), 网格列能保证所有控件左边缘
-   严格对齐 —— 这正是"对齐"要的效果。 */
+   严格对齐 —— 这正是"对齐"要的效果。
+
+   2026-10-02 用户批注「两行空闲」: 原来行距 var(--space-2) 叠加网格
+   自身 var(--space-3) 的上下外边距, 六行下来多出近两行空白, 弹窗
+   撑到 400px 高还要滚动。行距收到 var(--space-1)、外边距去掉 ——
+   控件本身有 34px 高和边框, 4px 行距已足够分隔, 不需要额外留白。 */
 .form-grid {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-2) var(--space-3);
-  margin: var(--space-3) 0;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
 }
 .form-grid > label {
   display: contents;   /* 让 label 的子元素直接参与网格, 才有两列 */
@@ -1138,6 +1146,22 @@ button.primary.modal-danger:hover:not(:disabled) {
   font-size: var(--fs-caption);
   color: var(--text-2);
 }
+/* 控件 + 就地说明的包装。
+   2026-10-02 用户批注「这个位置不对」: 「截止时间可以不填。」原来
+   孤零零挂在弹窗最底部, 离它解释的输入框隔着三行, 读起来像在说明
+   整个表单。改成把输入框和说明裹进同一个网格单元, 说明就紧贴在被
+   说明的控件下方 —— 位置对了, 也顺带省掉一行空白。 */
+.form-grid .form-field {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+/* 就地说明: 比标签再弱一级, 不能和标签抢注意力 */
+.form-grid .form-hint {
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+  line-height: 1.4;
+}
 /* 控件统一铺满所在列; min-width:0 防止 date/datetime-local 的
    固有宽度把网格撑破(那正是原来输入框过宽的原因)。 */
 .form-grid input:not([type="checkbox"]),
@@ -1147,6 +1171,107 @@ button.primary.modal-danger:hover:not(:disabled) {
   height: 34px;
 }
 .form-grid .form-check input { margin: 0; }
+
+/* ===== 弹窗表单里的自绘下拉 (作业类型 · 2026-10-02) =====
+ *
+ * 起因: 原来用 <input list> + <datalist>, 候选面板由操作系统绘制, CSS
+ * 完全改不动 —— Windows Chrome 上是一块近黑底浅色字的系统面板, 落在
+ * 奶油糖果配色里像贴错了别的应用。与项目里替换原生 prompt()、原生日期
+ * 控件是同一类问题, 所以一并自绘。
+ *
+ * 结构上刻意保留 input 可自由输入: 家长可能想写一个设置里还没有的类型,
+ * 候选只是建议, 不是枚举限制。
+ */
+.combo {
+  position: relative;          /* 浮层定位基准 */
+  display: block;
+  min-width: 0;
+}
+/* 输入框本体: 复用 .form-grid 的尺寸规则, 但要去掉左右 padding ——
+   右侧要给自绘的箭头按钮腾位置。 */
+.form-grid .combo .combo-input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding-right: 30px;
+}
+.combo.is-open .combo-input {
+  /* 展开时用主色的柔光环, 而不是全局那个 2px 深棕实环 ——
+     深棕环在深色下拉贴着的时候像"报错", 视觉上过于紧张。 */
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-color: var(--accent);
+}
+/* 右侧箭头: 纯 CSS 画的, 不引图标字体。用两条边框拼一个朝下的小三角,
+   颜色跟边框走, 展开时旋转 180°。 */
+.combo .combo-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.combo .combo-toggle::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 5px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--text-2);
+  border-bottom: 2px solid var(--text-2);
+  transform: rotate(45deg);
+  transition: transform 0.15s;
+}
+.combo.is-open .combo-toggle::before { transform: rotate(225deg); }
+.combo .combo-toggle:hover::before { border-color: var(--text-1); }
+
+/* 候选浮层: 白底 + 奶油边框 + 卡片阴影, 与项目其它浮层一致。 */
+.combo .combo-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.combo .combo-menu[hidden] { display: none; }
+.combo .combo-option {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.combo .combo-option:hover,
+.combo .combo-option.is-active {
+  /* 高亮用主色的浅底而不是纯灰, 和"选中"这个语义更贴。 */
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.combo .combo-option.is-active {
+  background: var(--accent-soft);
+}
+/* 无匹配时的提示: 弱一级, 说明"可以直接输入"而不是阻断。 */
+.combo .combo-empty {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  cursor: default;
+}
 
 /* 窄屏下标签列不能占 76px, 否则控件被压得没法用 */
 @media (max-width: 480px) {

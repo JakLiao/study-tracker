@@ -7,6 +7,16 @@
 
 这两处都是纯样式, 很容易在后续改版时被无意改回去, 所以用可量化
 的断言(色值/属性存在性)锁住, 而不是靠人眼复查。
+
+2026-10-02 追加三条(手动添加弹窗截图批注):
+3. 「两行空闲」—— 字段行距加网格外边距, 弹窗多出近两行空白。
+4. 「是否选做(默认否)」—— 选做字段的标签误写成「类型」, 且默认值
+   没有在界面上写明。
+5. 「这个位置不对」—— 「截止时间可以不填。」挂在弹窗最底部, 离它
+   解释的输入框太远。
+
+同样用可量化断言锁住: 这三处都是"看截图才能发现、改回去又不会报
+错"的类型, 靠人复查必然漏。
 """
 from __future__ import annotations
 
@@ -175,15 +185,41 @@ def _manual_form_html(app_js: str) -> str:
 def test_manual_form_labels_marked(app_js):
     """每个字段都要有 .form-label 标签文字, 否则网格第一列空着。"""
     html = _manual_form_html(app_js)
-    for text in ("科目", "预计用时", "任务名", "归属日", "截止时间"):
+    for text in ("归属日", "科目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"):
         assert f'<span class="form-label">{text}</span>' in html, f"{text} 缺少标签"
 
 
 def test_manual_form_all_fields_present(app_js):
-    """五个字段的 id 不能因改布局丢失 —— 提交逻辑按 id 取值。"""
+    """七个字段的 id 不能因改布局丢失 —— 提交逻辑按 id 取值。
+
+    作业类型现在是自绘下拉, 它的 input 仍然叫 m-type: 提交时
+    getElementById('m-type') 要能取到值, 改名会静默变成 undefined,
+    存进去的 task_type 永远是 null。
+    """
     html = _manual_form_html(app_js)
-    for fid in ("m-subject", "m-est", "m-name", "m-due", "m-dl", "m-opt"):
+    for fid in ("m-due", "m-subject", "m-name", "m-est", "m-opt", "m-dl"):
         assert f'id="{fid}"' in html, f"{fid} 丢失, 提交会取不到值"
+    # 作业类型的 input 由 taskTypeComboHtml 生成, 不在 .form-grid 的字面量里,
+    # 因此这条断言要落到 app.js 整体上。
+    assert "taskTypeComboHtml('m-type'" in app_js, "m-type 下拉缺失"
+
+
+def test_manual_field_order_matches_edit(app_js):
+    """两个弹窗的字段顺序必须一致。
+
+    用户 2026-10-02 指定的顺序是
+    归属日→科目→作业项→作业类型→预计用时→是否选做→截止时间。
+    之前两个弹窗顺序不同(新增把预计用时排在作业项前面), 家长来回切换
+    时同一个字段在两个不同位置, 每次都要重新找。
+    """
+    spec = ["归属日", "科目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"]
+    manual = re.findall(r'<span class="form-label">([^<]+)</span>', _manual_form_html(app_js))
+    assert manual == spec, f"手动添加字段顺序与设计不符: {manual}"
+
+    block = app_js.split("function openEditAssignmentModal(")[1].split("\n}")[0]
+    grid = re.search(r'<div class="form-grid">(.*?)</div>', block, re.S).group(1)
+    edit = re.findall(r'<span class="form-label">([^<]+)</span>', grid)
+    assert edit == spec, f"编辑弹窗字段顺序与设计不符: {edit}"
 
 
 def test_manual_form_date_pickers_kept(app_js):
@@ -198,3 +234,114 @@ def test_est_input_width_bounded(styles):
     assert m, "预计用时未限宽"
     mx = re.search(r"max-width:\s*(\d+)px", m.group(1))
     assert mx and int(mx.group(1)) <= 140, f"限宽 {mx.group(1) if mx else '?'}px 仍过宽"
+
+
+# ====== 4. 弹窗表单不再有空白行 (2026-10-02 用户批注) ======
+#
+# 批注原话「两行空闲」: 弹窗里六行字段之间多出近两行空白。
+# 根因是两处留白叠加 —— 行距 var(--space-2) 加上网格自身的
+# var(--space-3) 上下外边距。所以下面两条分别锁住"去掉外边距"和
+# "行距收紧", 缺一条就会退回原来的高度。
+
+def test_form_grid_has_no_outer_margin(styles):
+    """网格自身不再留上下外边距 —— 弹窗内边距已经够了, 不必再加一层。"""
+    m = re.search(r"\.form-grid \{(.*?)\}", styles, re.S)
+    assert m, "缺少 .form-grid 定义"
+    margin = re.search(r"margin:\s*([^;]+);", m.group(1))
+    assert margin, ".form-grid 未显式声明 margin, 会随 UA 样式表漂移"
+    assert margin.group(1).strip() in ("0", "0 0"), \
+        f"网格外边距应归零, 实际 {margin.group(1).strip()} —— 空白行就来自这里"
+
+
+def test_form_grid_row_gap_tightened(styles):
+    """行距必须收紧到 var(--space-1)。
+
+    上限锁在 4px: 再宽就又变回"两行空闲"。这里刻意只查行距那一项
+    (grid-row-gap), 因为列距 --space-3 是标签与控件之间的呼吸位,
+    跟行距不是一回事, 混在一起断言会互相干扰。
+    """
+    m = re.search(r"\.form-grid \{(.*?)\}", styles, re.S)
+    gap = re.search(r"gap:\s*([^;]+);", m.group(1))
+    assert gap, ".form-grid 未声明 gap"
+    row_gap = gap.group(1).strip().split()[0]
+    assert row_gap == "var(--space-1)", \
+        f"行距应为 var(--space-1) 收紧空白, 实际 {row_gap}"
+
+
+def test_form_field_wrapper_allows_hint_below_control(styles):
+    """.form-field 必须是 grid —— 说明文字要能落在控件正下方。
+
+    用 grid 而非 flex 是因为 flex 下 align 默认 stretch 会把说明拉高,
+    两行文字的说明和一行输入框就对不齐了。
+    """
+    m = re.search(r"\.form-grid \.form-field \{(.*?)\}", styles, re.S)
+    assert m, "缺少 .form-field 定义, 带说明的字段无法把说明放在控件下方"
+    assert "display: grid" in m.group(1)
+    assert "min-width: 0" in m.group(1), "缺 min-width:0, 日期框会撑破包装"
+
+
+# ====== 5. 就地说明的位置 (2026-10-02 用户批注「这个位置不对」) ======
+
+def test_deadline_hint_moved_next_to_its_field(app_js):
+    """「可以不填」必须紧贴截止时间框, 不能留在弹窗最底部。
+
+    原来它是一句挂在 .form-grid 之后的 <p class="muted">, 离所说明的
+    输入框隔着三行, 读起来像在解释整个表单。
+    """
+    html = _manual_form_html(app_js)
+    block = re.search(r'<span class="form-label">截止时间</span>(.*?)</label>', html, re.S)
+    assert block, "未找到截止时间字段"
+    inner = block.group(1)
+    assert 'class="form-field"' in inner, "截止时间未与说明裹进同一个 form-field"
+    assert 'class="form-hint"' in inner, "截止时间框旁没有就地说明"
+    assert 'id="m-dl"' in inner, "截止时间输入框不在该字段内"
+
+
+def test_no_stray_hint_paragraph_at_modal_bottom(app_js):
+    """弹窗底部不再有游离的 <p class="muted"> 说明。
+
+    这条与上一条互为对照: 只把说明挪走、忘了删原来那句, 弹窗底部
+    会同时出现两份内容(且新的已在上方), 造成重复。
+    """
+    fn = re.search(r"function openManualAddModal\(\) \{(.*?)\n\}", app_js, re.S)
+    assert fn, "未找到 openManualAddModal"
+    body = fn.group(1)
+    tail = body.split("</div>")[-1]
+    assert "可以不填" not in tail, "弹窗底部仍残留游离说明, 与控件旁的说明重复"
+
+
+# ====== 6. 选做字段的标签与默认值 (2026-10-02 用户批注) ======
+
+def test_optional_field_not_mislabeled_as_type(app_js):
+    """选做的标签不能叫「类型」。
+
+    批注原话「是否选做(默认否)」: 原标签写「类型」, 但这个控件绑的是
+    is_optional(选做), 与作业类型(task_type)完全是两回事 —— 名字和
+    行为对不上, 家长会以为在填作业类型。标签必须直说「是否选做」。
+    """
+    html = _manual_form_html(app_js)
+    assert '<span class="form-label">是否选做</span>' in html, "选做字段标签应直说「是否选做」"
+    assert '<span class="form-label">类型</span>' not in html, \
+        "「类型」是作业类型(task_type)的标签, 用在选做上属于误导"
+
+
+def test_optional_default_is_explicit(app_js):
+    """默认值必须在界面上写明, 而不是让家长猜未勾选是什么意思。
+
+    只画一个空复选框时, 「空」到底是默认否、还是漏勾了, 无法分辨;
+    批注要求「默认否」, 就在字段下写明。
+    """
+    html = _manual_form_html(app_js)
+    block = re.search(r'<span class="form-label">是否选做</span>(.*?)</label>', html, re.S)
+    assert block, "未找到选做字段"
+    assert "默认否" in block.group(1), "选做字段未写明默认值"
+
+
+def test_optional_checkbox_still_unchecked_by_default(app_js):
+    """复选框仍不带 checked —— 默认否要同时体现在文案和状态上。"""
+    html = _manual_form_html(app_js)
+    assert re.search(r'id="m-opt" type="checkbox"\s*/>', html), \
+        "选做复选框默认应未勾选"
+    assert 'id="m-opt" type="checkbox" checked' not in html, \
+        "选做默认应为否, 不该预勾选"
+
