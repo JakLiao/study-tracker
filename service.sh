@@ -64,6 +64,8 @@ study-tracker 服务管理
 示例:
   bash service.sh status                 # 看运行状态 + 健康检查 + 托管方式
   pm2 restart study-tracker              # 日常重启 (PM2 托管时用这条)
+                                        # pm2 不在 PATH 时用 status 里
+                                        # 打印的完整路径, 别照抄固定位置
   bash service.sh start --port 9000      # 无 PM2 托管时换端口起
   bash service.sh logs --lines 200       # 看最近日志
   bash service.sh stop                   # 无 PM2 托管时优雅停
@@ -184,27 +186,57 @@ pid_is_ours() {
   esac
 }
 
+# 解析 pm2 的真实可执行路径, 打到 stdout; 找不到则返回 1.
+#
+# 为什么要专门一个函数: pm2 的安装位置没有统一约定, 本机就同时存在
+# ~/.local/bin/pm2 和 ~/.npm-global/bin/pm2 两个符号链接, 而登录 shell 的
+# PATH 里只有前者。所以不能只信 `command -v pm2` —— 它在非交互场景
+# (systemd 拉起、脚本里 source) 常常落空。
+#
+# 探测顺序 = 实际可用性从高到低:
+#   1. command -v        : PATH 里能直接找到, 用裸命令名最稳(不受 cwd 影响)
+#   2. ~/.local/bin      : npm 全局装到用户目录时的常见落点(本机 pm2 实际在这)
+#   3. ~/.npm-global/bin : 老版 npm 全局目录
+#   4. ~/.npm/bin        : npm 全局目录的新版默认位置
+# 每一项都必须用 [ -x ] 确认可执行, 命中即返回。
+resolve_pm2() {
+  local c
+  # 1) PATH 里已有: 直接用裸命令名, 交给 PATH 去解析
+  if command -v pm2 >/dev/null 2>&1; then
+    printf 'pm2'
+    return 0
+  fi
+  # 2~4) 常见安装目录逐个探测
+  for c in \
+    "$HOME/.local/bin/pm2" \
+    "$HOME/.npm-global/bin/pm2" \
+    "$HOME/.npm/bin/pm2"; do
+    if [ -x "$c" ]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # 本服务实际由 PM2 托管 (见 pm2-start.sh 与 pm2-study-tracker.service),
 # PM2 会监督并在崩溃时拉起, 所以正确的重启方式是 pm2 restart, 不是直接 kill.
 # 这里识别出 PM2 身份, 好在 stop/start/restart 里给出对应指引 ——
 # 少了这一步, service.sh 的 kill 会被 PM2 立刻抵消掉:
 # 表现为"停不掉", 而且 PID 每次都变 (PM2 换了个新子进程).
 pm2_manages_us() {
-  command -v pm2 >/dev/null 2>&1 || return 1
   local pm2_bin
-  pm2_bin="$(command -v pm2)"
-  # pm2 可能不在默认 PATH (npm 全局目录), 常见于 systemd 拉起的 daemon
-  [ -x "$HOME/.npm-global/bin/pm2" ] && pm2_bin="$HOME/.npm-global/bin/pm2"
-  [ -x "$HOME/.npm/bin/pm2" ] && pm2_bin="$HOME/.npm/bin/pm2"
+  pm2_bin="$(resolve_pm2)" || return 1
   "$pm2_bin" jlist 2>/dev/null | grep -q '"name":"study-tracker"' || return 1
   return 0
 }
 
 # PM2 托管时, 实际干活的那条命令
 pm2_restart_hint() {
-  local pm2_bin="pm2"
-  command -v pm2 >/dev/null 2>&1 || pm2_bin="$HOME/.npm-global/bin/pm2"
-  [ -x "$pm2_bin" ] || pm2_bin="$HOME/.npm/bin/pm2"
+  local pm2_bin
+  # resolve_pm2 失败时也要给得出提示, 退回裸命令名让用户自己碰运气,
+  # 好过什么都不说。
+  pm2_bin="$(resolve_pm2 || printf 'pm2')"
   printf '%s' "$pm2_bin restart study-tracker"
 }
 
