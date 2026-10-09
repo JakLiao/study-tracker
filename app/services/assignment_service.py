@@ -609,8 +609,17 @@ def build_board_for(d: date, today: date | None = None) -> dict:
     opt_done = 0
     opt_skipped = 0
     est_total = 0
+    actual_total = 0
     for r in rows:
         est_total += r.est_minutes or 0
+        # 总用时 (2026-10-09 用户要求"显出孩子的努力成果"):
+        # 只累计真正做完的项 —— 跳过的项没投入时间, 计进去等于凭空
+        # 替孩子加分, 与"努力成果"的本意相反。
+        # 选做做了就是做了, 计入 (与周复盘偏差统计口径不同, 那里排
+        # 选做是为了让估时更准; 这里是记录投入, 不是评估估时质量)。
+        # actual 为空时按预估计, 与周复盘 COALESCE 口径一致。
+        if r.status == "done":
+            actual_total += r.actual_minutes if r.actual_minutes is not None else (r.est_minutes or 0)
         if r.is_optional:
             optional_items.append(r)
             if r.status == "done":
@@ -665,6 +674,7 @@ def build_board_for(d: date, today: date | None = None) -> dict:
             "required": required,
             "pct": pct,
             "est_total": est_total,
+            "actual_total": actual_total,
         },
         "by_subject": by_subject,
         "optional_items": optional_items,

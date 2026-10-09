@@ -177,6 +177,99 @@ def test_optional_counts_exposed(app_client):
     assert p["pct"] == 100
 
 
+# ====== 总用时 (2026-10-09 用户要求"显出孩子的努力成果") ======
+#
+# 口径 (用户确认):
+#   - 只算真正做完的项 (status=done), 跳过的项没投入时间, 不计
+#   - 选做做了就是做了, 计入 (与周复盘偏差统计刻意排除选做不同:
+#     那边排除是为了让"估时准不准"的评估样本干净, 这里是记录投入)
+#   - actual 为空时按预估计, 与周复盘 COALESCE 口径一致
+#
+# 这里最容易被改坏的是"跳过不计" —— 若照 est_total 那套全量累加,
+# 跳过项会被算进总用时, 等于凭空替孩子加分, 与本功能的本意相反。
+
+
+def test_actual_total_counts_done_with_filled_actual(app_client):
+    ids = _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="a", subject="语文", est_minutes=15),
+        _item(due_date="2026-09-21", task_name="b", subject="数学", est_minutes=25),
+    ])["created_ids"]
+    _set_status(app_client, ids, "done")
+    app_client.patch(f"/api/assignments/{ids[0]}/completion", json={"actual_minutes": 45})
+    app_client.patch(f"/api/assignments/{ids[1]}/completion", json={"actual_minutes": 40})
+
+    # 45 + 40, 不是 15 + 25 —— 有实测值就必须用实测值
+    assert _progress(app_client)["actual_total"] == 85
+
+
+def test_actual_total_falls_back_to_est_when_unfilled(app_client):
+    """未填实际用时按预估计入, 而不是不计入 (用户口径: 缺省即与预估一致)。"""
+    ids = _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="a", subject="语文", est_minutes=15),
+        _item(due_date="2026-09-21", task_name="b", subject="数学", est_minutes=25),
+    ])["created_ids"]
+    _set_status(app_client, ids, "done")
+
+    assert _progress(app_client)["actual_total"] == 40
+
+
+def test_actual_total_excludes_skipped(app_client):
+    """跳过的项没投入时间, 绝不能计入总用时。"""
+    ids = _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="做了", subject="语文", est_minutes=20),
+        _item(due_date="2026-09-21", task_name="跳过", subject="数学", est_minutes=30),
+    ])["created_ids"]
+    _set_status(app_client, [ids[0]], "done")
+    _set_status(app_client, [ids[1]], "skipped")
+
+    p = _progress(app_client)
+    assert p["settled"] == 2        # 进度上跳过算已收尾
+    assert p["actual_total"] == 20  # 但总用时不含它
+
+
+def test_actual_total_excludes_todo(app_client):
+    """还没做的项不计入 —— 总用时是"已投入", 不是"将要做"。"""
+    _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="还没做", subject="语文", est_minutes=20),
+    ])
+    assert _progress(app_client)["actual_total"] == 0
+
+
+def test_actual_total_includes_done_optional(app_client):
+    """选做完成了就计入 —— 那是孩子真实投入的时间。"""
+    ids = _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="选做", subject="英语",
+              est_minutes=10, is_optional=True),
+    ])["created_ids"]
+    _set_status(app_client, ids, "done")
+
+    p = _progress(app_client)
+    assert p["optional_done"] == 1
+    assert p["actual_total"] == 10
+
+
+def test_actual_total_can_exceed_est_total(app_client):
+    """实测高于预估时 actual_total > est_total 是正常的。
+
+    不是断言"必须小于等于", 而是钉住"别为了好看去截断/取小":
+    孩子真的花了 3 小时就是 180 分钟, 显示成预估值才是错的。
+    """
+    ids = _seed(app_client, [
+        _item(due_date="2026-09-21", task_name="a", subject="语文", est_minutes=10),
+    ])["created_ids"]
+    _set_status(app_client, ids, "done")
+    app_client.patch(f"/api/assignments/{ids[0]}/completion", json={"actual_minutes": 180})
+
+    p = _progress(app_client)
+    assert p["actual_total"] == 180
+    assert p["est_total"] == 10
+
+
+def test_actual_total_is_zero_on_empty_day(app_client):
+    _seed(app_client, [_item(due_date="2026-09-22", task_name="别的日期", subject="语文")])
+    assert _progress(app_client)["actual_total"] == 0
+
+
 def test_optional_fields_present_even_without_optional(app_client):
     """没有选做时字段也要在, 否则前端 p.optional_done 读到 undefined。
 

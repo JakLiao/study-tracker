@@ -93,7 +93,7 @@ class DeleteDoneForbiddenError(AppError):
 
 class SampleTooSmallError(AppError):
     code = "4011"
-    default_message = "样本不足, 至少需要 5 条已完成且记录了实际耗时"
+    default_message = "样本不足, 至少需要 5 条已完成作业"
 
 
 class BadSettingKeyError(AppError):

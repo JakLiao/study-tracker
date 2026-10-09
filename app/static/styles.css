@@ -94,6 +94,7 @@
   --fs-caption: 13px;
   --fs-caption-sm: 11px;      /* 次操作按钮与"预估"标签, 刻意弱于正文 */
   --fs-number-l: 22px;
+  --fs-number-xl: 34px;      /* 总用时数字: 刻意压过进度条, 让"努力成果"成为视觉主角 */
   --fs-number-s: 14px;
 }
 
@@ -540,6 +541,77 @@ tr.is-optional .muted {
   background: var(--surface-2);
   color: var(--text-2);
 }
+
+/* 各科剩余时间 (2026-10-09): 提示条下方的 "语文 20 / 50"。
+   用科目色 soft 底而非实底色 —— 提示条已经是一块醒目的暖色底,
+   这一行如果再用 --c-语 那种高饱和实底, 三块色块会把下面真正
+   要做的作业列表压下去, 而它只是导航性的辅助信息。soft 底 +
+   科目色文字既保留了"哪个科目"的快速识别, 又不抢焦点。 */
+.subj-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.subj-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+/* "分" 由 ::after 补, 与 .est-min 同做法 —— 单位不必写进 HTML,
+   界面文案改动时也不会漏掉。 */
+.subj-time::after {
+  content: " 分";
+  font-weight: 400;
+}
+.subj-time .st-name {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+/* 分子(剩余)用科目色重字重, 分母(当天总量)压成浅灰 —— 家长第一眼
+   要看的是"还剩多少", 分母只是参照。 */
+.subj-time .st-num {
+  color: var(--text-2);
+  font-weight: 400;
+}
+.subj-time .st-num strong {
+  font-weight: 700;
+}
+.subj-time .st-sep {
+  padding: 0 1px;
+}
+.subj-time.语文 { background: var(--c-语-soft); }
+.subj-time.语文 .st-name,
+.subj-time.语文 .st-num strong { color: var(--c-语); }
+.subj-time.数学 { background: var(--c-数-soft); }
+.subj-time.数学 .st-name,
+.subj-time.数学 .st-num strong { color: var(--c-数); }
+.subj-time.英语 { background: var(--c-英-soft); }
+.subj-time.英语 .st-name,
+.subj-time.英语 .st-num strong { color: var(--c-英); }
+
+/* 整科收尾: 翻成科目实底色 + 白字, 与 .subject-tag 的实底语言一致,
+   "这科做完了"在一眼扫过时就被认出来。沿用科目色而不用绿色
+   --status-done, 是因为绿色在这个界面里已经专属表示"完成状态",
+   这里要表达的是"哪一科完成了"。
+
+   这组规则必须排在上面科目色之后: .subj-time.语文 .st-num strong 与
+   .subj-time.is-done .st-num strong 特异度完全相同(都是 3 类 + 1 元素),
+   同特异度下后写的赢。放前面会让科目色覆盖掉白字, 于是实底上出现
+   同色文字 —— 那块 chip 会整个看不见。 */
+.subj-time.语文.is-done { background: var(--c-语); }
+.subj-time.数学.is-done { background: var(--c-数); }
+.subj-time.英语.is-done { background: var(--c-英); }
+.subj-time.is-done .st-name,
+.subj-time.is-done .st-num,
+.subj-time.is-done .st-num strong,
+.subj-time.is-done::after {
+  color: #fff;
+}
 .sec-settled {
   opacity: .92;
 }
@@ -917,6 +989,32 @@ tr.is-optional .muted {
   background: var(--status-done);
   border-radius: var(--radius-pill);
   transition: width 0.2s;
+}
+
+/* 总用时 (2026-10-09 用户要求"展示大一点, 显出孩子的努力成果")
+   放在进度条与进度条文字之间, 数字用 --fs-number-xl 压过全场。
+   刻意不做成卡片/徽章 —— 再套一层容器会把它变成又一个"信息块",
+   而这里要的是"成就", 应该像标题一样直接立在进度条上方。
+   数字用 --status-done 绿: 与进度条填充同色, 读起来是"完成"的延续。 */
+.effort-total {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+.effort-total .et-label {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.effort-total .et-num {
+  font-size: var(--fs-number-xl);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--status-done);
+}
+.effort-total .et-unit {
+  font-size: var(--fs-body-s);
+  color: var(--text-2);
 }
 
 /* ===== 14. 截止时间提醒 ===== */

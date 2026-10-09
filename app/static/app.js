@@ -121,6 +121,49 @@ function boardHint({ isToday, pending, done = 0, skipped = 0, estRemaining }) {
   };
 }
 
+// ====== 各科剩余时间 (2026-10-09) ======
+// 提示条只给一个总数("大约还要 110 分钟"), 家长看不出该先做哪一科,
+// 也不好判断"语文那 40 分钟是不是太多了"。这里按科目拆开, 写法是
+// "剩余 / 当天总量":
+//     语文 20 / 50     还剩 20 分钟, 语文当天共估 50 分钟
+// 分母不能省。孤零零一个 "语文还剩 20" 是个没有参照的数字: 20 分钟
+// 既可能是"马上做完了", 也可能"才开了个头"。有了分母, 同一个 20
+// 才能读出这门课今天的进度, 也顺带回答了"先做哪科"—— 分母大而
+// 剩余小的科目已经接近收尾, 可以留到最后。
+//
+// 科目顺序原先在 loadBoard 里硬编码字面量, 这里是第二处用到它 ——
+// 抽成 SUBJECT_ORDER 一处定义, 免得两处顺序不一致(顺序变了孩子会
+// 以为数据在跳)。它与后端 config.SUBJECTS 顺序一致; 真要加科目,
+// 三处(config / models.Subject / styles.css 类名)都得同步。
+const SUBJECT_ORDER = ['语文', '数学', '英语'];
+
+// done 与 skipped 都算"已收尾"。抽成模块级函数而不是留在 loadBoard
+// 里, 是为了让 subjectTimeStats 与提示条共用同一个判定 —— 这两处
+// 显示的是同一份剩余时间, 一旦各自写一份, 迟早会算出两个数。
+function isSettledItem(i) {
+  return i.status === 'done' || i.status === 'skipped';
+}
+
+// 各科剩余估时。口径与提示条的 estRemaining 严格同源, 两者能对上账:
+//   只统计必做 (by_subject), 选做 (optional_items) 不在内 —— 与进度条
+//     分母排除选做是同一个理由: 家长点过"选做"就不再是今天必须做的事。
+//   剩余 = 未收尾 (todo/doing) 的估时之和。done/skipped 都算收尾, 所以
+//     孩子做完或跳过后数字立刻下降。
+// 没有作业的科目直接不返回: 硬凑一个 "英语 0 / 0" 只会占位置, 家长
+// 还要分辨"0 估时"和"今天没英语"。
+function subjectTimeStats(bySubject) {
+  return SUBJECT_ORDER
+    .map(subj => {
+      const items = (bySubject && bySubject[subj]) || [];
+      const total = items.reduce((s, i) => s + (i.est_minutes || 0), 0);
+      const remaining = items
+        .filter(i => !isSettledItem(i))
+        .reduce((s, i) => s + (i.est_minutes || 0), 0);
+      return { subject: subj, remaining, total };
+    })
+    .filter(s => s.total > 0);
+}
+
 // Toast 兜底 (设计文档 §9 坑 2)
 let toastTimer = null;
 function toast(msg, ms = 3000) {
@@ -342,11 +385,19 @@ async function loadBoard() {
     // 那侧的 "已收尾 x / 必做 y" 读法保持一致。
     const optDone = p.optional_done || 0;
     const optNote = p.optional ? ` · 选做 ${optDone}/${p.optional}` : '';
+    // 总用时: 已完成项的 (实际 ?? 预估) 之和, 后端算好后直接用。
+    // 单独占一行而不是塞进副行 —— 用户要的是"显出努力成果", 挤在
+    // 进度条的小字里等于没有。这是给人看的成就, 不是进度的一个附注。
     root.appendChild(el(`
       <div class="progress-bar">
         <div class="progress-text">
           <span>${b.label === '今天' ? '' : b.label + ' · '}已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
           <span class="muted">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</span>
+        </div>
+        <div class="effort-total">
+          <span class="et-label">今日总用时</span>
+          <strong class="et-num">${p.actual_total || 0}</strong>
+          <span class="et-unit">分钟</span>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
       </div>
@@ -363,10 +414,9 @@ async function loadBoard() {
     // 分区: 待完成 / 已收尾 / 选做(折叠)
     // 口径说明: done 与 skipped 都算"已收尾", 但只有 done 算"完成"
     const all = [];
-    for (const subj of ['语文', '数学', '英语']) all.push(...(b.by_subject[subj] || []));
-    const isSettled = i => i.status === 'done' || i.status === 'skipped';
-    const pending = all.filter(i => !isSettled(i));
-    const settled = all.filter(i => isSettled(i));
+    for (const subj of SUBJECT_ORDER) all.push(...(b.by_subject[subj] || []));
+    const pending = all.filter(i => !isSettledItem(i));
+    const settled = all.filter(i => isSettledItem(i));
 
     // 提示条 (2026-09-29 改为分档鼓励语, 原为"今日还有 N 项要做")
     // 口径提示: all 只含必做(by_subject), 选做不在内, 与进度条分母一致。
@@ -382,6 +432,25 @@ async function loadBoard() {
         estRemaining,
       });
       root.appendChild(el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`));
+    }
+
+    // 各科剩余时间 (2026-10-09): 把提示条那个总数按科目拆开。
+    // 放在提示条之后而不是之前 —— 提示条是"今天整体怎么样", 这里是
+    // "具体先做哪科", 先给全局再给局部, 读下来的顺序和决策顺序一致。
+    // 全部收尾后仍要显示 (语文 0 / 40): 家长确认"确实做完了"需要
+    // 看到这个 0, 空条只会让人怀疑是不是加载坏了。
+    const subjStats = subjectTimeStats(b.by_subject);
+    if (subjStats.length) {
+      const chips = subjStats.map(s => {
+        // 该科已全部收尾时给个明确的完成态, 不让 "0 / 40" 停在一个
+        // 容易被读成"还没加载出来"的中间状态。
+        const done = s.remaining === 0;
+        return `<span class="subj-time ${s.subject}${done ? ' is-done' : ''}">
+          <span class="st-name">${s.subject}</span>
+          <span class="st-num"><strong>${s.remaining}</strong><span class="st-sep">/</span>${s.total}</span>
+        </span>`;
+      }).join('');
+      root.appendChild(el(`<div class="subj-time-row">${chips}</div>`));
     }
 
     const section = (title, items, cls) => {
@@ -465,7 +534,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     try {
       await api('PATCH', `/assignments/${item.id}/status`, { status: s });
       if (s === 'done' && item.actual_minutes == null) {
-        toast('已标记完成, 建议补填实际用时 (不填不影响, 但周复盘不计)');
+        toast('已标记完成, 建议补填实际用时 (不填则按预估时间统计)');
         // 只有"刚点完成"这一条才允许重绘后自动聚焦用时框。
         // 通过回调把 id 传下去, 刷新时才知道该聚焦谁。
         _focusActualId = item.id;
@@ -567,7 +636,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     skipBtn.addEventListener('click', () => {
       input.classList.remove('error');
       input.value = '';
-      input.placeholder = '不填则不计入周复盘';
+      input.placeholder = '不填则按预估时间统计';
       toast('本次不记录用时, 之后仍可补填');
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
@@ -2007,7 +2076,7 @@ async function loadWeekly(week) {
     }
   } catch (e) {
     if (e.message.includes('4011')) {
-      root.innerHTML = `<div class="card muted">样本不足 (需 ≥ 5 条已完成且有实际耗时), 暂不生成偏差表</div>`;
+      root.innerHTML = `<div class="card muted">样本不足 (需 ≥ 5 条已完成), 暂不生成偏差表</div>`;
     } else {
       root.innerHTML = `<div class="error-banner">复盘失败: ${e.message}</div>`;
     }

@@ -38,20 +38,26 @@ def build_weekly_analytics(week: str, today: date) -> dict:
     """周维度偏差: 预估 vs 实际, 按 科目 x 任务类型 聚合.
 
     业务规则:
-    - 只统计 status=done 且 actual_minutes IS NOT NULL 且 not is_optional 的记录
+    - 只统计 status=done 且 not is_optional 的记录
+    - 实际用时缺省时按预估计入 (COALESCE), 不再因为没填就丢弃样本
     - sample_size < 5 -> 抛 SampleTooSmallError (前端展示"样本不足")
     - sample_size >= 5 但没有可执行任务的, 返回 note 提示
     """
     start, end = _week_range(week, today)
 
+    # 未填实际用时的已完成项, 用 est_minutes 顶替。
+    # 家长点"完成"时不必再被逼着填一次时长 —— 漏填的代价不该是
+    # 这条彻底不参与统计, 否则样本量被系统性削小, 复盘长期显示"样本不足"。
+    # 代价是这类样本的偏差恒为 0, 会把该科目的均值往 0 拉; 这是有意的,
+    # "没填"表示"确实按预估做的", 而不是"数据缺失"。
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT subject, task_type, est_minutes, actual_minutes
+            SELECT subject, task_type, est_minutes,
+                   COALESCE(actual_minutes, est_minutes) AS effective_minutes
             FROM assignments
             WHERE due_date BETWEEN ? AND ?
               AND status = 'done'
-              AND actual_minutes IS NOT NULL
               AND is_optional = 0
               AND (task_type IS NULL OR task_type != 'observation')
             """,
@@ -72,7 +78,7 @@ def build_weekly_analytics(week: str, today: date) -> dict:
     for r in rows:
         subj = r["subject"] or "其他"
         ttype = r["task_type"] or "其他"
-        agg[(subj, ttype)].append((int(r["est_minutes"]), int(r["actual_minutes"])))
+        agg[(subj, ttype)].append((int(r["est_minutes"]), int(r["effective_minutes"])))
 
     by_type: list[dict] = []
     for (subj, ttype), samples in agg.items():

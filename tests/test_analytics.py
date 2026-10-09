@@ -10,6 +10,14 @@ from unittest.mock import patch
 
 def _seed_done_record(subject, task_type, est, actual, due_date_str, is_optional=False, ttype_override=None):
     """直接 SQL 插一条已完成作业 (绕过 PATCH)."""
+    return _seed_record(subject, task_type, est, actual, due_date_str,
+                        is_optional=is_optional, ttype_override=ttype_override,
+                        status="done")
+
+
+def _seed_record(subject, task_type, est, actual, due_date_str,
+                 is_optional=False, ttype_override=None, status="done"):
+    """插一条任意状态的作业。actual 传 None 即"未填实际用时"。"""
     import sqlite3
     from app import config
     conn = sqlite3.connect(config.DB_PATH)
@@ -19,9 +27,10 @@ def _seed_done_record(subject, task_type, est, actual, due_date_str, is_optional
            (subject, task_name, due_date, deadline_time, is_optional,
             est_minutes, actual_minutes, status, task_type, source_span,
             confidence, batch_id, created_at, updated_at)
-           VALUES (?, ?, ?, NULL, ?, ?, ?, 'done', ?, '', 'high', NULL, ?, ?)""",
-        (subject, f"test {task_type}", due_date_str,
-         1 if is_optional else 0, est, actual, ttype_override or task_type, now, now),
+           VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, '', 'high', NULL, ?, ?)""",
+        (subject, f"test {task_type} {now}", due_date_str,
+         1 if is_optional else 0, est, actual, status,
+         ttype_override or task_type, now, now),
     )
     conn.commit()
     conn.close()
@@ -95,6 +104,60 @@ def test_analytics_invalid_week(app_client):
     # Query pattern regex 失败 -> RequestValidationError -> 4003
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4003"
+
+
+def test_analytics_missing_actual_falls_back_to_est(app_client):
+    """未填实际用时的已完成项, 按预估计入 (用户口径: 缺省即与预估一致)。
+
+    这类样本的偏差恒为 0: 估 15 就按实 15 算, 不再因为漏填而整条丢弃。
+    """
+    monday = date(2026, 9, 21)
+    for i in range(5):
+        _seed_done_record("语文", "背诵", 15, None, (monday + timedelta(days=i)).isoformat())
+    fake_today = datetime(2026, 9, 25, 10, 0, 0)
+    with patch("app.routers.analytics.datetime") as mock_dt:
+        mock_dt.now.return_value = fake_today
+        r = app_client.get("/api/analytics/weekly?week=current")
+    assert r.status_code == 200
+    data = r.json()
+    # 关键: 以前会被 actual_minutes IS NOT NULL 滤掉而报 4011
+    assert data["sample_size"] == 5
+    row = data["by_type"][0]
+    assert row["avg_actual_minutes"] == 15
+    assert row["diff_minutes"] == 0
+
+
+def test_analytics_mixed_filled_and_missing_actual(app_client):
+    """有填的按实算, 没填的按预估算, 两者进同一个均值。"""
+    monday = date(2026, 9, 21)
+    # 3 条填了实际 (估15 实25)
+    for i in range(3):
+        _seed_done_record("数学", "计算", 15, 25, (monday + timedelta(days=i)).isoformat())
+    # 2 条没填 (估10 -> 按实10)
+    for i in range(2):
+        _seed_done_record("数学", "计算", 10, None, (monday + timedelta(days=3 + i)).isoformat())
+    fake_today = datetime(2026, 9, 25, 10, 0, 0)
+    with patch("app.routers.analytics.datetime") as mock_dt:
+        mock_dt.now.return_value = fake_today
+        r = app_client.get("/api/analytics/weekly?week=current")
+    assert r.status_code == 200
+    row = r.json()["by_type"][0]
+    assert row["sample_size"] == 5
+    # 实 = (25*3 + 10*2) / 5 = 19, 估 = (15*3 + 10*2) / 5 = 13
+    assert row["avg_est_minutes"] == 13
+    assert row["avg_actual_minutes"] == 19
+    assert row["diff_minutes"] == 6
+
+
+def test_analytics_missing_actual_not_double_counted(app_client):
+    """未完成的项即便没填用时也不能进样本 —— 回退只针对 done。"""
+    monday = date(2026, 9, 21)
+    for i in range(5):
+        _seed_record("语文", "阅读", 15, None, (monday + timedelta(days=i)).isoformat(),
+                     status="todo")
+    r = app_client.get("/api/analytics/weekly?week=current")
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "4011"
 
 
 # ====== Settings ======
