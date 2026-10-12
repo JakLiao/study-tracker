@@ -1067,11 +1067,26 @@ document.getElementById('btn-add-manual').addEventListener('click', () => openMa
 
 // 字符计数 (设计文档 §7.2 第 1 块)
 const rawTextarea = document.getElementById('raw-text');
-rawTextarea.addEventListener('input', () => {
+function syncCharCount() {
   const len = rawTextarea.value.length;
-  const el2 = document.getElementById('char-count-num');
-  el2.textContent = len;
-  el2.parentElement.classList.toggle('warn', len > MAX_TEXT_LEN * 0.9);
+  const num = document.getElementById('char-count-num');
+  num.textContent = len;
+  num.parentElement.classList.toggle('warn', len > MAX_TEXT_LEN * 0.9);
+}
+rawTextarea.addEventListener('input', syncCharCount);
+
+// 「填入示例 / 清空」: 示例原先只写在 placeholder 里, 一开始输入就没了,
+// 家长想照格式写时已经看不到了。改成随时能重新调出示例。
+const SAMPLE_RAW = '【9.21英语】\n1. 一起作业; 2. 描写本 P11-12; 3. 背课文 P18-19。';
+document.getElementById('btn-fill-sample').addEventListener('click', () => {
+  rawTextarea.value = SAMPLE_RAW;
+  syncCharCount();
+  rawTextarea.focus();
+});
+document.getElementById('btn-clear-raw').addEventListener('click', () => {
+  rawTextarea.value = '';
+  syncCharCount();
+  rawTextarea.focus();
 });
 
 async function parseRaw() {
@@ -1605,9 +1620,7 @@ async function confirmBatch(batchId, result) {
     }
     result.innerHTML = '';
     rawTextarea.value = '';
-    document.getElementById('char-count-num').textContent = '0';
-    const cc = document.getElementById('char-count');
-    if (cc) cc.classList.remove('warn');
+    syncCharCount();
     switchTab('board');
   } catch (e) { toast('入库失败: ' + e.message); }
 }

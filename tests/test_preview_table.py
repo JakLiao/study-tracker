@@ -92,6 +92,47 @@ def test_action_wording_kept(index_html):
     assert ">解析</button>" in index_html
 
 
+# ====== 1b. 录入区表单 (2026-10-12 家长截图批注) ======
+
+def test_batch_date_label_is_short(index_html):
+    """"本次作业归属日"在 flex 行里被 input[type=date] 的 width:100%
+    挤成"本次作业归/属日"两行。标签文案先收短。"""
+    assert "本次作业归属日" not in index_html, "旧的长标签仍在, 窄宽度下会折行"
+    assert ">归属日期" in index_html
+
+
+def test_batch_date_label_does_not_wrap(styles):
+    """光改文案不够: input 基础规则是 width:100%, 换个稍长的标签
+    照样会被挤成两行。必须锁住 nowrap + 日期框定宽。"""
+    b = _block(styles, ".entry-batch label")
+    assert "white-space: nowrap" in b, "标签必须禁止折行"
+    css = re.sub(r"/\*[\s\S]*?\*/", "", styles)
+    assert re.search(r'\.entry-batch label input\[type="date"\] \{[^}]*width: 150px', css), \
+        "日期框需定宽, 否则会吃掉标签的横向空间"
+
+
+def test_entry_tools_exist(index_html):
+    """示例原先只写在 placeholder 里, 一开始输入就消失, 家长无法回看格式。"""
+    for attr in ('id="btn-fill-sample"', 'id="btn-clear-raw"'):
+        assert attr in index_html, f"缺少 {attr}"
+
+
+def test_char_count_has_id(index_html, app_js):
+    """入库后复位 warn 的代码按 id="char-count" 取元素, 之前 HTML 里只有
+    class 没有 id, 那段复位从来没生效过。"""
+    assert 'id="char-count"' in index_html, "字数统计容器缺 id, warn 复位会静默失效"
+    assert "syncCharCount()" in app_js
+    assert "getElementById('char-count')" not in app_js, \
+        "旧的按 id 复位写法已被 syncCharCount 取代, 别再引回"
+
+
+def test_raw_text_scales_with_viewport(styles):
+    """固定 160px 时内容只占屏顶三分之一, 页面重心严重偏上。"""
+    b = re.search(r"#raw-text \{([^}]*)\}", re.sub(r"/\*[\s\S]*?\*/", "", styles))
+    assert b, "缺少 #raw-text 高度规则"
+    assert "clamp(" in b.group(1) and "vh" in b.group(1), "录入框高度应随视口伸缩"
+
+
 # ====== 2. 固定列宽 ======
 
 def test_table_layout_fixed(styles):

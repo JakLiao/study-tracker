@@ -103,14 +103,18 @@
       <h2>录入作业</h2>
       <p class="muted">粘贴老师通知原文 → AI 解析 → 逐条确认 → 入库</p>
       <div class="row entry-batch">
-        <label>本次作业归属日
+        <label>归属日期
           <input id="entry-date" type="date" class="js-datepicker" />
         </label>
         <span class="muted">AI 识别出日期的行会自动填写, 识别不出的需你确认</span>
       </div>
-      <textarea id="raw-text" rows="10" placeholder="例如:&#10;&#10;【9.21英语】&#10;1. 一起作业; 2. 描写本 P11-12; 3. 背课文 P18-19。"></textarea>
-      <div class="char-count"><span id="char-count-num">0</span> / 10000</div>
-      <div class="row">
+      <textarea id="raw-text" rows="10" placeholder="把老师发的通知原文整段粘进来"></textarea>
+      <div class="row entry-tools">
+        <button id="btn-fill-sample" class="ghost" type="button">填入示例</button>
+        <button id="btn-clear-raw" class="ghost" type="button">清空</button>
+        <div class="char-count" id="char-count"><span id="char-count-num">0</span> / 10000</div>
+      </div>
+      <div class="row entry-actions">
         <button id="btn-parse" class="primary">解析</button>
         <!-- 手动添加按钮: 设计文档 §9 坑 4 — 始终可见, AI 不可用时加暗红描边 -->
         <button id="btn-add-manual" class="secondary" title="手动添加一条作业">手动添加</button>

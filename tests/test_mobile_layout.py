@@ -124,6 +124,23 @@ def test_footer_respects_bottom_gesture(styles):
     assert re.search(r"footer\s*\{[^}]*padding-bottom:[^;]*env\(safe-area-inset-bottom", css)
 
 
+def test_footer_clears_fixed_nav_on_phone(styles):
+    """body 撑满视口后 footer 落到真正的页面底部, 正好撞上52px 的
+    fixed 底栏, 隐私提示会被压掉一半。窄屏必须给它让出底栏高度。"""
+    block = _phone_block(styles, "footer {\n    padding-bottom: calc(56px")
+    assert "56px" in block, "footer 窄屏未避开 fixed 底栏"
+
+
+def test_primary_button_keeps_its_background_on_hover(styles):
+    """button:hover:not(:disabled) 是 (0,2,1), button.primary 只有 (0,1,1)
+    —— 只写 opacity 的话, 悬停时深咖底被刷成浅底而文字仍是浅色,
+    触屏按住主按钮时整块按钮"消失"(375px 截图复核发现)。"""
+    css = _strip_comments(styles)
+    m = re.search(r"button\.primary:hover:not\(:disabled\)\s*\{([^}]*)\}", css)
+    assert m, "缺少 primary 的悬停规则"
+    assert "background" in m.group(1), "悬停时必须重钉底色, 不能只降透明度"
+
+
 def test_modal_uses_dvh_with_vh_fallback(styles):
     """85vh 在移动端含地址栏, 弹窗底部按钮会被地址栏压住。
     dvh 必须写在 vh 之后 —— 老浏览器不认 dvh 时沿用 vh。"""
@@ -420,3 +437,22 @@ def test_need_date_hint_spans_card(styles):
     hint = re.search(r"\.preview-table \.need-date-hint\s*\{([^}]*)\}", block)
     assert hint, "缺少 need-date-hint 的整行规则"
     assert "grid-column: 1 / -1" in hint.group(1)
+
+
+# ====== 录入页操作行 (2026-10-12) ======
+
+def test_entry_actions_stick_above_keyboard(styles):
+    """软键盘弹起会盖住输入框下方的按钮, 家长必须收键盘才点得到「解析」。
+    操作行要吸在 fixed 底栏 (52px) 之上。"""
+    block = _phone_block(styles, ".entry-actions {")
+    act = re.search(r"\.entry-actions\s*\{([^}]*)\}", block)
+    assert act, "窄屏缺少 .entry-actions 吸底规则"
+    assert "position: sticky" in act.group(1)
+    # 必须让开 52px 的 fixed 底栏, 否则两者会叠在一起
+    assert re.search(r"bottom:\s*calc\(52px", act.group(1))
+
+
+def test_entry_actions_not_sticky_on_desktop(styles):
+    """桌面端一屏放得下, 吸底会让按钮与内容脱节。基础规则不该带 sticky。"""
+    assert not re.search(r"^\.entry-actions \{[^}]*position:\s*sticky",
+                         _strip_comments(styles), re.M)

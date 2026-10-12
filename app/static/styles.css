@@ -121,6 +121,12 @@ body {
   color: var(--text-1);
   font-size: var(--fs-body);
   line-height: 1.5;
+  /* 内容不足一屏时(登记页), footer 会浮在页面中间, 隐私提示看起来
+     像悬在半空。撑满视口让 footer 落回底部, 视觉重心才收得住。 */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ===== 3. 顶部 Header + Tab Bar ===== */
@@ -185,9 +191,12 @@ nav#tabs button:hover:not(.active) { background: var(--surface-2); }
 /* ===== 4. 主内容 ===== */
 main {
   max-width: 720px;
+  width: 100%;
   margin: 0 auto;
   padding: var(--space-4);
   padding-bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0));
+  /* body 是纵向 flex, main 吃掉剩余高度, footer 才贴得到页面底部 */
+  flex: 1;
 }
 .view { display: none; }
 .view.active { display: block; }
@@ -216,6 +225,14 @@ input:focus, select:focus, textarea:focus {
 input.error { border-color: var(--status-overdue); box-shadow: 0 0 0 2px rgba(220,38,38,0.15); }
 textarea { resize: vertical; min-height: 160px; line-height: 1.5; }
 
+/* 录入框: 固定 160px 时, 页面内容只占屏幕顶部三分之一, 下方一大片空
+   白让重心严重偏上(家长截图反馈)。跟着视口高度走, 桌面上一屏刚好
+   放下"标题 + 日期 + 输入框 + 按钮", 不再多也不再多留。
+   clamp 下限 160px 与基础规则一致, 上限 420px 免得在 4K 屏上变成一片。 */
+#raw-text {
+  height: clamp(160px, 34vh, 420px);
+}
+
 input[type="number"] { width: 88px; }
 
 .row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin: var(--space-3) 0; }
@@ -240,7 +257,14 @@ button.primary {
   border-color: var(--text-1);
   font-weight: 600;
 }
-button.primary:hover:not(:disabled) { opacity: 0.88; }
+/* primary 的悬停必须把底色一起钉住: button:hover:not(:disabled) 是
+   (0,2,1), button.primary 只有 (0,1,1), 只写 opacity 的话深咖底会被
+   刷成 --surface-2 浅底, 而 color 仍是浅色 --bg —— 触屏按住主按钮时
+   整块按钮看起来"消失"(375px 截图复核发现)。 */
+button.primary:hover:not(:disabled) {
+  background: var(--text-1);
+  opacity: 0.88;
+}
 button.secondary {
   border: 1px solid var(--border);
   color: var(--text-1);
@@ -646,7 +670,10 @@ tr.is-optional .muted {
   color: var(--text-3);
 }
 
-/* ===== 11.6 录入页批次日期 (2026-09-28) ===== */
+/* ===== 11.6 录入页批次日期 (2026-09-28) =====
+   label 里的日期框曾把"本次作业归属日"挤成两行("本次作业归/属日"):
+   input[type=date] 基础规则是 width:100%, 作为 flex 项会把同排的文字
+   压到不足一行宽。日期框本身只要 150px, 给 flex:0 0 auto + nowrap 即可。 */
 .entry-batch {
   align-items: center;
   margin-bottom: var(--space-2);
@@ -657,6 +684,17 @@ tr.is-optional .muted {
   gap: var(--space-2);
   font-size: var(--fs-body);
   font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.entry-batch label input[type="date"] {
+  flex: 0 0 auto;
+  width: 150px;
+}
+/* 提示句在标签右侧, 空间不够时整体换到下一行, 不与标签挤在一行 */
+.entry-batch .muted {
+  flex: 1 1 220px;
+  line-height: 1.4;
 }
 
 /* AI 未识别归属日: 留空 + 标红, 要求家长确认 */
@@ -1646,14 +1684,47 @@ footer {
 .diff-pos { color: var(--status-overdue); font-weight: 600; }
 .diff-neg { color: var(--status-done); font-weight: 600; }
 
-/* ===== 22. 字符计数 ===== */
+/* ===== 22. 字符计数 =====
+   从 --text-3(#BFA894) 提到 --text-2(#8A6F5C): 10000 字上限是硬约束,
+   粘一整篇课文很容易顶到上限, 而原来的浅棕在 --bg 上几乎看不见。
+   贴到输入框正下方同一行(见 .entry-tools), 右对齐不变。 */
 .char-count {
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
   text-align: right;
   margin-top: 4px;
 }
-.char-count.warn { color: var(--status-overdue); }
+.char-count.warn { color: var(--status-overdue); font-weight: 600; }
+
+/* ===== 22b. 录入区工具行 / 操作行 =====
+   示例与清空放输入框正下方(此前只能靠 placeholder 记住格式, 一开始
+   输入就没了); 字数统计同一行右对齐, 视线不用来回跳。 */
+.entry-tools {
+  margin: var(--space-2) 0 0;
+  align-items: center;
+}
+.entry-tools .char-count {
+  margin-top: 0;
+  margin-left: auto;
+}
+.entry-tools button {
+  font-size: var(--fs-caption);
+}
+
+/* 移动端软键盘弹起时, 输入框以下的内容会被键盘盖住, "解析"按钮就点不到。
+   把操作行吸在视口底部 (fixed 底栏之上), 输入时按钮始终可见。
+   桌面端不吸 —— 一屏放得下, 吸底反而让按钮与内容脱节。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .entry-actions {
+    position: sticky;
+    bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+    z-index: 800;
+    margin: var(--space-2) calc(-1 * var(--space-3)) 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+}
 
 /* ===== 23. Toast (设计文档 §9 坑 2 兜底) ===== */
 .toast {
@@ -2056,6 +2127,15 @@ header {
   padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
 }
 footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px)); }
+
+/* body 改成撑满视口的纵向 flex 后, footer 落到了真正的页面底部 ——
+   正好是移动端 52px fixed 底栏的位置, 隐私提示会被压掉一半。
+   窄屏给它再让出底栏高度 + 主内容已有的那圈留白。 */
+@media (max-width: 767px), (max-height: 500px) {
+  footer {
+    padding-bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0px));
+  }
+}
 
 /* --- 26e. 横屏 ---
    375px 高的屏上, header(88px) + 底栏(52px) 一度吃掉三成。
