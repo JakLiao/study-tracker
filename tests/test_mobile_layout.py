@@ -125,10 +125,12 @@ def test_footer_respects_bottom_gesture(styles):
 
 
 def test_footer_clears_fixed_nav_on_phone(styles):
-    """body 撑满视口后 footer 落到真正的页面底部, 正好撞上52px 的
-    fixed 底栏, 隐私提示会被压掉一半。窄屏必须给它让出底栏高度。"""
-    block = _phone_block(styles, "footer {\n    padding-bottom: calc(56px")
-    assert "56px" in block, "footer 窄屏未避开 fixed 底栏"
+    """body 撑满视口后 footer 落到真正的页面底部, 正好撞上底栏,
+    隐私提示会被压掉一半。窄屏必须给它让出底栏高度。"""
+    block = _phone_block(styles, "footer {\n    padding-bottom: calc(70px")
+    m = re.search(r"footer\s*\{[^}]*padding-bottom:\s*calc\((\d+)px", block)
+    assert m, "footer 窄屏未避开 fixed 底栏"
+    assert int(m.group(1)) >= 62, f"footer 留白 {m.group(1)}px 盖不住底栏"
 
 
 def test_primary_button_keeps_its_background_on_hover(styles):
@@ -259,8 +261,17 @@ def test_main_reserves_room_for_fixed_nav(styles):
 
 
 def test_nav_touch_target_is_generous(styles):
+    """2026-10-12: 底栏改图标 + 文字竖排, 高度 52px -> 62px。"""
     block = _phone_block(styles, "box-shadow: 0 -2px 12px rgba(15, 20, 25, 0.04)")
-    assert re.search(r"nav#tabs button\s*\{[^}]*min-height:\s*52px", block)
+    assert re.search(r"nav#tabs button\s*\{[^}]*min-height:\s*62px", block)
+
+
+def test_nav_reserves_enough_scroll_padding(styles):
+    """底栏 62px, main 的下内边距必须 >= 它, 否则最后一行作业被压在栏下。"""
+    block = _phone_block(styles, "box-shadow: 0 -2px 12px rgba(15, 20, 25, 0.04)")
+    m = re.search(r"main\s*\{[^}]*padding-bottom:\s*calc\((\d+)px", block)
+    assert m, "窄屏 main 缺少 padding-bottom"
+    assert int(m.group(1)) >= 62, f"留白 {m.group(1)}px 盖不住 {62}px 的底栏"
 
 
 def test_header_stops_wrapping_on_phone(styles):
@@ -443,13 +454,14 @@ def test_need_date_hint_spans_card(styles):
 
 def test_entry_actions_stick_above_keyboard(styles):
     """软键盘弹起会盖住输入框下方的按钮, 家长必须收键盘才点得到「解析」。
-    操作行要吸在 fixed 底栏 (52px) 之上。"""
+    操作行要吸在 fixed 底栏 (62px) 之上。"""
     block = _phone_block(styles, ".entry-actions {")
     act = re.search(r"\.entry-actions\s*\{([^}]*)\}", block)
     assert act, "窄屏缺少 .entry-actions 吸底规则"
     assert "position: sticky" in act.group(1)
-    # 必须让开 52px 的 fixed 底栏, 否则两者会叠在一起
-    assert re.search(r"bottom:\s*calc\(52px", act.group(1))
+    # 必须让开竖排图标后的底栏高度, 否则两者会叠在一起
+    assert re.search(r"bottom:\s*calc\(62px", act.group(1)), \
+        f"未避开底栏: {act.group(1).strip()[:60]}"
 
 
 def test_entry_actions_not_sticky_on_desktop(styles):

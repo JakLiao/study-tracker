@@ -158,11 +158,32 @@ nav#tabs button {
   color: var(--text-2);
   font-size: var(--fs-body-s);
   min-height: 36px;
+  /* 图标在上、文字在下竖排: 形状与文字各占一行, 小学生先认出图再
+     对上字, 比横排挤在一行更容易扫。 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.2;
+  transition: background 0.15s, color 0.15s;
 }
+
+/* 图标描边全部用 currentColor (见 index.html 的 symbol 定义),
+   所以选中态只要改 button 的 color, 图标自动跟着变色。
+   固定尺寸而非 1em: 24x24 的图形要靠 px 控制粗细观感, 跟字号放大
+   会让 1.8 的描边在小字号下糊成一团。 */
+.tab-ico {
+  width: 22px;
+  height: 22px;
+  display: block;
+  pointer-events: none;
+}
+
 nav#tabs button.active {
-  background: var(--surface-2);
+  background: var(--accent-soft);
   color: var(--text-1);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 nav#tabs button:hover:not(.active) { background: var(--surface-2); }
 
@@ -298,19 +319,38 @@ button#btn-add-manual[disabled-look="true"] {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-3);
+  /* 内边距 12px -> 8px (2026-10-12 密度优化): 卡片内每条作业已经自带
+     分隔线, 再留 12px 内边距等于每条作业上下各多出两行空白。 */
+  padding: var(--space-2);
   margin-bottom: var(--space-2);
 }
+/* summary 作为可点击的折叠头时, 浏览器默认会显示标记箭头并去掉内边距。
+   这里统一成与.card-title 一致的左对齐, 并给一个 ▾ 提示"可以展开"。 */
+details.card > summary.card-title {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: var(--space-2);
+  user-select: none;
+}
+details.card > summary.card-title::-webkit-details-marker { display: none; }
+details.card > summary.card-title::after {
+  content: "▾";
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  transition: transform .15s;
+}
+details.card[open] > summary.card-title::after { transform: rotate(180deg); }
 .card-title {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   font-weight: 600;
-  margin-bottom: var(--space-3);
+  font-size: var(--fs-body-s);
+  margin-bottom: var(--space-2);
 }
 .card-title .count {
   margin-left: auto;
-  font-size: var(--fs-number-s);
+  font-size: var(--fs-body-s);
   font-weight: 500;
   color: var(--text-3);
 }
@@ -353,15 +393,20 @@ tr:last-child td { border-bottom: none; }
 .weekly-table td.col-advice { white-space: normal; }
 
 /* ===== 9. 科目徽章 ===== */
+/* 科目标签: 2026-10-12 起压扁 —— 原 padding 2px 8px + 13px 字号,
+   在 375px 屏上「语文」两个字要占 34px 宽, 而每行左侧都要给它留位。
+   字号降到 11px、内边距收到 5px, 宽度省下约 10px, 白字对比度
+   仍远高于 4.5:1 (三个科目色都已压暗)。 */
 .subject-tag {
   display: inline-flex;
   align-items: center;
-  padding: 2px var(--space-2);
+  padding: 1px 5px;
   border-radius: var(--radius-sm);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-caption-sm);
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
+  flex: none;
 }
 .subject-tag.语文 { background: var(--c-语); }
 .subject-tag.数学 { background: var(--c-数); }
@@ -432,46 +477,50 @@ tr:last-child td { border-bottom: none; }
 .confidence-medium { color: var(--status-doing); }
 .confidence-low { color: var(--status-overdue); font-weight: 600; }
 
-/* ===== 11.7 看板日期 Tab (2026-09-28) ===== */
+/* ===== 11.7 看板日期 Tab (2026-10-12 分段控件) =====
+   原先是三张 84px 宽的竖排方块(标题在上、进度在下), 整条占约 90px。
+   改成 iOS 那种分段控件: 横排、同一行、共享一个描边框 —— 高度压到 30px,
+   省下的 60px 够多看两条作业。 */
 .date-tabs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: 0;
   margin-bottom: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  width: fit-content;
 }
 .date-tabs:empty {
   display: none;   /* 只有一天数据时不占空间 */
 }
 .date-tab {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: var(--space-2) var(--space-3);
-  border: 2px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
-  min-width: 84px;
-  transition: border-color .12s, background .12s;
+  transition: background .12s, color .12s;
 }
-.date-tab:hover {
-  border-color: var(--c-语);
-}
+.date-tab:hover { background: var(--surface-2); }
 .date-tab.active {
-  border-color: var(--accent);
   background: var(--accent);
 }
 .date-tab .dt-label {
-  font-size: var(--fs-body);
+  font-size: var(--fs-body-s);
   font-weight: 700;
   color: var(--text-1);
 }
 .date-tab .dt-count {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 .date-tab.active .dt-label,
 .date-tab.active .dt-count {
@@ -530,15 +579,17 @@ tr.is-optional .muted {
 /* ===== 11.5 看板分区 (2026-09-28) ===== */
 /* 提示条分档 (2026-09-29): 颜色随"离终点还有多远"从暖橙推向绿。
    原先所有未完成态共用一个 --warn-soft 粉底, 剩 1 项和剩 8 项长得
-   一样, 提示语失去了"快做完了"的视觉推力。 */
+   一样, 提示语失去了"快做完了"的视觉推力。
+   2026-10-12: 并入概览卡, 从独立横幅降级为卡内一行 —— 颜色分档不变,
+   它仍要区分"剩得多/快完了/全做完", 但不值得独占一整条横幅的高度。 */
 .board-hint {
   background: var(--warn-soft);
   color: var(--warn-ink);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--fs-body);
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
   font-weight: 600;
-  margin-bottom: var(--space-3);
+  margin-top: 6px;
 }
 /* 剩得多: 保留原来的粉, 不粉饰工作量 */
 .board-hint.many {
@@ -574,16 +625,16 @@ tr.is-optional .muted {
 .subj-time-row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
+  gap: var(--space-1);
+  margin-top: 6px;
 }
 .subj-time {
   display: inline-flex;
   align-items: baseline;
-  gap: var(--space-1);
-  padding: 3px var(--space-2);
+  gap: 3px;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-caption-sm);
   font-weight: 600;
 }
 /* "分" 由 ::after 补, 与 .est-min 同做法 —— 单位不必写进 HTML,
@@ -593,7 +644,7 @@ tr.is-optional .muted {
   font-weight: 400;
 }
 .subj-time .st-name {
-  font-size: var(--fs-caption);
+  font-size: var(--fs-caption-sm);
   font-weight: 600;
 }
 /* 分子(剩余)用科目色重字重, 分母(当天总量)压成浅灰 —— 家长第一眼
@@ -718,8 +769,10 @@ tr.is-optional .muted {
 .assignment-row {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
+  gap: 3px;
+  /* 上下内边距 8px -> 6px (2026-10-12 密度优化): 行与行之间那条分隔线
+     已经承担了分组职责, 行内再留大片空白会让整屏只能放三四条。 */
+  padding: 6px 0;
   border-bottom: 1px solid var(--border);
   position: relative;
 }
@@ -762,35 +815,37 @@ tr.is-optional .muted {
 .assignment-row.skipped .task-name { color: var(--text-3); }
 
 /* 英雄数字: 预估/实耗分钟 (设计文档 §3)
-   字号由 22px 降到 17px —— 紧凑化 2026-09-28。
-   22px 在单行里显得过于抢眼, 且它只是辅助信息(真正的进度在进度条上)。 */
+   字号 15px, 与任务标题同行右对齐 (2026-10-12 密度优化)。
+   "预估"二字原先是 display:block 排在数字上方, 于是每条作业的时长
+   都占两行 —— 但家长扫列表时找的是"这条要花多久", 标签只是消歧用的
+   辅助信息, 配 11px 灰字完全够。压成同行后单条作业省下一行。 */
 .assignment-row .est-min {
   font-size: var(--fs-body);
   font-weight: 600;
   color: var(--text-1);
   line-height: 1;
-  min-width: 28px;
+  min-width: 0;
   text-align: right;
+  white-space: nowrap;
+  flex: none;
 }
 .assignment-row .est-min::after {
   content: " 分";
-  font-size: var(--fs-caption);
+  font-size: var(--fs-caption-sm);
   color: var(--text-3);
   font-weight: 400;
   margin-left: 2px;
 }
 
 /* "预估"二字 (2026-09-28 用户反馈: 数字没有标签, 分不清是估的还是实际的)。
-   之前行内只有一个光秃秃的 30, 现在成对出现"预估 30 / 实际用时 32"。
-   标签用 block 排在数字上方, 弱于数字本身 —— 家长扫的是时长,
-   标签只负责消歧。"分"字仍由父级 ::after 补, 不重复输出。 */
+   2026-10-12: 由 block 改为 inline —— 见上方 .est-min 的说明。 */
 .assignment-row .est-label {
-  display: block;
+  display: inline;
   font-size: var(--fs-caption-sm);
   font-weight: 500;
   color: var(--text-3);
   letter-spacing: .02em;
-  line-height: 1.2;
+  margin-right: 2px;
 }
 
 .assignment-row .actual-tag {
@@ -836,11 +891,43 @@ tr.is-optional .muted {
   background: rgba(217, 119, 6, 0.06);
   box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
 }
+/* 待补用时标记 (2026-10-12): 原先是 ::before 一整行「⚠ 请补实际耗时」,
+   一条作业就多占一行高度, 而家长每天要看的往往就是好几条待补 —— 满屏
+   重复的警告反而没人读。改成行内小圆点。
+   位置不能贴右边缘: 预估时长也在那一列(right 对齐), 圆点会压在数字上
+   (375px 实测)。改为贴在标题左侧、学科标签之前的位置上方, 那里
+   本来就是行的起点, 不与任何文字争位置。 */
 .assignment-row.pending-actual::before {
-  content: "⚠ 请补实际耗时";
-  font-size: var(--fs-caption);
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-doing);
+}
+
+/* 用时输入的展开容器: 默认空且不占位(空 div 若给 width:100% 仍会被
+   flex 当成一个换行单位, 把后面的按钮挤到第三行), 点「补用时」后
+   才拿到 flex-basis:100% 独占一行。 */
+.assignment-row .actual-fill { display: contents; }
+.assignment-row .actual-fill:not(:empty) {
+  display: flex;
+  flex: 1 0 100%;
+}
+.assignment-row .actual-fill-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* 「补用时」按钮: 它是待补状态的唯一入口, 用琥珀描边与默认次操作区分,
+   提示"这里还有件事没做", 而不是又一个可以随手点的灰色胶囊。 */
+.status-btn.fill-actual {
+  border-color: var(--status-doing);
   color: var(--status-doing);
-  font-weight: 500;
+  background: rgba(217, 119, 6, 0.06);
 }
 
 /* ===== 12.5 作业操作按钮 (2026-09-28 重写) =====
@@ -974,19 +1061,25 @@ tr.is-optional .muted {
 .status-btn.undo:hover { background: #FDEDEC; }
 
 /* 编辑: 改内容 (描述/估时/日期), 不是改状态。
-   与 .redo 一样用虚线描边 —— 虚线在这套按钮语言里表达"这是个附带入口,
-   不改变作业当前所处的状态", 选做开关也用同一记号, 语义一致。
-   刻意不给实心或高饱和色: 行内真正的主操作是"完成"的小红花,
-   编辑再抢一份视觉权重就分不清主次了。 */
+   与 .redo 一样属于"不改变状态"的附带操作, 但 2026-10-12 起不再用
+   虚线描边 —— 三四个虚线胶囊并排时视觉噪音太大, 比"完成"的小红花还抢眼。
+   改为纯图标 (铅笔) 无边框: 宽度从约 56px 降到 26px, 一行能多放一个按钮。
+   语义仍要可辨: 铅笔是全站"改内容"的统一记号 (与底栏"登记"同形),
+   并保留 aria-label/title, 读屏与悬停都能拿到"编辑"二字。 */
 .status-btn.edit {
-  background: var(--surface);
-  border-color: var(--border);
-  border-style: dashed;
-  color: var(--text-2);
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-3);
+  padding: 1px 5px;
+}
+.status-btn .ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  pointer-events: none;
 }
 .status-btn.edit:hover {
   background: var(--surface-2);
-  border-color: var(--text-3);
   color: var(--text-1);
 }
 
@@ -1001,20 +1094,26 @@ tr.is-optional .muted {
 .status-btn.danger:hover { background: var(--status-overdue-soft); }
 
 /* ===== 13. 进度条 (设计文档 §5.5) ===== */
+/* 概览卡 (2026-10-12 密度优化: 进度 + 总用时 + 鼓励语 + 学科用时合并成一张)
+   原先这四块各自一张卡/一条横幅纵向堆叠, 375px 屏上合计约 300px。
+   合并后整卡约 150px, 且信息密度更高 —— 家长一屏能同时看到
+   "做到哪了 / 用了多久 / 接下来做哪科"。 */
 .progress-bar {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 .progress-bar .progress-text {
-  font-size: var(--fs-number-s);
+  font-size: var(--fs-body-s);
   font-weight: 500;
   color: var(--text-1);
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--space-2);
+  gap: var(--space-2);
+  margin-bottom: 6px;
 }
 .progress-bar .progress-track {
   height: 4px;
@@ -1028,30 +1127,33 @@ tr.is-optional .muted {
   border-radius: var(--radius-pill);
   transition: width 0.2s;
 }
-
-/* 总用时 (2026-10-09 用户要求"展示大一点, 显出孩子的努力成果")
-   放在进度条与进度条文字之间, 数字用 --fs-number-xl 压过全场。
-   刻意不做成卡片/徽章 —— 再套一层容器会把它变成又一个"信息块",
-   而这里要的是"成就", 应该像标题一样直接立在进度条上方。
-   数字用 --status-done 绿: 与进度条填充同色, 读起来是"完成"的延续。 */
-.effort-total {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  margin-bottom: var(--space-2);
+/* 副行: "完成 8·跳过 1·选做 2/2 · 估时 190 分"。
+   条件渲染 (无跳过/选做时不出现), 所以它不占位。 */
+.progress-sub {
+  margin-top: 5px;
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
 }
-.effort-total .et-label {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
+
+/* 总用时 (2026-10-09 要求"展示大一点, 显出孩子的努力成果")
+   原先独占一整行、字号 --fs-number-xl(约 40px), 是全页最大的数字。
+   并进概览卡后与进度数字同行, 数字降到 --fs-number-l —— 仍是"成就级"
+   的视觉重量, 但不再为一个数字吃掉一行半的高度。 */
+.effort-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: none;
 }
 .effort-total .et-num {
-  font-size: var(--fs-number-xl);
+  font-size: var(--fs-number-l);
   font-weight: 700;
   line-height: 1.1;
   color: var(--status-done);
+  font-variant-numeric: tabular-nums;
 }
 .effort-total .et-unit {
-  font-size: var(--fs-body-s);
+  font-size: var(--fs-caption-sm);
   color: var(--text-2);
 }
 
@@ -1634,8 +1736,9 @@ button.primary.modal-danger:hover:not(:disabled) {
 @media (max-width: 767px), (max-height: 500px) {
   main {
     padding: var(--space-3);
-    /* 底栏浮在内容之上, 必须留出等高内边距, 否则最后一行作业会被压在栏下 */
-    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+    /* 底栏浮在内容之上, 必须留出等高内边距, 否则最后一行作业会被压在栏下。
+       70px = 竖排图标后的底栏高度 62px + 8px 余量(见第 19 节)。 */
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
   }
   nav#tabs {
     position: fixed;
@@ -1654,11 +1757,25 @@ button.primary.modal-danger:hover:not(:disabled) {
   nav#tabs button {
     flex: 1;
     min-width: 0;
-    min-height: 52px;          /* 拇指目标: 比通用 44px 再高一点, 更好按 */
+    /* 图标 + 文字竖排后需要 62px: 24px 图标 + 3px 间隙 + 15px 文字
+       + 上下各 8px 内边距。触控目标比通用 44px 高, 拇指更好按。 */
+    min-height: 62px;
     padding: var(--space-2) 0;
-    font-size: var(--fs-caption);
+    /* 不用 --fs-caption-sm(11px): 底栏是低龄用户的主导航, 一屏五个
+       Tab 全靠它切换, 11px 在手机上要凑近看。12px 是小字号下限。 */
+    font-size: 12px;
+    border-radius: 0;
+    /* 选中态的描边在窄屏会紧贴相邻 Tab, 缩一点避免挤成一团 */
+    box-shadow: none;
+  }
+  /* 窄屏下按钮变窄(375/5=75px), 描边改为顶部高亮条: 既能看出
+     选中, 又不会撞到左右邻居。 */
+  nav#tabs button.active {
+    background: var(--accent-soft);
+    box-shadow: inset 0 3px 0 var(--accent);
     border-radius: 0;
   }
+  .tab-ico { width: 24px; height: 24px; }
   header { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   header h1 { font-size: var(--fs-h2); }
   #health-bar { font-size: 11px; }
@@ -1717,7 +1834,7 @@ footer {
 @media (max-width: 767px), (max-height: 500px) {
   .entry-actions {
     position: sticky;
-    bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
     z-index: 800;
     margin: var(--space-2) calc(-1 * var(--space-3)) 0;
     padding: var(--space-2) var(--space-3);
@@ -2133,7 +2250,7 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
    窄屏给它再让出底栏高度 + 主内容已有的那圈留白。 */
 @media (max-width: 767px), (max-height: 500px) {
   footer {
-    padding-bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
   }
 }
 
