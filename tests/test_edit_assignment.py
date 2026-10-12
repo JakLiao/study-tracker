@@ -755,11 +755,20 @@ def test_edit_does_not_use_native_prompt(app_js):
 
 
 def test_edit_button_is_styled_neutrally(styles_css):
-    """编辑不能抢"完成"的视觉权重, 也不能像删除那样用红色。"""
+    """编辑不能抢"完成"的视觉权重, 也不能像删除那样用红色。
+
+    2026-10-12: 编辑从「虚线胶囊 + 文字」改成「无边框铅笔图标」——
+    原来一条作业并排四五个虚线圆角时, 它们的视觉噪音比"完成"的小红花还大。
+    这里锁的是这个意图本身(中性、不抢戏、不用红), 而不是虚线这个手段。
+    """
     block = styles_css.split(".status-btn.edit {")[1].split("}")[0]
-    assert "dashed" in block, "沿用虚线 = 附带入口, 与 redo/opt-toggle 同记号"
-    assert "var(--text-2)" in block
     assert "var(--status-overdue)" not in block, "编辑是纠错, 不是危险操作"
+    assert "transparent" in block, "图标化后不该再有描边/底色, 否则抢焦点"
+    assert "dashed" not in block, "虚线胶囊是旧形态, 已被无边框图标取代"
+    # 语义仍须可辨: 铅笔图标 + 无障碍标签
+    js = _code((ROOT / "app/static/app.js").read_text(encoding="utf-8"))
+    assert 'href="#i-edit"' in js
+    assert 'aria-label="编辑这条作业"' in js
 
 
 def test_edit_button_meets_touch_target(styles_css):
@@ -850,7 +859,8 @@ const cancelBtn = doc.getElementById('modal-cancel');
 const click = el => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
 const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true }));
 const wait = ms => new Promise(r => setTimeout(r, ms));
-const editBtn = () => [...doc.querySelectorAll('.row-actions button')].find(b => b.textContent.trim() === '编辑');
+// 2026-10-12: 编辑按钮已图标化(无文字), 只能按 class 找
+const editBtn = () => doc.querySelector('.row-actions button.edit');
 const btnByText = t => [...doc.querySelectorAll('.row-actions button')].find(b => b.textContent.trim() === t);
 const val = id => { const e = doc.getElementById(id); return e ? e.value : null; };
 const open = () => !modal.classList.contains('hidden');
@@ -862,6 +872,8 @@ const open = () => !modal.classList.contains('hidden');
 
   out.hasEditBtn = !!editBtn();
   out.actions = [...doc.querySelectorAll('.row-actions button')].map(b => b.textContent.trim());
+  // 2026-10-12: 编辑是图标按钮(无文字), 靠 class 找它的位次
+  out.editIndex = [...doc.querySelectorAll('.row-actions button')].findIndex(b => b.classList.contains('edit'));
 
   // 1. 打开弹窗 -> 必须带出当前值
   click(editBtn());
@@ -1130,8 +1142,11 @@ needs_jsdom = pytest.mark.skipif(not jsdom_available, reason="需要 node 与 js
 @needs_jsdom
 def test_edit_button_rendered(live):
     assert live["hasEditBtn"] is True
-    # 与既有的状态按钮并存, 顺序在「删除」之前
-    assert live["actions"] == ["完成", "今天不做", "选做", "编辑", "删除"]
+    # 与既有的状态按钮并存, 顺序在「删除」之前。
+    # 2026-10-12: 编辑改成纯图标按钮, textContent 为空 —— 用 class 判位次。
+    assert live["editIndex"] == 3, live["actions"]
+    assert [a for i, a in enumerate(live["actions"]) if i != 3] == \
+        ["完成", "今天不做", "选做", "删除"]
 
 
 @needs_jsdom

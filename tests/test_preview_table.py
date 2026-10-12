@@ -77,7 +77,9 @@ def test_entry_tab_renamed(index_html):
     """「解析」描述的是 AI 侧机制, 家长做的事是"把作业登记进来"。"""
     m = re.search(r'<button[^>]*data-tab="entry"[^>]*>(.*?)</button>', index_html)
     assert m, "缺少登记 Tab"
-    assert m.group(1).strip() == "登记", m.group(1)
+    # 2026-10-12 起按钮内含 <svg> 图标与 <span> 包裹, 剥掉后再比文字
+    label = re.sub(r"<svg.*?</svg>|<[^>]+>", "", m.group(1), flags=re.S).strip()
+    assert label == "登记", m.group(1)
 
 
 def test_internal_tab_id_unchanged(index_html):

@@ -55,12 +55,33 @@ def test_actual_input_autofocus_is_gated(app_js):
     """核心回归: 自动聚焦必须被"刚点完成的那一条"约束。
 
     无条件 setTimeout(focus) 会让翻看任意一天都跳页, 且抢走键盘焦点。
+
+    2026-10-12: 输入框改为按需展开, 那个 if 里多了一行 expand() ——
+    正因为它, "刚点完成"的那条会自动展开并聚焦, 而其他条仍是收起的。
     """
-    assert re.search(
-        r"if \(focusActualFor === item\.id\) \{\s*"
-        r"setTimeout\(\(\) => input\.focus\(\), 50\);",
-        app_js,
-    ), "input.focus() 必须包在 `if (focusActualFor === item.id)` 里"
+    m = re.search(
+        r"if \(focusActualFor === item\.id\) \{(.*?)\n    \}",
+        app_js, re.S,
+    )
+    assert m, "找不到 `if (focusActualFor === item.id)` 分支"
+    body = m.group(1)
+    assert "expand()" in body, "刚点完成的那条应自动展开用时输入"
+    assert re.search(r"setTimeout\(\(\) => input\.focus\(\), 50\);", body), \
+        "input.focus() 必须包在 `if (focusActualFor === item.id)` 里"
+
+
+def test_pending_actual_input_is_collapsed_by_default(app_js):
+    """2026-10-12 密度优化: 待补用时的条目默认只留「补用时」按钮。
+
+    输入行必须先放进空容器, 由 expand() 搬进去 —— 而不是直接 append
+    到 actions 里常驻显示。
+    """
+    assert "<div class=\"actual-fill\"></div>" in app_js, "缺少按需展开的容器"
+    assert "fillRow.appendChild(inputWrap)" in app_js, "输入行应挂到容器里"
+    assert 'class="status-btn fill-actual">补用时' in app_js, "缺少展开入口按钮"
+    # 容器在未展开时必须为空, 不能一开始就 append 输入行
+    assert "actions.appendChild(inputWrap)" not in app_js, \
+        "输入行又变回常驻显示了, 密度优化会白做"
 
 
 def test_only_one_actual_input_focus_timer(app_js):
@@ -156,6 +177,8 @@ w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__go = () => switchTa
 
   out.totalInputs = doc.querySelectorAll('#list-content input.actual-input').length;
   out.focusedInputs = doc.querySelectorAll('#list-content input.actual-input:focus').length;
+  // 2026-10-12: 输入框按需展开, 收起状态下入口按钮仍在
+  out.fillButtons = doc.querySelectorAll('#list-content .fill-actual').length;
   const a = doc.activeElement;
   out.activeTag = a ? a.tagName : null;
   out.activeClass = a ? (a.className || '') : null;
@@ -191,11 +214,18 @@ needs_jsdom = pytest.mark.skipif(not jsdom_available, reason="需要 node 与 js
 
 @needs_jsdom
 def test_browsing_a_day_does_not_autofocus_any_time_input(live):
-    """只翻看历史日期时, 满屏的"填实际用时"输入框都不许自动聚焦。"""
+    """只翻看历史日期时, 满屏的"填实际用时"输入框都不许自动聚焦。
+
+    2026-10-12: 输入框改为按需展开, 翻看日期时一个都不该渲染出来 ——
+    这比"渲染了但没聚焦"更彻底, 也是这条回归真正想要的结果。
+    """
     assert live["cellExists"] is True
-    assert live["totalInputs"] == 8, "应复刻出 8 个待补用时输入框"
+    assert live["totalInputs"] == 0, (
+        f"待补用时的输入框不该默认渲染, 实际 {live['totalInputs']} 个")
     assert live["focusedInputs"] == 0, (
         f"翻看日期时不该有任何输入框自动聚焦, 实际 {live['focusedInputs']} 个")
+    # 入口必须还在: 收起不等于消失
+    assert live["fillButtons"] > 0, "收起后仍需留「补用时」入口"
 
 
 @needs_jsdom

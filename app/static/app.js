@@ -313,10 +313,12 @@ async function loadBoardDateTabs() {
     const active = _boardDate || dates[0].date;
     box.innerHTML = '';
     dates.forEach(d => {
+      // 分段控件 (2026-10-12 密度优化): 原来每张卡是一个 84px 宽的
+      // 竖排方块 (标题在上、进度在下), 三个就占掉约 90px 高。现在改成
+      // 横排: 标题与进度同一行, 整条高度压到 30px 左右。
       const b = el(`
         <button class="date-tab ${d.date === active ? 'active' : ''}" data-date="${d.date}">
-          <span class="dt-label">${d.label}</span>
-          <span class="dt-count">${d.done}/${d.total}</span>
+          <span class="dt-label">${d.label}</span><span class="dt-count">${d.done}/${d.total}</span>
         </button>
       `);
       b.addEventListener('click', () => {
@@ -380,36 +382,11 @@ async function loadBoard() {
     const p = b.progress;
     const pct = p.pct != null ? p.pct : 0;
     const skippedNote = p.skipped ? ` · 跳过 ${p.skipped}` : '';
-    // 选做写成 x/y 而不是光一个总数: "选做 1" 到底是 1 项还是 1 项做完,
+    // 选做写成 x/y 而不是光一个总数: "选做 1"到底是 1 项还是 1 项做完,
     // 原来分不清, 家长只能自己数下面的卡片。分母是选做总数, 与必做
     // 那侧的 "已收尾 x / 必做 y" 读法保持一致。
     const optDone = p.optional_done || 0;
     const optNote = p.optional ? ` · 选做 ${optDone}/${p.optional}` : '';
-    // 总用时: 已完成项的 (实际 ?? 预估) 之和, 后端算好后直接用。
-    // 单独占一行而不是塞进副行 —— 用户要的是"显出努力成果", 挤在
-    // 进度条的小字里等于没有。这是给人看的成就, 不是进度的一个附注。
-    root.appendChild(el(`
-      <div class="progress-bar">
-        <div class="progress-text">
-          <span>${b.label === '今天' ? '' : b.label + ' · '}已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
-          <span class="muted">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</span>
-        </div>
-        <div class="effort-total">
-          <span class="et-label">今日总用时</span>
-          <strong class="et-num">${p.actual_total || 0}</strong>
-          <span class="et-unit">分钟</span>
-        </div>
-        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
-      </div>
-    `));
-    // 截止时间提醒 (设计文档 §7.1 第 2 块)
-    if (b.upcoming_deadlines && b.upcoming_deadlines.length) {
-      const items = b.upcoming_deadlines.map(d =>
-        `<span class="subject-tag ${d.subject}">${d.subject}</span>
-         ${d.task_name} · 截止 ${fmtDateTime(d.deadline_time)}`
-      ).join('<br/>');
-      root.appendChild(el(`<div class="deadline-warn"><strong>⚠ 未来 7 天到期</strong>${items}</div>`));
-    }
 
     // 分区: 待完成 / 已收尾 / 选做(折叠)
     // 口径说明: done 与 skipped 都算"已收尾", 但只有 done 算"完成"
@@ -418,56 +395,85 @@ async function loadBoard() {
     const pending = all.filter(i => !isSettledItem(i));
     const settled = all.filter(i => isSettledItem(i));
 
-    // 提示条 (2026-09-29 改为分档鼓励语, 原为"今日还有 N 项要做")
+    // 提示语 (2026-09-29 改为分档鼓励语, 原为"今日还有 N 项要做")
     // 口径提示: all 只含必做(by_subject), 选做不在内, 与进度条分母一致。
     // 剩余预估只累加"还没收尾"的条目 —— 已完成的那部分不该再计进待做时间,
     // 否则提示条会一直显示当天的总估时, 孩子做完后数字却不降, 反而更泄气。
-    if (pending.length || all.length) {
-      const estRemaining = pending.reduce((s, i) => s + (i.est_minutes || 0), 0);
-      const hint = boardHint({
-        isToday: b.is_today,
-        pending: pending.length,
-        done: settled.filter(i => i.status === 'done').length,
-        skipped: settled.filter(i => i.status === 'skipped').length,
-        estRemaining,
-      });
-      root.appendChild(el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`));
-    }
+    const estRemaining = pending.reduce((s, i) => s + (i.est_minutes || 0), 0);
+    const hint = (pending.length || all.length) ? boardHint({
+      isToday: b.is_today,
+      pending: pending.length,
+      done: settled.filter(i => i.status === 'done').length,
+      skipped: settled.filter(i => i.status === 'skipped').length,
+      estRemaining,
+    }) : null;
 
-    // 各科剩余时间 (2026-10-09): 把提示条那个总数按科目拆开。
-    // 放在提示条之后而不是之前 —— 提示条是"今天整体怎么样", 这里是
-    // "具体先做哪科", 先给全局再给局部, 读下来的顺序和决策顺序一致。
+    // 各科剩余时间 (2026-10-09): 把提示语那个总数按科目拆开。
     // 全部收尾后仍要显示 (语文 0 / 40): 家长确认"确实做完了"需要
     // 看到这个 0, 空条只会让人怀疑是不是加载坏了。
     const subjStats = subjectTimeStats(b.by_subject);
-    if (subjStats.length) {
-      const chips = subjStats.map(s => {
-        // 该科已全部收尾时给个明确的完成态, 不让 "0 / 40" 停在一个
-        // 容易被读成"还没加载出来"的中间状态。
-        const done = s.remaining === 0;
-        return `<span class="subj-time ${s.subject}${done ? ' is-done' : ''}">
-          <span class="st-name">${s.subject}</span>
-          <span class="st-num"><strong>${s.remaining}</strong><span class="st-sep">/</span>${s.total}</span>
-        </span>`;
-      }).join('');
-      root.appendChild(el(`<div class="subj-time-row">${chips}</div>`));
+
+    // ====== 概览卡 (2026-10-12 密度优化) ======
+    // 原先是四块独立内容纵向堆叠: 进度卡 / 截止提醒 / 鼓励横幅 /
+    // 学科用时条 —— 在 375px 屏上合计约 300px, 占掉首屏一半, 一屏只看得到
+    // 三四条作业。合并成一张卡: 第一行收尾进度 + 总用时, 第二行学科
+    // 色块, 鼓励语降级成一行小字贴在进度条上。
+    // 进度数字仍是全卡最大 —— 家长扫一眼要的就是"今天做到哪了"。
+    const subjChips = subjStats.map(s => {
+      const done = s.remaining === 0;
+      return `<span class="subj-time ${s.subject}${done ? ' is-done' : ''}">` +
+        `<span class="st-name">${s.subject}</span>` +
+        `<span class="st-num"><strong>${s.remaining}</strong><span class="st-sep">/</span>${s.total}</span>` +
+        `</span>`;
+    }).join('');
+
+    root.appendChild(el(`
+      <div class="progress-bar">
+        <div class="progress-text">
+          <span>${b.label === '今天' ? '' : b.label + ' · '}已收尾 <strong>${p.settled}</strong> / 必做 <strong>${p.required}</strong> · ${pct}%</span>
+          <span class="effort-total"><strong class="et-num">${p.actual_total || 0}</strong><span class="et-unit">分钟</span></span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
+        ${hint ? `<div class="board-hint ${hint.cls}">${hint.html}</div>` : ''}
+        ${subjChips ? `<div class="subj-time-row">${subjChips}</div>` : ''}
+        ${optNote || skippedNote ? `<div class="progress-sub">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</div>` : ''}
+      </div>
+    `));
+
+    // 截止时间提醒 (设计文档 §7.1 第 2 块)
+    // 留在概览卡之外: 它是"异常提示"而不是"日常概览", 全完成的那天不该
+    // 出现, 混进卡片里会让家长误以为每天都有内容。
+    if (b.upcoming_deadlines && b.upcoming_deadlines.length) {
+      const items = b.upcoming_deadlines.map(d =>
+        `<span class="subject-tag ${d.subject}">${d.subject}</span>
+         ${d.task_name} · 截止 ${fmtDateTime(d.deadline_time)}`
+      ).join('<br/>');
+      root.appendChild(el(`<div class="deadline-warn"><strong>⚠ 未来 7 天到期</strong>${items}</div>`));
     }
 
-    const section = (title, items, cls) => {
+    const section = (title, items, cls, open) => {
       if (!items.length) return;
       const doneN = items.filter(i => i.status === 'done').length;
-      const card = el(`<div class="card ${cls || ''}"><div class="card-title">${title}<span class="count">${doneN}/${items.length}</span></div><div class="card-body"></div></div>`);
+      // 已收尾/选做默认折叠 (2026-10-12): 这两块是"回看"用的, 而回看
+      // 是低频动作; 默认展开时它们把待完成区挤出首屏, 而后者才是家长
+      // 每次打开就要看的。用 details/summary 而不是删掉入口 —— 收起
+      // 换来的必须是"按需可查", 而不是"看不到"。
+      const card = open
+        ? el(`<div class="card ${cls || ''}"><div class="card-title">${title}<span class="count">${doneN}/${items.length}</span></div><div class="card-body"></div></div>`)
+        : el(`<details class="card ${cls || ''}"><summary class="card-title">${title}<span class="count">${doneN}/${items.length}</span></summary><div class="card-body"></div></details>`);
       items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, null, _focusActualId)));
       root.appendChild(card);
     };
-    section('待完成', pending, 'sec-pending');
-    section('已收尾', settled, 'sec-settled');
+    section('待完成', pending, 'sec-pending', true);
+    section('已收尾', settled, 'sec-settled', false);
 
     // 选做分组 (2026-09-28 用户反馈: 改为默认展开)
     // 原先默认收起, 理由是"低优先级不该稀释主任务视觉权重"。但收起后
     // 家长根本看不到自己还欠着几件选做, 反复要点开才安心 —— 隐藏在这里
     // 换来的不是"聚焦", 而是"不确定"。既然底色已改为浅灰(不再抢焦点),
     // 默认展开就不再有稀释问题, 收起与不收起的信息成本对比很明确。
+    // 2026-10-12 密度优化曾把它一并折叠, 已回退: 上面「已收尾」折叠拿到
+    // 的空间收益相同, 而这条是用户明确要求过的, 不该顺手推翻。
     if (b.optional_items && b.optional_items.length) {
       const opt = b.optional_items;
       const optDone = opt.filter(i => i.status === 'done').length;
@@ -615,8 +621,18 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   }
 
   // pending_actual 实际用时输入 (设计文档 §9 坑 2 — 高亮 + 自动 focus)
+  //
+  // 2026-10-12 密度优化: 输入框改为按需展开。此前 done 但未填用时的条目
+  // 会常驻显示「输入框 + 保存 + 跳过」三个控件, 在 375px 屏上单这一条就占
+  // 近 1/4 屏 —— 而"待补用时"是少数状态, 让它长期占位不划算。
+  //
+  // 没有改成弹窗: 家长点「完成」的那一刻就是要填用时, 弹窗会多一次点击
+  // 并丢掉"这是哪一条"的上下文。所以默认只留一个「补用时」按钮, 点它
+  // 就地展开; 刚点完成的那条 (focusActualFor) 仍自动展开并聚焦 ——
+  // 那正是设计 §9坑 2 的意图, 不该因为"默认收起"而被牺牲。
   if (isPendingActual) {
-    const inputWrap = el('<div class="row" style="margin:0;"></div>');
+    const fillRow = el('<div class="actual-fill"></div>');
+    const inputWrap = el('<div class="row actual-fill-row"></div>');
     const input = el(`<input type="number" class="actual-input" placeholder="填实际用时" min="0" max="240" inputmode="numeric" />`);
     const saveBtn = el('<button class="primary">保存</button>');
     const skipBtn = el('<button class="ghost">跳过</button>');
@@ -641,13 +657,41 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     });
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveBtn.click(); });
     inputWrap.append(input, saveBtn, skipBtn);
-    actions.appendChild(inputWrap);
-    // 只在"家长刚点了这一条的完成"时才自动 focus (设计文档 §9 坑 2):
-    // 点完成后立刻能敲用时, 是这条设计真正的意图。
-    // 但不能对每条待补用时的作业都自动聚焦 —— 否则只是翻看某一天的
-    // 历史作业, 也会被 50ms 后抢走焦点并把页面滚到底部 (2026-09-29
+
+    // 触发按钮: 文案说明动作, 不用图标 —— "补用时"三个字比一个沙漏
+    // 更难误解, 而这里正是需要被看懂的一步。
+    //
+    // 它同时是展开/收起的切换: 展开后按钮不消失, 只换成「取消」, 点它
+    // 回到紧凑态。初版是展开时把按钮删掉换输入行, 结果展开后就再没有
+    // 返回路径, 家长只能刷新页面 (2026-10-12 用户反馈)。
+    // 「跳过」是"这次不记录", 与「取消」的"关掉这个面板"语义不同,
+    // 两者都要留: 前者会清输入并提示, 后者只是收起。
+    const fillBtn = el(`<button class="status-btn fill-actual">补用时</button>`);
+    let expanded = false;
+    const expand = () => {
+      expanded = true;
+      fillBtn.textContent = '取消';
+      fillRow.appendChild(inputWrap);
+      input.focus();
+    };
+    const collapse = () => {
+      expanded = false;
+      fillBtn.textContent = '补用时';
+      input.classList.remove('error');
+      input.value = '';
+      fillRow.replaceChildren();      // 清空容器 -> CSS 的 :not(:empty) 恢复 display:contents, 行高回落
+      fillBtn.focus();                // 焦点交还按钮: 否则它会掉到 body, 键盘用户下一步得从头 Tab
+    };
+    fillBtn.addEventListener('click', () => (expanded ? collapse() : expand()));
+    actions.appendChild(fillBtn);
+    actions.appendChild(fillRow);
+
+    // 只在"家长刚点了这一条的完成"时才自动展开并 focus。
+    // 不能对每条待补用时的作业都自动展开 —— 否则只是翻看某一天的
+    // 历史作业, 也会被50ms 后抢走焦点并把页面滚到底部 (2026-09-29
     // 用户反馈), 紧接着敲的键还会落进这个输入框。
     if (focusActualFor === item.id) {
+      expand();
       setTimeout(() => input.focus(), 50);
     }
   } else if (item.actual_minutes != null) {
@@ -684,7 +728,9 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   // 所有状态都给了入口 (含 done/skipped): 已完成的那条若描述写错了,
   // 同样需要能改 —— 而删除对 done 是被后端禁止的 (4010), 若这里也不给
   // 编辑, 家长就彻底动不了这条记录了。
-  const editBtn = el('<button class="status-btn edit" aria-label="编辑这条作业">编辑</button>');
+  const editBtn = el(`<button class="status-btn edit" aria-label="编辑这条作业" title="编辑">` +
+    `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
+    `<use href="#i-edit"></use></svg></button>`);
   editBtn.addEventListener('click', () => openEditAssignmentModal(item, refresh));
   actions.appendChild(editBtn);
 
