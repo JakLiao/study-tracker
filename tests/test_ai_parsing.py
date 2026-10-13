@@ -221,3 +221,94 @@ def test_scenario_d_commute_observation():
     out = _coerce_item(raw)
     assert out["task_type"] == "observation"
     assert out["confidence"] == "low"
+
+
+# ====== 场景 E 兜底: "并" 拆分 (2026-10-13 家长报障) ======
+# 报障: "【10.13数学】1.补全课堂笔记，并完成知能P20-21。" 期望拆成 2 条,
+# 实测 AI 合并成 1 条 (prompt 软约束对 M3 不够)。这里守的是客户端确定性拆分。
+
+def _one_item(task_name, **kw):
+    item = {"subject": "数学", "task_name": task_name, "source_span": kw.pop("span", task_name)}
+    item.update(kw)
+    return item
+
+
+def test_reported_case_splits_into_two():
+    """报障原句必须拆成 2 条: 补全课堂笔记 / 完成知能P20-21."""
+    items = parse_ai_response(json.dumps([_one_item("补全课堂笔记并完成知能P20-21")], ensure_ascii=False))
+    assert len(items) == 2
+    assert items[0]["task_name"] == "补全课堂笔记"
+    assert items[1]["task_name"] == "完成知能P20-21"
+
+
+def test_reported_case_with_comma_splits():
+    """老师原文里的逗号形态 ("补全课堂笔记，并完成…") 同样要拆."""
+    items = parse_ai_response(json.dumps([_one_item("补全课堂笔记，并完成知能P20-21")], ensure_ascii=False))
+    assert len(items) == 2
+    assert items[1]["task_name"] == "完成知能P20-21"
+
+
+def test_split_keeps_own_source_span_when_found_in_original():
+    """拆出的片段能在原文里原样找到时, source_span 用自己那段."""
+    raw = _one_item("补全课堂笔记并完成知能P20-21", span="补全课堂笔记，并完成知能P20-21。")
+    items = parse_ai_response(json.dumps([raw], ensure_ascii=False))
+    assert [it["source_span"] for it in items] == ["补全课堂笔记", "完成知能P20-21"]
+
+
+def test_split_falls_back_to_full_span_when_not_found():
+    """片段对不上原文时保留整段原文, 不能给一段家长核对不上的话.
+
+    这里故意让 task_name 用了 AI 改写过的写法 (原文是"补全笔记"、"知能 20-21"),
+    拆出的片段在原文里都找不到 -> 两条都退回整段原文。
+    """
+    raw = _one_item("补全课堂笔记并完成知能P20-21", span="补全笔记，并完成知能 20-21。")
+    items = parse_ai_response(json.dumps([raw], ensure_ascii=False))
+    assert len(items) == 2
+    assert all(it["source_span"] == "补全笔记，并完成知能 20-21。" for it in items)
+
+
+def test_split_recomputes_est_minutes_per_branch():
+    """合并时 AI 给的时长是两项之和, 拆开后必须按各自分支重算."""
+    raw = _one_item("完成知能P20-21并订正2听本", est_minutes=40, task_type="订正")
+    items = parse_ai_response(json.dumps([raw], ensure_ascii=False))
+    assert [it["task_name"] for it in items] == ["完成知能P20-21", "订正2听本"]
+    # 40 是两项之和, 沿用到任何一条都不准
+    assert all(it["est_minutes"] != 40 for it in items)
+    # 订正那条按家长配的订正基线走
+    assert items[1]["task_type"] == "订正"
+
+
+def test_same_deliverable_steps_not_split():
+    """反向锚点: 同一篇作文的必经步骤不能拆 (prompt 场景 E 反例)."""
+    items = parse_ai_response(json.dumps([
+        _one_item("订正1号作文本，仔细修改后誊抄在2号作文本上")
+    ], ensure_ascii=False))
+    assert len(items) == 1
+
+
+def test_enumeration_comma_not_split():
+    """「完成知能P10、11」是同一条里的枚举, 「、」不能当拆分点."""
+    items = parse_ai_response(json.dumps([_one_item("完成知能P10、11")], ensure_ascii=False))
+    assert len(items) == 1
+
+
+def test_task_without_conjunction_untouched():
+    """没有连接词的原样返回, 拆分只对真正合并的情况生效."""
+    items = parse_ai_response(json.dumps([_one_item("阅读课外书")], ensure_ascii=False))
+    assert len(items) == 1
+    assert items[0]["task_name"] == "阅读课外书"
+
+
+def test_split_preserves_subject_and_date():
+    """拆分只改任务名, 科目/日期等归属字段原样继承."""
+    raw = _one_item("补全课堂笔记并完成知能P20-21", subject="数学", due_date="2026-10-13")
+    items = parse_ai_response(json.dumps([raw], ensure_ascii=False))
+    assert all(it["subject"] == "数学" for it in items)
+    assert all(it["due_date"] == "2026-10-13" for it in items)
+
+
+def test_date_prefix_not_split():
+    """左半句只是日期时不拆: 那是同一条作业的时间标注, 不是另一项作业."""
+    items = parse_ai_response(json.dumps([_one_item("10月13日，完成订正错题")], ensure_ascii=False))
+    assert len(items) == 1
+    assert items[0]["task_name"] == "10月13日，完成订正错题"

@@ -141,10 +141,22 @@ def test_prompt_has_split_criterion_for_independent_items():
     content = build_messages("x")[0]["content"]
     # 用户报障的原句必须作为样例出现
     assert "完成知能 P18-19 并订正 2 听本" in content
-    # 判据: 做完一项后是否还需要做另一项
-    assert "家长还需要做另一项吗" in content
-    # 反向锚点: 同一交付物的连续步骤仍然合并, 防止过度拆分
-    assert "连续步骤" in content
+    # 反向锚点: 同一交付物的必经步骤仍然合并, 防止过度拆分
+    assert "必经步骤" in content
+    # 判据: 右半句能否独立成一个作业名 (旧措辞「做完一项后是否还要做另一项」
+    # 太主观, M3 实测仍会把"补全课堂笔记，并完成知能P20-21"合并, 已替换)
+    assert "能不能独立成一个作业名" in content
+
+
+def test_prompt_includes_2026_10_13_reported_sample():
+    """2026-10-13 家长报障原句必须进 prompt 样例 (之前只有 9.29 那句).
+
+    报障: "1.补全课堂笔记，并完成知能P20-21。" 应拆成 2 条, 实测被合并成 1 条。
+    """
+    content = build_messages("x")[0]["content"]
+    assert "补全课堂笔记，并完成知能P20-21" in content
+    # 默认拆, 不要默认合并 —— 这是本次报障的直接根因
+    assert "默认拆" in content
 
 
 def test_prompt_split_examples_are_consistent():

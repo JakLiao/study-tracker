@@ -456,10 +456,107 @@ def parse_ai_response(content: str) -> list[dict]:
     for raw in parsed:
         if not isinstance(raw, dict):
             continue
-        try:
-            normalized.append(_coerce_item(raw, baselines))
-        except ValueError:
-            # 单条无法归一化, 跳过 (让其他条进来)
-            continue
+        for piece in _split_conjoined_item(raw):
+            try:
+                normalized.append(_coerce_item(piece, baselines))
+            except ValueError:
+                # 单条无法归一化, 跳过 (让其他条进来)
+                continue
 
     return normalized
+
+
+# ====== "并" 拆分兜底 (2026-10-13 家长报障) ======
+# 报障原句: "1.补全课堂笔记，并完成知能P20-21。" 被解析成 1 条, 应拆成 2 条。
+# 场景 E 的 prompt 规则写了 (2026-09-29), 但 prompt 是**软约束** —— M3 仍会
+# 把"并"当成同一件事的连续步骤合并。预览表里合并掉的作业家长根本看不出漏了哪项,
+# 所以这里在客户端补一道**确定性**拆分: 只认右半句是不是一个独立作业名。
+#
+# 为什么不是"看到并/，就拆": 那会把同一交付物的必经步骤也拆开,
+# 例如 "订正1号作文本，仔细修改后誊抄在2号作文本上" 应该只有 1 条。
+# 判据落在**右半句能否独立成作业名**上, 与 prompt 场景 E 的判据一致。
+
+# 连接词: 可选的逗号/分号 + 并, 或裸的逗号/分号。
+# 刻意不含"、" —— "完成知能P10、11" 是同一条里的枚举, 拆了就成两半截。
+_CONJ_RE = re.compile(r"(?:[，,；;]\s*)?并\s*|[，,；;]\s*")
+
+# 右半句以下列动作词开头时, 视为一条独立作业。
+# 刻意**不含**: 誊抄/修改 (同一交付物的必经步骤, 见 prompt 场景 E 反例)、
+# 做/写/整理 (太泛, "做完…，做…" 会误拆)、和 (枚举)。
+_SPLIT_START_VERBS = (
+    "完成", "订正", "背诵", "背", "预习", "阅读", "练习", "练",
+    "计算", "默写", "抄写", "听写", "朗读", "复习",
+)
+
+# 右半句最短字数: 单字动词 ("订正") 拆出来家长看不出是什么作业。
+_MIN_SPLIT_PART = 3
+
+# 左半句只是日期/时间时的例外: "10月13日，完成作业" 是**一条**作业的时间标注,
+# 不是两项作业。task_name 里其实不该出现日期 (归属日走 due_date), 但 AI 偶尔会带进来,
+# 不挡一下就会凭空多出一条 "10月13日"。
+_DATE_ONLY_RE = re.compile(
+    r"^[\d\s./年月日号星期周礼拜末今昨明前后]+$"
+)
+
+
+def _is_standalone_task(part: str) -> bool:
+    """判断一个片段能否独立成一条作业名."""
+    if len(part) < _MIN_SPLIT_PART:
+        return False
+    return part.startswith(_SPLIT_START_VERBS)
+
+
+def _split_segments(name: str) -> list[tuple[str, str]]:
+    """按连接词切成 [(片段, 片段前的连接词), ...], 丢掉空片段."""
+    parts: list[tuple[str, str]] = []
+    start = 0
+    for m in _CONJ_RE.finditer(name):
+        parts.append((name[start:m.start()].strip(), name[m.start():m.end()]))
+        start = m.end()
+    parts.append((name[start:].strip(), ""))
+    return [(text, sep) for text, sep in parts if text]
+
+
+def _split_conjoined_item(raw: dict) -> list[dict]:
+    """把 AI 合并成一条的 "A，并B" 拆成两条.
+
+    只在拆得开时拆 (右半句是独立作业名); 其余原样返回, 保持向后兼容。
+    拆分后的每条只带自己的 task_name/source_span, est_minutes 与 task_type
+    交回 _coerce_item 按各自的任务类型重新算 —— 合并时 AI 给的那个时长是
+    两项之和, 平分或沿用都不准。
+    """
+    name = str(raw.get("task_name", "")).strip()
+    if not name:
+        return [raw]
+
+    segments = _split_segments(name)
+    if len(segments) < 2:
+        return [raw]
+    # 左半句只是日期时整条不拆 (见 _DATE_ONLY_RE 注释)
+    if _DATE_ONLY_RE.match(segments[0][0]):
+        return [raw]
+
+    pieces = [segments[0][0]]
+    for text, sep in segments[1:]:
+        if _is_standalone_task(text):
+            pieces.append(text)
+        else:
+            # 不是独立作业 -> 合回上一条 (保留原连接词, 家长看到的仍是自己熟悉的那句话)
+            pieces[-1] = pieces[-1] + sep + text
+
+    if len(pieces) < 2:
+        return [raw]
+
+    span = str(raw.get("source_span", "")).strip()
+    out: list[dict] = []
+    for piece in pieces:
+        item = dict(raw)
+        item["task_name"] = piece
+        # 片段能在原文里原样找到就用它当 source_span, 找不到就保留整段原文 ——
+        # 宁可多给点上下文, 也不要给一段对不上的话.
+        item["source_span"] = piece if (span and piece in span) else (span or piece)
+        # 时长/类型按各自分支重算: 合并值对拆分后的任何一条都不准
+        item["est_minutes"] = None
+        item["task_type"] = None
+        out.append(item)
+    return out
