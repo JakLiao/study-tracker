@@ -540,7 +540,9 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     try {
       await api('PATCH', `/assignments/${item.id}/status`, { status: s });
       if (s === 'done' && item.actual_minutes == null) {
-        toast('已标记完成, 建议补填实际用时 (不填则按预估时间统计)');
+        toast(item.est_minutes != null
+          ? `已标记完成, 用时已按预估 ${item.est_minutes} 分钟填好, 可直接保存`
+          : '已标记完成, 建议补填实际用时 (不填则按预估时间统计)');
         // 只有"刚点完成"这一条才允许重绘后自动聚焦用时框。
         // 通过回调把 id 传下去, 刷新时才知道该聚焦谁。
         _focusActualId = item.id;
@@ -672,7 +674,15 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
       expanded = true;
       fillBtn.textContent = '取消';
       fillRow.appendChild(inputWrap);
+      // 预填预估值 (2026-10-14 用户反馈): 家长点「完成」时心里已有的
+      // 默认答案就是预估, 让他从空框里敲一遍同样的数字是纯多余动作 ——
+      // "一般用时准的话我是不手动填写的"。填好并全选: 直接回车/点保存
+      // 就走完, 想改则选中态下敲数字即覆盖, 不用先删。
+      // 不自动提交: 预估值是 AI 猜的, 静默当成实测值会污染周复盘的
+      // "预估 vs 实际"偏差统计 —— 偏差本来就靠"没填=按预估"体现。
+      if (item.est_minutes != null) input.value = item.est_minutes;
       input.focus();
+      input.select();
     };
     const collapse = () => {
       expanded = false;

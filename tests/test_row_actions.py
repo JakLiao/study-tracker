@@ -180,6 +180,36 @@ def test_actual_tag_shown_when_filled(app_js):
     assert "actual_minutes != null" in app_js
 
 
+def test_actual_input_prefilled_with_est(app_js):
+    """2026-10-14 用户反馈: 点完「完成」还要从空框里敲一遍预估的数字。
+
+    家长心里的默认答案就是预估值, 空框等于强迫他重打一遍自己刚看到的
+    那个数。展开时必须预填, 并且全选 —— 全选是为了"想改时直接敲数字
+    覆盖", 不用先按删除键清掉预填值。
+    """
+    m = re.search(r"const expand = \(\) => \{(.*?)\n    \};", app_js, re.S)
+    assert m, "找不到 expand()"
+    body = m.group(1)
+    assert re.search(r"if \(item\.est_minutes != null\) input\.value = item\.est_minutes;", body), \
+        "展开时未预填预估值"
+    assert "input.select()" in body, "预填后必须全选, 否则改数字得先手动清空"
+    # 预估值可能为 null(手动添加时没填), 不能把 null 写进 input
+    assert "input.value = item.est_minutes;" in body and \
+        "input.value = item.est_minutes;" not in body.replace(
+            "if (item.est_minutes != null) input.value = item.est_minutes;", ""), \
+        "est_minutes 为 null 时不能给输入框赋 null"
+
+
+def test_prefill_is_not_autosaved(app_js):
+    """预填只是填进输入框, 不能静默当成实测值提交。
+
+    周复盘的「预估 vs 实际」偏差全靠 actual_minutes 与 est_minutes 的
+    差值; 若点完成就自动写入预估值, 偏差恒为 0, 这张表就废了。
+    """
+    expand_body = re.search(r"const expand = \(\) => \{(.*?)\n    \};", app_js, re.S).group(1)
+    assert "api(" not in expand_body, "expand() 不该发请求, 预填≠提交"
+
+
 def test_actual_input_placeholder_not_truncated(app_js, styles_css):
     """用户批注 (2026-09-29): "填实际用时" 5 个字要看全, 别被切掉。
 
