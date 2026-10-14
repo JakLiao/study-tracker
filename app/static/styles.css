@@ -1538,6 +1538,33 @@ button.primary.modal-danger:hover:not(:disabled) {
    不能这么收, 所以只收 select。 */
 .preview-table select { padding-left: 4px; padding-right: 4px; }
 
+/* 表内复选框: 桌面端必须显式给尺寸, 否则点不准。
+   上面那条 `.preview-table input { width: 100% }` 是无差别命中的 ——
+   复选框也被拉成 100% 宽, 而「勾」列只有 32px, 扣掉单元格左右各 12px
+   内边距只剩 8px, 浏览器就画出 8x8 的小方块, 鼠标点不准。窄屏那条
+   24px 规则只覆盖 <=767px, 桌面完全落空。
+   这里把它从 width:100% 里摘出来: 固定 20px + accent-color 上色 +
+   指针光标, 并把两列的左右内边距收到 4px, 好让 20px 在 32px 列里放得下。
+   断点取 641px: 再窄就切到卡片布局(§26c), 那里 td 变成 grid,
+   复选框交给窄屏的 24px 规则, 内边距也不能再由列宽规则插手。
+   min-height 必须一起写: 窄屏媒体查询里的 input{ min-height:44px }
+   在矮屏桌面窗口上也会命中, 只写 height 会渲染成 20x44 的怪方块。 */
+@media (min-width: 641px) {
+  .preview-table input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    min-height: 20px;
+    accent-color: var(--text-1);
+    cursor: pointer;
+  }
+  .preview-table th:nth-child(1), .preview-table td:nth-child(1),
+  .preview-table th:nth-child(5), .preview-table td:nth-child(5) {
+    padding-left: 4px;
+    padding-right: 4px;
+    text-align: center;
+  }
+}
+
 /* 各列宽度: 勾选/选做/置信/操作 都是窄列, 任务名吃掉剩余。
    「截止」列已移除(家长用不上, 且 148px 宽却常年空着), 省下的空间
    全部还给任务名列 —— 它是唯一需要读全文的列。
