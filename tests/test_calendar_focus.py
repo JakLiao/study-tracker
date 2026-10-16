@@ -20,6 +20,9 @@
   1. input.focus() 必须被 focusActualFor === item.id 约束
   2. 只翻看某一天时, 待补用时的输入框一个都不许自动聚焦
   3. renderCalendar 重建月历后要把焦点还回被点的格子 (键盘可用)
+
+2026-10-15 追加: 顺带在同一个 harness 里验每日总用时标签 (.cal-time) 的
+渲染 —— 它与完成度徽标渲染在同一个循环里, 拆两个 harness 纯属重复搭建。
 """
 from __future__ import annotations
 
@@ -140,8 +143,10 @@ const ITEMS = [1,2,3,4,5,6,7,8].map(mk);
 const CAL = {
   year: 2026, month: 9, first_weekday: 1, days_in_month: 30,
   days: {
-    '2026-09-21': { total: 4, required: 4, required_done: 4, optional: 0, settled: 4 },
-    '2026-09-28': { total: 8, required: 7, required_done: 7, optional: 1, settled: 7 },
+    '2026-09-21': { total: 4, required: 4, required_done: 4, optional: 0, settled: 4,
+                    actual_total: 130 },
+    '2026-09-28': { total: 8, required: 7, required_done: 7, optional: 1, settled: 7,
+                    actual_total: 0 },
   },
 };
 
@@ -169,6 +174,11 @@ w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__go = () => switchTa
   await new Promise(r => setTimeout(r, 400));
   const cell = doc.querySelector('.cal-cell[data-date="2026-09-28"]');
   out.cellExists = !!cell;
+  // 2026-10-15: 每日总用时标签
+  out.timeWithMinutes =
+    doc.querySelector('.cal-cell[data-date="2026-09-21"] .cal-time')?.textContent.trim() || null;
+  out.timeWithoutMinutes =
+    doc.querySelector('.cal-cell[data-date="2026-09-28"] .cal-time')?.textContent.trim() || null;
 
   cell.focus();
   cell.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
@@ -238,3 +248,20 @@ def test_focus_stays_on_the_clicked_day_cell(live):
 def test_day_detail_still_loads(live):
     """修焦点不能修坏详情加载。"""
     assert "2026-09-28" in live["detailTitle"]
+
+
+@needs_jsdom
+def test_day_cell_shows_aggregated_minutes(live):
+    """格子上要显出当天总用时, 数字与看板概览卡那个一致。
+
+    不加后缀的裸数字在 7 列格子里会被误认成日期的一部分。
+    """
+    assert live["timeWithMinutes"] == "130分", (
+        f"应显示 130分, 实际 {live['timeWithMinutes']!r}")
+
+
+@needs_jsdom
+def test_zero_minutes_cell_has_no_time_label(live):
+    """还没做完的那天不挂 "0分" —— 纯噪声, 还会挤掉日期数字。"""
+    assert live["timeWithoutMinutes"] is None, (
+        f"不该显示时间标签, 实际 {live['timeWithoutMinutes']!r}")

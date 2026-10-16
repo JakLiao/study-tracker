@@ -249,6 +249,7 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
       required_skip  = 必做已跳过数 (跳过算"已收尾"但不算完成)
       optional       = 选做数
       optional_done  = 选做已完成数
+      actual_total   = 当天总用时 (2026-10-15), 与看板 progress.actual_total 同口径
     必做与选做必须分开统计: 日历格子要判断"必做是否全完成",
     若只看合并的 done, 会出现"选做全做了、必做一项没做却显示全完成"的误判。
     """
@@ -265,7 +266,12 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
                    SUM(CASE WHEN is_optional = 0 AND status = 'done'    THEN 1 ELSE 0 END) AS req_done,
                    SUM(CASE WHEN is_optional = 0 AND status = 'skipped' THEN 1 ELSE 0 END) AS req_skip,
                    SUM(CASE WHEN is_optional = 1 AND status = 'done'    THEN 1 ELSE 0 END) AS opt_done,
-                   SUM(CASE WHEN is_optional = 1 AND status = 'skipped' THEN 1 ELSE 0 END) AS opt_skip
+                   SUM(CASE WHEN is_optional = 1 AND status = 'skipped' THEN 1 ELSE 0 END) AS opt_skip,
+                   -- 总用时: 只算真正做完的项, 跳过的没投入时间不能计。
+                   -- 实耗为空时按预估计, 与 build_board_for 的 COALESCE 口径一致。
+                   SUM(CASE WHEN status = 'done'
+                            THEN COALESCE(actual_minutes, est_minutes)
+                            ELSE 0 END)                                    AS act_total
             FROM assignments
             WHERE due_date >= ? AND due_date < ?
             GROUP BY due_date
@@ -291,6 +297,7 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
             "optional_skipped": r["opt_skip"] or 0,
             # 已收尾 = 完成 + 跳过 (跳过不计完成, 但当天不必再惦记)
             "settled": req_done + req_skip,
+            "actual_total": r["act_total"] or 0,
         }
     return {
         "year": year,

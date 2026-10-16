@@ -1945,11 +1945,16 @@ function renderCalendar() {
     const ds = dateStr(r.year, r.month, d);
     const day = r.days[ds];
     const weekday = (r.first_weekday + d - 1) % 7;
+    // 当天总用时 (2026-10-15): 与看板概览卡那个数字同口径, 由后端聚合。
+    // 0 不显示 —— 还没做完的那天挂一个"0分"只是噪声, 家长扫月历要看的是
+    // 已经投入了多少。
+    const mins = day ? (day.actual_total || 0) : 0;
     const cell = el(`
       <button class="cal-cell ${dayState(day)} ${ds === _calSelected ? 'selected' : ''} ${weekday >= 5 ? 'we' : ''}"
               data-date="${ds}" aria-label="${ds}">
         <span class="cal-day">${d}</span>
         ${day && day.total ? `<span class="cal-badge">${day.required ? `${day.required_done}/${day.required}` : '选'}</span>` : ''}
+        ${mins > 0 ? `<span class="cal-time">${mins}分</span>` : ''}
       </button>
     `);
     cell.addEventListener('click', () => selectDate(ds));
@@ -2100,55 +2105,304 @@ document.querySelectorAll('.week-btn').forEach(b => {
 
 async function loadWeekly(week) {
   const root = document.getElementById('weekly-content');
-  root.innerHTML = '<p class="muted">加载中…</p>';
+  // 必须清空: 下面两块是 appendChild 进去的, 不会自动顶掉旧内容。
+  // 不清的话点「上周」会在旧的一周下面再接一周, 页面越点越长。
+  // 这里不用 innerHTML 塞「加载中…」占位 —— 两条接口并发返回后追加,
+  // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上
+  // 留着一行永远不消失的"加载中…"。
+  root.innerHTML = '';
+  // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
+  // (见 /analytics/weekly-time 的说明), 所以顺序不能反过来等 —— 先 await
+  // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
+  const timeP = loadWeeklyTime(week).catch(
+    e => el(`<div class="error-banner">用时统计加载失败: ${e.message}</div>`));
+  const devP = loadWeeklyDeviation(week);
+  root.appendChild(await timeP);
+  root.appendChild(await devP);
+}
+
+// 偏差表单独包一层: 它有"样本不足"这个正常分支, 不该把异常抛到调用方,
+// 否则上面已经渲染好的用时统计会被一起清掉。
+async function loadWeeklyDeviation(week) {
   try {
     const r = await api('GET', `/analytics/weekly?week=${week}`);
-    root.innerHTML = `
+    const box = el(`<div class="weekly-deviation">
       <div class="card">
         <strong>${r.week_start} ~ ${r.week_end}</strong>
         <span class="muted"> · 样本 ${r.sample_size} 条</span>
       </div>
-    `;
+    </div>`);
     if (!r.by_type.length) {
-      root.appendChild(el(`<div class="muted">${r.note || '本周无完成数据'}</div>`));
-      return;
+      box.appendChild(el(`<div class="muted">${r.note || '本周无完成数据'}</div>`));
+    } else {
+      renderDeviationTable(box, r);
     }
-    // data-label / col-advice 只给窄屏卡片布局用(见 styles.css §26g):
-    // 7 列里"建议"是一整段中文, 挤进 344px 后会被压成一列一个字,
-    // 完全读不了。窄屏改成每行一张卡, 表头收起, 标签由 data-label 提供。
-    // 宽屏不读这两个属性, 对桌面零影响。
-    const tbl = el(`<table class="weekly-table">
-      <thead><tr><th>科目</th><th>类型</th><th>样本</th><th>估</th><th>实</th><th>偏差</th><th>建议</th></tr></thead>
-      <tbody></tbody>
-    </table>`);
-    const tbody = tbl.querySelector('tbody');
-    r.by_type.forEach(b => {
-      const diffCls = b.diff_minutes > 0 ? 'diff-pos' : 'diff-neg';
-      tbody.appendChild(el(`<tr>
-        <td data-label="科目"><span class="subject-tag ${b.subject}">${b.subject}</span></td>
-        <td data-label="类型">${b.task_type}</td>
-        <td data-label="样本">${b.sample_size}</td>
-        <td data-label="估">${b.avg_est_minutes}</td>
-        <td data-label="实">${b.avg_actual_minutes}</td>
-        <td data-label="偏差" class="${diffCls}">${b.diff_minutes > 0 ? '+' : ''}${b.diff_minutes}分 (${b.diff_pct}%)</td>
-        <td data-label="建议" class="col-advice"><small>${b.advice}</small></td>
-      </tr>`));
-    });
-    root.appendChild(tbl);
-    if (r.top_overestimate.length) {
-      root.appendChild(el(`<h3>高估 TOP (你估多了)</h3>`));
-      r.top_overestimate.forEach(b => root.appendChild(el(`<div class="advice-card">${b.advice}</div>`)));
-    }
-    if (r.top_underestimate.length) {
-      root.appendChild(el(`<h3>低估 TOP (你估少了)</h3>`));
-      r.top_underestimate.forEach(b => root.appendChild(el(`<div class="advice-card">${b.advice}</div>`)));
-    }
+    return box;
   } catch (e) {
     if (e.message.includes('4011')) {
-      root.innerHTML = `<div class="card muted">样本不足 (需 ≥ 5 条已完成), 暂不生成偏差表</div>`;
-    } else {
-      root.innerHTML = `<div class="error-banner">复盘失败: ${e.message}</div>`;
+      return el(`<div class="card muted">样本不足 (需 ≥ 5 条已完成), 暂不生成偏差表</div>`);
     }
+    return el(`<div class="error-banner">复盘失败: ${e.message}</div>`);
+  }
+}
+
+// ====== 每日各科作业用时 (2026-10-15) ======
+
+// 科目色与看板学科用时条同源 (--c-语/--c-数/--c-英), 家长在两个页面
+// 看到"橙色就是语文", 不需要重新记一遍映射。
+// 顺序复用文件头部的 SUBJECT_ORDER —— 那里的注释已经写明"抽成一处
+// 定义免得两处顺序不一致", 复盘页再加一个同样的常量就违背了它。
+const SUBJECT_COLORS = {
+  语文: 'var(--c-语)', 数学: 'var(--c-数)', 英语: 'var(--c-英)',
+};
+
+function subjectColor(name) {
+  return SUBJECT_COLORS[name];
+}
+
+// 图例/标签用的科目清单。与后端 _ordered 同规则: 只保留 SUBJECT_ORDER
+// 里的科目, 顺序不变 —— subject 列有 CHECK 约束, 不会出现表外科目。
+function orderedSubjects(bySubject) {
+  return SUBJECT_ORDER.filter(s => (bySubject || {})[s] != null);
+}
+
+// 一天的档位 -> 说明文案。写在图例里, 家长才知道灰色那几天为什么没柱子。
+const DAY_KIND_META = {
+  plain:  { label: '平日',   hint: '周一至周四, 作业量最稳定' },
+  friday: { label: '周五',   hint: '通常已包含周末的作业量, 单独看' },
+  makeup: { label: '调休',   hint: '周末补班, 要上学' },
+  off:    { label: '休息',   hint: '不上学, 不计入平均' },
+  holiday:{ label: '假期',   hint: '法定假日, 不计入平均' },
+};
+
+async function loadWeeklyTime(week) {
+  const r = await api('GET', `/analytics/weekly-time?week=${week}`);
+  const wrap = el('<div class="wt-block"></div>');
+
+  // ===== 概览卡 =====
+  const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
+  wrap.appendChild(el(`
+    <div class="card wt-head">
+      <div class="wt-head-top">
+        <div>
+          <div class="muted">平日日均 (周一至周四)</div>
+          <div class="wt-big"><strong>${pa.total_minutes || 0}</strong><span class="wt-unit">分钟</span></div>
+        </div>
+        <div class="wt-head-side">
+          <div class="muted">上学日</div>
+          <div class="wt-side-num">${r.school_day_count}<span class="wt-unit-sm"> 天</span></div>
+          <div class="muted">统计区间 ${r.week_start.slice(5)} ~ ${r.week_end.slice(5)}</div>
+        </div>
+      </div>
+      <div class="muted wt-scope">口径: 只算已完成作业 (跳过的不计), 未填实际用时按预估计; 选做计入; 观察作业不计。</div>
+    </div>
+  `));
+
+  // 平日档只剩 1~2 天时, "日均"其实是一两天的数字换个说法。
+  // 国庆周尤其明显: 七天里只有一天上学, 那个"日均"不代表任何常态。
+  // 静默显示会让家长把它当稳定基线, 所以必须说出来。
+  if (pa.days > 0 && pa.days <= 2) {
+    wrap.appendChild(el(`<div class="wt-warn">
+      本周只有 <strong>${pa.days}</strong> 个平日 (周一至周四), 平日日均只由这 ${pa.days} 天算出,
+      参考意义有限 —— 看「分档对照」里的绝对值更稳妥。
+    </div>`));
+  }
+
+  // ===== 柱状图: 每天各科堆叠 =====
+  wrap.appendChild(renderTimeChart(r));
+
+  // ===== 分档卡片: 平日 / 周五 / 周末 / 调休 =====
+  wrap.appendChild(renderBuckets(r));
+
+  // ===== 图例 =====
+  wrap.appendChild(renderLegend());
+
+  // 被剔除的日子要显式说出来。国庆那周若无提示, 家长会以为少统计了 4 天。
+  if (r.excluded_days && r.excluded_days.length) {
+    const txt = r.excluded_days
+      .map(e => `${e.date.slice(5)} ${e.kind_label}`)
+      .join(' · ');
+    wrap.appendChild(el(`<p class="muted wt-excluded">已剔除 (不上学): ${txt}</p>`));
+  }
+
+  const noData = r.days.every(d => d.total_minutes === 0);
+  if (noData) {
+    wrap.appendChild(el(`<div class="empty">
+      <div class="empty-icon">📊</div>
+      <p>该区间没有已完成的作业, 暂无用时数据</p>
+    </div>`));
+  }
+  return wrap;
+}
+
+// 每天一根柱子, 柱内按科目堆叠。假期/休息日不画实心柱, 只画一个虚线
+// 轮廓 + 斜纹 —— 让"这天没统计"和"这天用时是 0"在视觉上可区分。
+function renderTimeChart(r) {
+  const W = 700, H = 260;
+  const padL = 34, padR = 10, padT = 16, padB = 42;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const maxMin = Math.max(...r.days.map(d => d.total_minutes), 1);
+  // 纵轴上限取"好看的整数", 再由它均分 2 段 —— 直接对 maxMin 取整到 10
+  // 会得到 190 这种刻度, 均分后是 190/95/0, 中间那档不是整数, 家长读图
+  // 时得自己在脑子里换算。按 1/2/5 阶梯向上取, 两档都落在整数上。
+  const step = maxMin <= 50 ? 50 : maxMin <= 100 ? 50 : maxMin <= 200 ? 100
+             : maxMin <= 400 ? 200 : Math.ceil(maxMin / 200) * 200;
+  const niceMax = Math.max(step, Math.ceil(maxMin / step) * step);
+  const slot = plotW / 7;
+  const barW = Math.min(56, slot * 0.6);
+
+  let g = '';
+  // 横向网格线 + y 轴刻度
+  for (let i = 0; i <= 2; i++) {
+    const val = Math.round(niceMax * (1 - i / 2));
+    const y = padT + (plotH * i / 2);
+    g += `<line class="wt-grid" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"/>`;
+    g += `<text class="wt-axis" x="${padL - 6}" y="${y + 3}" text-anchor="end">${val}</text>`;
+  }
+
+  r.days.forEach((d, i) => {
+    const cx = padL + slot * i + slot / 2;
+    const x = cx - barW / 2;
+    if (!d.is_school_day) {
+      // 不上学: 虚线轮廓 + 斜纹, 不给任何"用时"暗示
+      const h = Math.max(6, plotH * 0.06);
+      g += `<rect class="wt-bar-off" x="${x}" y="${padT + plotH - h}" width="${barW}" height="${h}" rx="4"/>`;
+    } else if (d.total_minutes > 0) {
+      // 自下而上堆叠。顺序固定 语->数->英 (与后端一致), 而不是按当天
+      // 的出现顺序 —— 否则周一黄在底、周二蓝在底, 家长没法把颜色
+      // 稳定地对应到科目, 堆叠图就白画了。
+      let acc = 0;
+      orderedSubjects(d.by_subject).forEach(name => {
+        const mins = d.by_subject[name] || 0;
+        const h = plotH * (mins / niceMax);
+        const y = padT + plotH - (plotH * (acc + mins) / niceMax);
+        g += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h, 1)}" rx="2"
+                 fill="${subjectColor(name)}"><title>${name} ${mins} 分钟</title></rect>`;
+        // 段内数字紧贴色块上沿。只在该段够高时画 —— 太窄的段塞数字会
+        // 压到相邻段上, 三个数字叠在一起比不画更难读。
+        if (h >= 13) {
+          g += `<text class="wt-seg" x="${cx}" y="${y + h / 2 + 3.5}"
+                 text-anchor="middle">${mins}</text>`;
+        }
+        acc += mins;
+      });
+      // 柱顶标总数: 家长最先想看的是"今天总共多少"
+      const totalY = padT + plotH - (plotH * acc / niceMax) - 5;
+      g += `<text class="wt-total" x="${cx}" y="${Math.max(totalY, 10)}" text-anchor="middle">${d.total_minutes}</text>`;
+    } else {
+      g += `<text class="wt-zero" x="${cx}" y="${padT + plotH - 6}" text-anchor="middle">0</text>`;
+    }
+    // x 轴标签: 星期 + 日期。假期额外标出节日名。
+    g += `<text class="wt-xlabel" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${d.weekday_label}</text>`;
+    g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 30}" text-anchor="middle">${d.date.slice(5)}</text>`;
+    if (!d.is_school_day) {
+      g += `<text class="wt-xkind" x="${cx}" y="${H - padB + 42}" text-anchor="middle">${escapeAttr(d.kind_label)}</text>`;
+    }
+  });
+
+  // 科目图例: 堆叠图的颜色必须能对上名字, 否则"橙色那一段是多少"
+  // 只能靠猜。顺序与柱内堆叠一致 (语->数->英)。
+  const allSubs = orderedSubjects(
+    r.days.reduce((acc, d) => Object.assign(acc, d.by_subject), {}));
+  const legend = allSubs.map(s =>
+    `<span class="wt-lg"><i class="wt-lg-dot" style="background:${subjectColor(s)}"></i>${escapeAttr(s)}</span>`
+  ).join('');
+
+  return el(`<div class="card">
+    <div class="card-title">每日作业用时<span class="count">分钟</span></div>
+    <svg class="wt-chart" viewBox="0 0 ${W} ${H}" role="img"
+         aria-label="每日各科作业用时堆叠柱状图">${g}</svg>
+    ${legend ? `<div class="wt-legend wt-subjects">${legend}</div>` : ''}
+  </div>`);
+}
+
+// 平日 / 周五 / 周末 / 调休 四档对照。这四档的作业量不是同一回事,
+// 混在一起平均会得到一个不存在的数字, 所以并排摆出来让家长自己比。
+function renderBuckets(r) {
+  const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
+  const subs = orderedSubjects(pa.by_subject);
+
+  // 周五与周末合成"长档": 周五通常已经把周末的量布置下去了,
+  // 分开看会低估周末负担, 合并才是真实的"周末档"。
+  const weekendTotal = (r.weekend?.total_minutes || 0);
+  const fridayTotal = (r.friday?.total_minutes || 0);
+  const longTotal = fridayTotal + weekendTotal;
+  const longDays = (r.friday?.days || 0) + (r.weekend?.days || 0);
+
+  const card = (title, sub, days, total, avg, cls) => {
+    const bar = avg > 0 && pa.total_minutes > 0
+      ? `<div class="wt-meter"><span style="width:${Math.min(100, avg / pa.total_minutes * 100).toFixed(1)}%"></span></div>`
+      : '';
+    const chips = subs.length && Object.keys(avg || {}).length
+      ? `<div class="wt-chips">${subs.map(s =>
+          `<span class="wt-chip"><i style="background:${subjectColor(s)}"></i>${escapeAttr(s)} ${avg[s]}分</span>`).join('')}</div>`
+      : '';
+    return el(`<div class="wt-bucket ${cls || ''}">
+      <div class="wt-bucket-head">
+        <div class="wt-bucket-title">${title}</div>
+        <div class="wt-bucket-sub">${sub}</div>
+      </div>
+      <div class="wt-bucket-num"><strong>${total}</strong><span class="wt-unit">分钟</span></div>
+      ${avg != null ? `<div class="muted">日均 ${avg} 分 · ${days} 天</div>` : `<div class="muted">${days} 天</div>`}
+      ${bar}
+      ${chips}
+    </div>`);
+  };
+
+  const box = el('<div class="card"><div class="card-title">分档对照<span class="count">同一周内</span></div>'
+    + '<div class="wt-buckets"></div></div>');
+  const row = box.querySelector('.wt-buckets');
+  row.appendChild(card('平日', '周一至周四', pa.days, Math.round((pa.total_minutes || 0) * (pa.days || 0)),
+    pa.total_minutes, 'is-plain'));
+  row.appendChild(card('周五', '通常含周末作业量', r.friday?.days || 0, fridayTotal, null, 'is-friday'));
+  row.appendChild(card('周末', '周六至周日', r.weekend?.days || 0, weekendTotal, null, 'is-off'));
+  row.appendChild(card('长档', '周五 + 周末合计', longDays, longTotal,
+    longDays ? Math.round(longTotal / longDays) : 0, 'is-long'));
+  if ((r.makeup?.days || 0) > 0) {
+    row.appendChild(card('调休', '周末补班, 要上学', r.makeup.days, r.makeup.total_minutes, null, 'is-makeup'));
+  }
+  return box;
+}
+
+function renderLegend() {
+  const items = Object.entries(DAY_KIND_META)
+    .map(([k, m]) => `<span class="wt-lg"><i class="wt-lg-dot k-${k}"></i>${m.label} — ${m.hint}</span>`)
+    .join('');
+  return el(`<div class="card wt-legend-box"><div class="muted wt-legend-title">口径说明</div><div class="wt-legend">${items}</div></div>`);
+}
+
+function renderDeviationTable(box, r) {
+  // data-label / col-advice 只给窄屏卡片布局用(见 styles.css §26g):
+  // 7 列里"建议"是一整段中文, 挤进 344px 后会被压成一列一个字,
+  // 完全读不了。窄屏改成每行一张卡, 表头收起, 标签由 data-label 提供。
+  // 宽屏不读这两个属性, 对桌面零影响。
+  const tbl = el(`<table class="weekly-table">
+    <thead><tr><th>科目</th><th>类型</th><th>样本</th><th>估</th><th>实</th><th>偏差</th><th>建议</th></tr></thead>
+    <tbody></tbody>
+  </table>`);
+  const tbody = tbl.querySelector('tbody');
+  r.by_type.forEach(b => {
+    const diffCls = b.diff_minutes > 0 ? 'diff-pos' : 'diff-neg';
+    tbody.appendChild(el(`<tr>
+      <td data-label="科目"><span class="subject-tag ${b.subject}">${b.subject}</span></td>
+      <td data-label="类型">${b.task_type}</td>
+      <td data-label="样本">${b.sample_size}</td>
+      <td data-label="估">${b.avg_est_minutes}</td>
+      <td data-label="实">${b.avg_actual_minutes}</td>
+      <td data-label="偏差" class="${diffCls}">${b.diff_minutes > 0 ? '+' : ''}${b.diff_minutes}分 (${b.diff_pct}%)</td>
+      <td data-label="建议" class="col-advice"><small>${b.advice}</small></td>
+    </tr>`));
+  });
+  box.appendChild(el(`<h3>估时偏差</h3>`));
+  box.appendChild(tbl);
+  if (r.top_overestimate.length) {
+    box.appendChild(el(`<h3>高估 TOP (你估多了)</h3>`));
+    r.top_overestimate.forEach(b => box.appendChild(el(`<div class="advice-card">${b.advice}</div>`)));
+  }
+  if (r.top_underestimate.length) {
+    box.appendChild(el(`<h3>低估 TOP (你估少了)</h3>`));
+    r.top_underestimate.forEach(b => box.appendChild(el(`<div class="advice-card">${b.advice}</div>`)));
   }
 }
 

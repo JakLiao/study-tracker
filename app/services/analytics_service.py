@@ -4,8 +4,12 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 
+from .. import config
 from ..db import get_conn
 from ..errors import SampleTooSmallError
+
+# 周一=0 ... 周日=6, 与 date.weekday() 对齐
+WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
 def _week_range(week: str, today: date) -> tuple[date, date]:
@@ -122,3 +126,206 @@ def _make_advice(subject: str, task_type: str, diff: float, avg_est: float, avg_
         return f"{subject}{task_type}你平均估 {avg_est} 分钟, 实际 {avg_act} 分钟, 下次建议估 {round(avg_act)} 分钟"
     # diff < 0
     return f"{subject}{task_type}你平均估 {avg_est} 分钟, 实际 {avg_act} 分钟, 可下调到 {round(avg_act)} 分钟"
+
+
+# ====== 每日各科作业用时 (2026-10-15) ======
+#
+# 这一块回答的是"孩子每个上学的日子, 各科分别要花多久", 与上面的偏差表
+# 关注点不同: 偏差表问"我估得准不准", 这里问"真实负担有多大"。
+#
+# 为什么不能按自然日平均
+# ------------------------
+# 小学的作业量在一周内极不均衡, 而"上学日"这个概念本身不是"周一到周日":
+#   - 周六周日通常不上学, 没作业 —— 算进去会把日均压低一大截
+#   - 法定假期 (国庆/春节) 整周没作业 —— 同一问题, 而且更极端
+#   - 但调休上班日 (周末补班) 要上学, **不能**当周末剔除
+# 所以口径必须是"先查校历, 再决定这一天算不算", 而不是"按星期几猜"。
+#
+# 为什么周五要单列
+# ----------------
+# 学校惯例: 周五的作业里通常已经把周末两天的量一并布置了。把周五和
+# 周一~周四 平均在一起, 算出来的"日均"是个不存在的数 —— 它既不代表
+# 平日的真实负担, 也不代表周末。分开看才诚实: 周一~周四 是"平日档",
+# 周五+周末 是"长档"。这一条来自用户明确要求 (2026-10-15)。
+#
+# 用时口径与看板 total 用时一致 (见 assignment_service.build_board_for):
+#   只算 status='done' 的项 (跳过的没投入时间), 实耗为空时按预估计。
+# 区别是这里**计入选做**: 这一栏问的是"今天总共花了多久", 选做做了
+# 就是花了时间; 而偏差表排除选做是因为它在评估"估时准不准",
+# 选做的估时质量不是家长要校准的东西。两个口径服务于两个问题, 不冲突。
+#
+# 排除的记录: task_type='observation' (观察作业, 不产生实际书写负担),
+# 与 build_weekly_analytics 保持一致, 否则两处样本对不上。
+
+# 平日档: 周一~周四。这四天作业结构最稳定, 适合看"每天固定要写多少"。
+_PLAIN_WEEKDAYS = (0, 1, 2, 3)
+# 长档: 周五 + 周末。周五通常把周末的量提前布置, 所以合看才有意义。
+_FRIDAY = 4
+
+
+def _calendar_holidays() -> dict[str, str]:
+    """按日期查放假日。表按年组织, 跨年时在这里并表即可。"""
+    out: dict[str, str] = {}
+    for table in config.SCHOOL_HOLIDAYS_BY_YEAR.values():
+        out.update(table)
+    return out
+
+
+def _calendar_makeup() -> dict[str, str]:
+    """按日期查调休上班日 (周末补班, 要上学)。"""
+    out: dict[str, str] = {}
+    for table in config.SCHOOL_MAKEUP_CLASS_DAYS_BY_YEAR.values():
+        out.update(table)
+    return out
+
+
+def classify_day(d: date, holidays: dict[str, str], makeup: dict[str, str]) -> tuple[str, str]:
+    """判定某一天属于哪一档, 返回 (kind, label)。
+
+    kind 取值:
+      holiday  法定假期, 不上学 —— 整天从统计里剔除
+      off      普通休息日 (周末且不补班), 不上学
+      makeup   调休上班日 (落在周末但要上学) —— 按上学日算
+      plain    平日档 (周一~周四)
+      friday   周五 (含周末量, 单列)
+
+    顺序有讲究: 调休上班日必须在"周末不上学"之前判定 —— 调休日本来
+    就落在周末, 先判周末就永远命中"不上学", 调休规则等于没写。
+    """
+    ds = d.isoformat()
+    if ds in holidays:
+        return "holiday", holidays[ds]
+    if ds in makeup:
+        return "makeup", makeup[ds]
+    if d.weekday() >= 5:
+        return "off", "周末"
+    if d.weekday() == _FRIDAY:
+        return "friday", "周五"
+    if d.weekday() in _PLAIN_WEEKDAYS:
+        return "plain", WEEKDAY_NAMES[d.weekday()]
+    # WEEKDAY_NAMES 覆盖 0~6, 走到这里说明表被改坏了。归为 off 而不是
+    # 抛异常 —— 统计页不该因为校历数据问题整个打不开。
+    return "off", "未知"
+
+
+def build_daily_time_stats(week: str, today: date) -> dict:
+    """每日各科作业用时 (按上学日口径).
+
+    返回结构:
+      days        7 天逐日明细 (含被剔除的假期, 让家长看得见"为什么少了一天")
+      school_days 计入统计的上学日 (plain + friday + makeup)
+      plain_avg   周一~周四 日均 (各科 + 合计)
+      friday      周五 单列
+      weekend     周末单列
+      makeup      调休上班日单列
+    """
+    start, end = _week_range(week, today)
+    holidays = _calendar_holidays()
+    makeup = _calendar_makeup()
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT due_date, subject,
+                   COALESCE(actual_minutes, est_minutes) AS minutes
+            FROM assignments
+            WHERE due_date BETWEEN ? AND ?
+              AND status = 'done'
+              AND (task_type IS NULL OR task_type != 'observation')
+            """,
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+
+    # 先按 (日期, 科目) 累加 —— 一次查询, 不按天循环查库
+    per_day: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in rows:
+        subj = r["subject"] or "其他"
+        per_day[r["due_date"]][subj] += int(r["minutes"] or 0)
+
+    # 科目顺序固定为 语文 -> 数学 -> 英语 (config.SUBJECTS 的顺序)。
+    # 不这么做的话, dict 的键序来自 SQL 返回顺序, 也就是入库顺序 ——
+    # 同一天里语文/数学/英语谁先被插入就排前面, 于是每根柱子的色块
+    # 顺序都不一样 (周一黄在底, 周二蓝在底)。家长没法把"那个黄色"
+    # 稳定地对应到语文, 堆叠图就失去了意义。
+    # 只按 SUBJECTS 取, 不给表外科目兜底: subject 列有 CHECK 约束,
+    # 只可能是这三者 (见 test_analytics 的对应断言), 兜底分支不可达。
+    def _ordered(subjects: dict[str, int]) -> dict[str, int]:
+        return {s: subjects[s] for s in config.SUBJECTS if s in subjects}
+
+    days: list[dict] = []
+    plain_days: list[dict] = []
+    friday_days: list[dict] = []
+    weekend_days: list[dict] = []
+    makeup_days: list[dict] = []
+
+    for i in range(7):
+        d = start + timedelta(days=i)
+        ds = d.isoformat()
+        kind, label = classify_day(d, holidays, makeup)
+        by_subject = _ordered(dict(per_day.get(ds, {})))
+        total = sum(by_subject.values())
+        entry = {
+            "date": ds,
+            "weekday": d.weekday(),
+            "weekday_label": WEEKDAY_NAMES[d.weekday()],
+            "kind": kind,
+            "kind_label": label,
+            "is_school_day": kind in ("plain", "friday", "makeup"),
+            "by_subject": by_subject,
+            "total_minutes": total,
+        }
+        days.append(entry)
+        # plain_avg 只用周一~周四。调休上班日虽然要上学, 但它落在周末,
+        # 作息与作业结构都和平日不同, 混进"平日日均"会污染基线 ——
+        # 所以它单列, 计入 school_days 但不进 plain_avg。
+        if kind == "plain":
+            plain_days.append(entry)
+        elif kind == "friday":
+            friday_days.append(entry)
+        elif kind == "makeup":
+            makeup_days.append(entry)
+        elif kind == "off":
+            weekend_days.append(entry)
+
+    def _avg(entries: list[dict]) -> dict:
+        """一组天的日均。分母用 len(entries) 而不是"有作业的天数" ——
+        上了学却没写作业 (孩子提前做完了) 那天用时确实是 0, 算进平均才对。"""
+        if not entries:
+            return {"days": 0, "by_subject": {}, "total_minutes": 0}
+        n = len(entries)
+        subj_totals: dict[str, int] = defaultdict(int)
+        for e in entries:
+            for s, m in e["by_subject"].items():
+                subj_totals[s] += m
+        # 同样走 _ordered: 这里若用 sorted(), 会按 Unicode 码位排成
+        # 数学 -> 语文 -> 英语, 与逐日的语数英顺序对不上, 图例也跟着乱。
+        ordered = _ordered(dict(subj_totals))
+        return {
+            "days": n,
+            "by_subject": {s: round(ordered[s] / n, 1) for s in ordered},
+            "total_minutes": round(sum(ordered.values()) / n, 1),
+        }
+
+    def _bucket(entries: list[dict]) -> dict:
+        return {"days": len(entries), "total_minutes": sum(e["total_minutes"] for e in entries)}
+
+    school_days = plain_days + friday_days + makeup_days
+    excluded = [e for e in days if not e["is_school_day"]]
+
+    return {
+        "week": week,
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
+        "days": days,
+        "plain_avg": _avg(plain_days),
+        "friday": _bucket(friday_days),
+        "weekend": _bucket(weekend_days),
+        "makeup": _bucket(makeup_days),
+        "school_day_count": len(school_days),
+        "excluded_days": [
+            {"date": e["date"], "kind": e["kind"], "kind_label": e["kind_label"]}
+            for e in excluded
+        ],
+        # 全部上学日的日均, 供只想看一个总数的人用
+        "school_avg": _avg(school_days),
+    }
