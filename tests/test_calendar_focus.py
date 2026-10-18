@@ -52,6 +52,11 @@ def app_js() -> str:
     return (ROOT / "app/static/app.js").read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def styles() -> str:
+    return (ROOT / "app/static/styles.css").read_text(encoding="utf-8")
+
+
 # ====== 静态检查 ======
 
 def test_actual_input_autofocus_is_gated(app_js):
@@ -265,3 +270,90 @@ def test_zero_minutes_cell_has_no_time_label(live):
     """还没做完的那天不挂 "0分" —— 纯噪声, 还会挤掉日期数字。"""
     assert live["timeWithoutMinutes"] is None, (
         f"不该显示时间标签, 实际 {live['timeWithoutMinutes']!r}")
+
+
+# ====== 每日用时标签的可读性 (2026-10-16 截图复核) ======
+# 家长反馈"数字太小、颜色看不清"。实测确认: 原用 --text-3(#BFA894) 在
+# 四种格子底色上只有 1.80~2.00:1, 远低于 WCAG AA 的 4.5:1。
+# 改用各状态自带的 --cal-*-ink 后升到 5.61~7.55:1。
+
+CAL_TIME_STATES = [
+    # (状态类, 格子底色, 该状态的 ink 变量)
+    ("has", "#FFE7D0", "--cal-has-ink"),
+    ("partial", "#FFF0BE", "--cal-part-ink"),
+    ("all-done", "#D8F0D2", "--cal-done-ink"),
+    ("optional-only", "#E8E2F7", "--cal-opt-ink"),
+]
+
+
+def _srgb_lum(hex_color: str) -> float:
+    """WCAG 相对亮度。"""
+    def lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hex_color[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def _contrast(fg: str, bg: str) -> float:
+    a, b = _srgb_lum(fg), _srgb_lum(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("state,bg,ink_var", CAL_TIME_STATES)
+def test_cal_time_contrast_meets_wcag_aa(styles, state, bg, ink_var):
+    """每日用时标签在每种格子底色上都必须达到 AA (4.5:1)。
+
+    回归: 原先统一用 --text-3, 实测 1.80~2.00:1 —— 语法上"有颜色",
+    视觉上等于没有。断言的是**具体对比度**, 而不是"用了哪个变量":
+    将来有人把 ink 调浅一点, 只有算出来的数字才能拦住。
+    """
+    root = re.search(r":root\s*\{([^}]*)\}", styles, re.S).group(1)
+    ink = re.search(rf"{re.escape(ink_var)}:\s*(#[0-9A-Fa-f]{{6}})", root).group(1)
+    ratio = _contrast(ink, bg)
+    assert ratio >= 4.5, (
+        f"{state} 状态下 --cal-time 只有 {ratio:.2f}:1 ({ink} on {bg}), 不足 AA 4.5:1")
+
+
+def test_cal_time_uses_state_ink_not_muted_text(styles):
+    """四种状态都要各自覆盖前景色, 不能只靠基础规则的兜底色。"""
+    css = _strip(styles)
+    for state, _, ink_var in CAL_TIME_STATES:
+        m = re.search(
+            rf"\.cal-cell\.{re.escape(state)}\s+\.cal-time\s*\{{([^}}]*)\}}", css)
+        assert m, f"{state} 状态缺少 .cal-time 前景色规则"
+        assert ink_var in m.group(1), \
+            f"{state} 的 .cal-time 应取 {ink_var}, 实际: {m.group(1).strip()}"
+
+
+def test_cal_time_font_is_large_enough(styles):
+    """字号不能太小。12px 是"能一眼扫到"的下限。
+
+    用户明确要求"数字大一些"; 回到 11px 会让整月的分钟数变成需要
+    凑近才能读的杂讯, 等于这个功能白做。
+    """
+    m = re.search(r"\.cal-time\s*\{([^}]*)\}", _strip(styles))
+    assert m, "缺少 .cal-time 规则"
+    size = float(re.search(r"font-size:\s*(\d+)px", m.group(1)).group(1))
+    assert size >= 12, f".cal-time 字号 {size}px 偏小, 应 >= 12px"
+
+
+def _strip(css: str) -> str:
+    return re.sub(r"/\*[\s\S]*?\*/", "", css)
+
+
+def test_cal_time_still_hidden_on_narrow_screens(styles):
+    """窄屏收起用时标签的规则不能被这次改动碰掉。
+
+    7 列格子在 375px 下每格仅约 46px, 塞不下第三行数字。
+
+    文件里有多个 @media (max-width: 480px) 块, 必须**全部**扫描 ——
+    只查第一个会漏掉真正管日历的那个, 然后测试却"通过"了。
+    """
+    blocks = re.findall(r"@media \(max-width: 480px\) \{([\s\S]*?)\n\}", styles)
+    assert blocks, "缺少 max-width: 480px 媒体查询"
+    assert any(".cal-time" in b for b in blocks), \
+        "没有任何窄屏规则收起 .cal-time, 375px 下会挤爆格子"
+    # 徽标与用时标签要一起收起: 两者都是格子里第三行的辅助信息
+    assert any(".cal-badge, .cal-time" in b for b in blocks), \
+        "窄屏应同时收起 .cal-badge 与 .cal-time"

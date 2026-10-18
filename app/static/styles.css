@@ -2154,13 +2154,25 @@ footer {
 
 /* 当天总用时 "130分" (2026-10-15)。与看板概览卡那个数字同口径, 家长在
    月历上扫一眼就能看出哪天投入得多。不加底色 —— 格子的底色已经在讲
-   完成状态, 再加一层色块会把状态盖过去。 */
+   完成状态, 再加一层色块会把状态盖过去。
+
+   前景色必须跟着格子状态走 (--cal-*-ink), 不能用 --text-3:
+   实测 --text-3(#BFA894) 在四种底色上只有 1.80~2.00:1, 远低于
+   WCAG AA 的 4.5:1, 屏幕上几乎看不见 (截图复核确认)。各状态的 ink
+   是同一套语义色的深色版, 5.61~7.55:1, 且与徽标 "3/5" 用的是同一个
+   色 —— 于是"完成度"和"投入时间"在视觉上归为一家, 而不是两个孤立的
+   数字浮在格子里。 */
 .cal-time {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1;
-  color: var(--text-3);
+  color: var(--text-2);   /* 无作业格 (白底) 的兜底, 见下方各状态覆盖 */
   font-variant-numeric: tabular-nums;
 }
+.cal-cell.has .cal-time         { color: var(--cal-has-ink); }
+.cal-cell.partial .cal-time     { color: var(--cal-part-ink); }
+.cal-cell.all-done .cal-time    { color: var(--cal-done-ink); }
+.cal-cell.optional-only .cal-time { color: var(--cal-opt-ink); }
 
 /* 四种状态底色。语义见 :root 中的 --cal-* 注释 */
 .cal-cell.has         { background: var(--cal-has-bg);  border-color: #F0C79E; }
