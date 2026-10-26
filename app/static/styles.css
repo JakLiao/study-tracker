@@ -2174,6 +2174,31 @@ footer {
 .cal-cell.all-done .cal-time    { color: var(--cal-done-ink); }
 .cal-cell.optional-only .cal-time { color: var(--cal-opt-ink); }
 
+/* 特殊日角标 (2026-10-26): 假期 / 调休 / 周末。
+   贴在格子右上角, 小字 —— 月历上家长扫的是"几号", 角标只负责补一句
+   "那天为什么不一样": 假期没作业、周末不上学、调休的周六还要上课。
+   所以它绝不能压住日期数字, 也不能比数字更显眼: 10px 字, 浅底色。
+
+   三种颜色各司其职:
+     holiday  红 (与"周末淡红"同一家族但更深) —— 法定假期, 最该看见
+     makeup   蓝 —— 周末补班, 这天要上学, 与"不上学"的默认印象相反
+     weekend  玫瑰 —— 普通周末, 最弱的一档, 只是提醒一下
+   前景色都压在 4.5:1 以上 (小字也算正文, 不按"大字"放宽)。 */
+.cal-mark {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.cal-mark-holiday { background: rgba(194, 24, 91, 0.10); color: #A3144A; }
+.cal-mark-makeup  { background: rgba(46, 122, 158, 0.12); color: #1F5C7A; }
+.cal-mark-weekend { background: rgba(199, 123, 138, 0.14); color: #9C4A59; }
+
 /* 四种状态底色。语义见 :root 中的 --cal-* 注释 */
 .cal-cell.has         { background: var(--cal-has-bg);  border-color: #F0C79E; }
 .cal-cell.has .cal-badge { background: rgba(122, 74, 33, 0.14); color: var(--cal-has-ink); }
@@ -2220,6 +2245,9 @@ footer {
    数字优先保住 —— 家长扫的是日期, 完成度只是辅助信号。总用时同理收起。 */
 @media (max-width: 480px) {
   .cal-badge, .cal-time { display: none; }
+  /* 周末角标在窄屏收起 —— 格子里的周六日数字本来就是淡红, 再挂一个
+     "周末"只是重复; 假期/调休必须留着, 那是家长真正缺的信息。 */
+  .cal-mark-weekend { display: none; }
   .cal-cell.has::after,
   .cal-cell.partial::after,
   .cal-cell.all-done::after,

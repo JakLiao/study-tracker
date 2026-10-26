@@ -1949,10 +1949,18 @@ function renderCalendar() {
     // 0 不显示 —— 还没做完的那天挂一个"0分"只是噪声, 家长扫月历要看的是
     // 已经投入了多少。
     const mins = day ? (day.actual_total || 0) : 0;
+    // 特殊日角标 (2026-10-26): 假期 / 调休 / 周末。放在格子右上角, 小字 ——
+    // 日期数字仍是主角, 角标只补一句"那天为什么不一样"(为什么没作业、
+    // 为什么周六还要上课)。与作业有无无关, 所以取的是后端另给的 special 表。
+    const sp = (r.special || {})[ds];
+    const mark = sp
+      ? `<span class="cal-mark cal-mark-${escapeAttr(sp.kind)}" title="${escapeAttr(sp.name)}">${escapeAttr(sp.label)}</span>`
+      : '';
     const cell = el(`
       <button class="cal-cell ${dayState(day)} ${ds === _calSelected ? 'selected' : ''} ${weekday >= 5 ? 'we' : ''}"
-              data-date="${ds}" aria-label="${ds}">
+              data-date="${ds}" aria-label="${ds}${sp ? ' ' + escapeAttr(sp.name) : ''}">
         <span class="cal-day">${d}</span>
+        ${mark}
         ${day && day.total ? `<span class="cal-badge">${day.required ? `${day.required_done}/${day.required}` : '选'}</span>` : ''}
         ${mins > 0 ? `<span class="cal-time">${mins}分</span>` : ''}
       </button>

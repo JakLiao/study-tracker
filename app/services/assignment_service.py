@@ -238,6 +238,41 @@ def list_by_date(d: date) -> list[AssignmentDTO]:
     return [row_to_assignment_dto(r) for r in rows]
 
 
+def _month_specials(year: int, month: int, days_in_month: int) -> dict[str, dict[str, str]]:
+    """当月需要角标提示的日子 (2026-10-26).
+
+    给月历格子右上角挂小字角标用, 三类:
+      holiday   法定假期 (国庆/中秋...), label/name 都是节日名
+      makeup    调休上班日 (周末补班, 这天要上学), 角标只写"调休",
+                完整节日名 (如"国庆调休") 放在 name 里, 悬停可见
+      weekend   普通周末, label/name 都是"周末"
+
+    判定顺序必须与周复盘页的 classify_day 一致: 假期 > 调休 > 周末。
+    顺序反了会出现"国庆当天标成周末"—— 家长在月历上看到的分类会跟
+    复盘页算出的上学日对不上, 同一件事在两个界面讲两个故事。
+
+    与作业有无无关: 假期那几天本来就没作业, 但正是最需要标出来的时候。
+    """
+    holidays: dict[str, str] = {}
+    for table in config.SCHOOL_HOLIDAYS_BY_YEAR.values():
+        holidays.update(table)
+    makeup: dict[str, str] = {}
+    for table in config.SCHOOL_MAKEUP_CLASS_DAYS_BY_YEAR.values():
+        makeup.update(table)
+
+    out: dict[str, dict[str, str]] = {}
+    for d in range(1, days_in_month + 1):
+        day = date(year, month, d)
+        ds = day.isoformat()
+        if ds in holidays:
+            out[ds] = {"kind": "holiday", "label": holidays[ds], "name": holidays[ds]}
+        elif ds in makeup:
+            out[ds] = {"kind": "makeup", "label": "调休", "name": makeup[ds]}
+        elif day.weekday() >= 5:
+            out[ds] = {"kind": "weekend", "label": "周末", "name": "周末"}
+    return out
+
+
 def calendar_summary(year: int, month: int) -> dict[str, Any]:
     """按月汇总每日作业数, 供日历视图渲染 (2026-09-28).
 
@@ -250,6 +285,8 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
       optional       = 选做数
       optional_done  = 选做已完成数
       actual_total   = 当天总用时 (2026-10-15), 与看板 progress.actual_total 同口径
+    另外返回 special: 当月的特殊日 (假期/调休/周末), 与作业有无无关,
+    只给格子角标用 (2026-10-26)。
     必做与选做必须分开统计: 日历格子要判断"必做是否全完成",
     若只看合并的 done, 会出现"选做全做了、必做一项没做却显示全完成"的误判。
     """
@@ -305,6 +342,8 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
         "first_weekday": first.weekday(),  # 0=周一, 与前端 getDay() 对齐
         "days_in_month": (last - timedelta(days=1)).day,
         "days": days,
+        # 特殊日角标 (2026-10-26): 假期 / 调休 / 周末, 与作业数据无关
+        "special": _month_specials(year, month, (last - timedelta(days=1)).day),
     }
 
 

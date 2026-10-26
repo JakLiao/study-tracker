@@ -229,6 +229,89 @@ def test_actual_total_matches_board_progress(app_client):
     assert cal == board == 80  # 20 + 45 实耗 + 15 选做
 
 
+# ====== 特殊日角标 (2026-10-26) ======
+# 月历格子右上角的小字角标: 法定假期 / 调休上班日 / 普通周末。
+# 最需要它的地方恰恰是"这几天没作业" —— 光看空白格子, 家长分不出是
+# 放假了还是自己漏登记了。
+
+def test_special_marks_national_day_holiday(app_client):
+    sp = _cal(app_client, 2026, 10)["special"]
+    assert sp["2026-10-01"]["kind"] == "holiday"
+    assert sp["2026-10-01"]["label"] == "国庆"
+    assert sp["2026-10-07"]["kind"] == "holiday"
+
+
+def test_holiday_beats_weekend(app_client):
+    """10/3 是周六, 也是国庆 —— 必须标成假期, 不能标成周末。
+
+    标错的后果: 家长以为那只是普通周末, 看不到"法定假期"这个信号,
+    复盘页却按不上学日把它剔除 —— 同一件事两个界面讲两个故事。
+    """
+    sp = _cal(app_client, 2026, 10)["special"]
+    assert sp["2026-10-03"]["kind"] == "holiday"
+
+
+def test_makeup_beats_weekend(app_client):
+    """10/10 是周六, 但要上班 —— 角标写"调休", 不是"周末"。
+
+    这天要上学, 作业照常布置, 家长最需要被提醒。
+    """
+    sp = _cal(app_client, 2026, 10)["special"]
+    assert sp["2026-10-10"]["kind"] == "makeup"
+    assert sp["2026-10-10"]["label"] == "调休"
+    assert sp["2026-10-10"]["name"] == "国庆调休"  # 完整节日名留给悬停提示
+
+
+def test_plain_weekend_is_marked(app_client):
+    sp = _cal(app_client, 2026, 10)["special"]
+    assert sp["2026-10-11"]["kind"] == "weekend"
+    assert sp["2026-10-11"]["label"] == "周末"
+
+
+def test_plain_weekday_has_no_mark(app_client):
+    """平日不挂角标 —— 否则满屏小字, 真正要标的那几天反而看不见。"""
+    sp = _cal(app_client, 2026, 10)["special"]
+    assert "2026-10-13" not in sp
+
+
+def test_special_is_independent_of_assignments(app_client):
+    """没有作业的假期照样要标 —— 这正是最需要标的那几天。"""
+    r = _cal(app_client, 2026, 10)
+    assert r["days"] == {}
+    assert r["special"]["2026-10-01"]["kind"] == "holiday"
+
+
+def test_special_does_not_leak_across_months(app_client):
+    """9 月的中秋不能出现在 10 月的角标表里 (反过来也一样)。"""
+    oct_sp = _cal(app_client, 2026, 10)["special"]
+    sep_sp = _cal(app_client, 2026, 9)["special"]
+    assert sep_sp["2026-09-25"]["kind"] == "holiday"   # 中秋
+    assert "2026-09-25" not in oct_sp
+    assert "2026-10-01" not in sep_sp
+
+
+def test_special_matches_weekly_review_classification(app_client):
+    """角标的分类必须与周复盘页算出的一致 —— 同一套校历, 两处判定。
+
+    复盘页把假期/周末从"上学日"里剔除, 月历角标是这套判定的可视版。
+    两边一旦漂移, 家长看到"这天有作业"(月历) 却发现它没被计入统计
+    (复盘), 就会怀疑数据不对。
+    """
+    from datetime import date
+
+    from app.services.analytics_service import (
+        _calendar_holidays,
+        _calendar_makeup,
+        classify_day,
+    )
+    holidays, makeup = _calendar_holidays(), _calendar_makeup()
+    sp = _cal(app_client, 2026, 10)["special"]
+    for ds, mark in sp.items():
+        kind, _label = classify_day(date.fromisoformat(ds), holidays, makeup)
+        expected = {"holiday": "holiday", "makeup": "makeup", "off": "weekend"}[kind]
+        assert mark["kind"] == expected, ds
+
+
 # ====== 边界 ======
 
 def test_december_and_january_do_not_leak(app_client):
