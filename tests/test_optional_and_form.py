@@ -112,22 +112,54 @@ def test_optional_no_longer_overrides_text_brightness(styles):
     assert "var(--text-1)" not in block.group(1)
 
 
-# ====== 2. 选做分组默认展开 ======
+# ====== 2. 选做分组的展开规则 ======
 
-def test_optional_card_default_open(app_js):
-    """看板的选做分组必须带 open, 默认展开。"""
+def test_optional_card_uses_optional_group_card(app_js):
+    """选做分组必须由共享的 optionalGroupCard() 渲染。
+
+    2026-10-29: 看板与日历详情原先各写了一份 <details>, 展开规则要改
+    就得改两处, 迟早有一处漏掉 —— 同一份数据两个界面表现不同, 家长
+    会怀疑其中一边显示错了。现在收敛到一处, 两边都调它。
+    """
+    assert "function optionalGroupCard(" in app_js, "缺少共享的选做分组渲染"
+    assert app_js.count("optionalGroupCard(") == 3, \
+        "应只有定义 + 看板 + 日历详情三处引用"
+
+
+def test_optional_group_open_rule_uses_done(app_js):
+    """展开与否只看有没有没做完的选做。
+
+    2026-09-28 曾要求选做默认展开, 理由是"家长看不到自己还欠着几件
+    选做"。2026-10-29 追加: 全做完之后不再展开 —— 那一屏已经没有欠账,
+    摊开只剩重复信息, 还把首屏往下挤。判据用 status !== 'done' 而不是
+    "已收尾": 跳过的选做仍可撤销, 折叠起来家长就点不到了。
+    """
+    m = re.search(r"function optionalGroupOpen\((.*?)\)\s*\{([^}]*)\}", app_js, re.S)
+    assert m, "未找到 optionalGroupOpen"
+    assert "status !== 'done'" in m.group(2), \
+        "判据必须是 status !== 'done' —— 用 settled 会把可撤销的跳过项也藏掉"
+
+
+def test_optional_card_open_attribute_is_conditional(app_js):
+    """details 上的 open 必须由规则决定, 不能写死。
+
+    写死成 open 就等于回到"永远展开", 2026-10-29 的折叠就白做了。
+    """
     m = re.search(r'<details class="card optional-card"[^>]*>', app_js)
     assert m, "未找到选做分组的 details 元素"
-    assert "open" in m.group(0), "选做分组缺少 open, 默认仍是收起"
+    assert "open" not in m.group(0), \
+        f"open 被写死了, 应由 optionalGroupOpen 决定: {m.group(0)}"
+    assert "optionalGroupOpen(items) ? ' open' : ''" in app_js, \
+        "open 属性必须来自 optionalGroupOpen 的判断"
 
 
-def test_all_optional_cards_open(app_js):
-    """看板和日历详情两处都必须展开 —— 同一份数据两个界面表现不同,
-    家长会怀疑其中一边显示错了。"""
-    cards = re.findall(r'<details class="card optional-card"[^>]*>', app_js)
-    assert len(cards) == 2, f"应有两处选做分组, 实际 {len(cards)}"
-    for c in cards:
-        assert "open" in c, f"选做分组未默认展开: {c}"
+def test_optional_group_count_shows_done_ratio(app_js):
+    """折叠后只剩一行摘要, 计数必须仍写清"做完了几件"。
+
+    折叠省的是高度, 不是信息 —— 家长看到的应是"选做 (2) 2/2"。
+    """
+    assert '<span class="count">${doneN}/${items.length}</span>' in app_js, \
+        "摘要里的计数必须是 doneN/总数"
 
 
 # ====== 3. 弹窗表单网格对齐 ======

@@ -99,11 +99,17 @@ def test_only_one_actual_input_focus_timer(app_js):
 
 
 def test_all_render_assignment_calls_pass_focus_id(app_js):
-    """4 处调用都必须把 _focusActualId 传下去, 漏一处就等于没修。"""
+    """3 处调用都必须把 _focusActualId 传下去, 漏一处就等于没修。
+
+    2026-10-29: 原为 4 处 —— 看板与日历详情各写了一份选做分组的渲染。
+    现在选做分组收敛到共享的 optionalGroupCard(), 两处都走它, 调用点
+    从 4 处减到 3 处。断言跟着改, 但"每处都传 _focusActualId"这条
+    契约不变 —— 减一处是因为合并, 不是因为漏传。
+    """
     # 只取调用点: 函数定义的参数列表里含 "withStatus", 据此排除。
     calls = [c for c in re.findall(r"renderAssignment\(([^)]*)\)", app_js)
              if "withStatus" not in c]
-    assert len(calls) == 4, f"应有 4 处调用, 实际 {len(calls)}: {calls}"
+    assert len(calls) == 3, f"应有 3 处调用, 实际 {len(calls)}: {calls}"
     missing = [c for c in calls if c.count(",") < 3]
     assert not missing, f"以下调用没传 focusActualFor: {missing}"
 

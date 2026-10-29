@@ -617,6 +617,46 @@ tr.is-optional .muted {
   color: var(--text-2);
 }
 
+/* ===== 庆祝横幅 (2026-10-29 用户反馈) =====
+ * 全部做完的夸奖原先只是概览卡里一行 13px 小字 (--fs-caption),
+ * 在手机上扫一眼就滑过去了 —— 而这恰恰是家长最想被看见的一句。
+ * 改为独立横幅: 放在概览卡上方, 字号抬到 --fs-h2, 粉金渐变底 +
+ * 描边, 再配一个轻微的弹入动画, 让"今天全部做完了"成为当天
+ * 最显眼的一件事。
+ *
+ * 配色: 用主色粉 (#FF6B9D) 的浅底 + 深粉字, 而不是 all-clear 那套
+ * 绿。绿是"收尾状态"的颜色, 已经被卡内的 all-clear 占着; 粉色是
+ * 这个应用里唯一的"奖励/强调"色, 用它才读得出这是庆祝而不是状态。
+ * 深粉字 #B3225C 在浅粉底上对比度 > 4.5:1, 18px 粗体可读。
+ * 动画只做缩放+淡入, 不做位移 —— 位移会把下面的内容推一下, 页面
+ * 刚渲染时元素还在定位, 容易闪。
+ */
+.celebrate-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: linear-gradient(135deg, #FFE3EC 0%, #FFF2CF 100%);
+  border: 1px solid #FFC6D9;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  color: #B3225C;
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.35;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  animation: celebrate-pop 0.45s cubic-bezier(.2, 1.4, .4, 1);
+}
+@keyframes celebrate-pop {
+  from { opacity: 0; transform: scale(.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* 减弱动态偏好: 前庭功能敏感的用户不该被弹一下。 */
+@media (prefers-reduced-motion: reduce) {
+  .celebrate-banner { animation: none; }
+}
+
 /* 各科剩余时间 (2026-10-09): 提示条下方的 "语文 20 / 50"。
    用科目色 soft 底而非实底色 —— 提示条已经是一块醒目的暖色底,
    这一行如果再用 --c-语 那种高饱和实底, 三块色块会把下面真正

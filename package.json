@@ -5,7 +5,7 @@
   "description": "study-tracker 前端集成测试依赖 (仅测试用; 运行服务不需要 Node)",
   "scripts": {
     "postinstall": "echo 'study-tracker: 依赖仅供 pytest 前端集成测试使用, 运行服务不需要 Node。'",
-    "test:js": "node tests/test_board_hint_regression.js && node tests/test_subject_time_stats.js"
+    "test:js": "node tests/test_board_hint_regression.js && node tests/test_subject_time_stats.js && node tests/test_celebrate_and_optional.js"
   },
   "devDependencies": {
     "jsdom": "^30.1.1"

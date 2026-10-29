@@ -100,6 +100,9 @@ function boardHint({ isToday, pending, done = 0, skipped = 0, estRemaining }) {
       html: skippedOnly
         ? `${dayWord}的必做都处理完啦 ✓`
         : `${dayWord}的必做全部完成, 太棒了! 🎉`,
+      // celebrate: 只有真做完才可庆祝 (2026-10-29)。全靠跳过收尾的
+      // 那天没有"做完了"这回事, 不该弹庆祝横幅。
+      celebrate: !skippedOnly,
     };
   }
   const timeNote = estRemaining > 0 ? `, 大约还要 <strong>${estRemaining}</strong> 分钟` : '';
@@ -107,18 +110,59 @@ function boardHint({ isToday, pending, done = 0, skipped = 0, estRemaining }) {
     return {
       cls: 'last-one',
       html: `就差最后 <strong>1</strong> 项啦${timeNote}, 慢慢完成就好 🌿`,
+      celebrate: false,
     };
   }
   if (pending <= 3) {
     return {
       cls: 'almost',
       html: `还剩 <strong>${pending}</strong> 项${timeNote}, 加油! ✨`,
+      celebrate: false,
     };
   }
   return {
     cls: 'many',
     html: `${dayWord}还有 <strong>${pending}</strong> 项${timeNote}, 一件一件来`,
+    celebrate: false,
   };
+}
+
+// ====== 选做分组是否展开 (2026-10-29 用户反馈) ======
+// 2026-09-28 曾要求选做默认展开, 理由是"家长看不到自己还欠着几件
+// 选做"。那个理由只在还有欠账时成立: 一旦全做完, 展开着只是把
+// "已经做完了"这件事反复铺在屏幕上, 让人以为还有事要做。
+// 规则因此改成: 还有没做完的选做 → 展开 (沿用旧反馈); 全做完 →
+// 折叠成一行, 摘要仍写清 "选做 (2) 2/2", 点开随时能查。
+// 判据用 done 而非 settled: 跳过的选做仍可能被撤销, 而且摘要计数
+// (done/总数) 满格才读作"做完了"。
+function optionalGroupOpen(items) {
+  return items.some(i => i.status !== 'done');
+}
+
+// 选做分组卡片。看板与日历详情共用这个渲染, 免得同一份数据在两个
+// 界面表现不同 —— 家长会怀疑其中一边显示错了。
+function optionalGroupCard(items, onChange) {
+  const doneN = items.filter(i => i.status === 'done').length;
+  const expandedAttr = optionalGroupOpen(items) ? ' open' : '';
+  const card = el(`<details class="card optional-card"${expandedAttr}>` +
+    `<summary class="card-title">选做 (${items.length})<span class="count">${doneN}/${items.length}</span></summary>` +
+    `<div class="card-body"></div></details>`);
+  items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, onChange, _focusActualId)));
+  return card;
+}
+
+// ====== 夸奖横幅 (2026-10-29 用户反馈) ======
+// 全部完成时那句"太棒了"原先只是概览卡里一行小字 (--fs-caption),
+// 手机上扫一眼就滑过去了 —— 而这恰恰是家长最想被看见的一句。
+// 现在把它升级成独立横幅: 放在概览卡上方, 字号抬到 --fs-h2,
+// 再加一个轻微的入场动画, 让"今天全部做完了"成为当天最显眼的一件事。
+// 只有真做完才庆祝 (done>0); 全靠跳过收尾的那天不弹横幅, 否则等于
+// 替"今天不做"发奖, 反而削弱跳过按钮的分量。
+// 概览卡内的那一行在庆祝态下不重复渲染 —— 同一句话说两遍是噪音。
+function hintBlock(hint) {
+  if (!hint) return null;
+  if (hint.celebrate) return el(`<div class="celebrate-banner">${hint.html}</div>`);
+  return el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`);
 }
 
 // ====== 各科剩余时间 (2026-10-09) ======
@@ -427,6 +471,12 @@ async function loadBoard() {
         `</span>`;
     }).join('');
 
+    // 夸奖横幅 (2026-10-29): 全部做完时从概览卡里提出来, 独立成一条
+    // 横幅放在卡片上方 —— 概览卡是"信息", 横幅是"事件", 后者不该被前者
+    // 压成一行小字。庆祝态下卡内不再重复渲染那句提示。
+    const hintEl = hintBlock(hint);
+    if (hintEl) root.appendChild(hintEl);
+
     root.appendChild(el(`
       <div class="progress-bar">
         <div class="progress-text">
@@ -434,7 +484,7 @@ async function loadBoard() {
           <span class="effort-total"><strong class="et-num">${p.actual_total || 0}</strong><span class="et-unit">分钟</span></span>
         </div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
-        ${hint ? `<div class="board-hint ${hint.cls}">${hint.html}</div>` : ''}
+        ${hint && !hint.celebrate ? `<div class="board-hint ${hint.cls}">${hint.html}</div>` : ''}
         ${subjChips ? `<div class="subj-time-row">${subjChips}</div>` : ''}
         ${optNote || skippedNote ? `<div class="progress-sub">完成 ${p.done}${skippedNote}${optNote} · 估时 ${p.est_total || 0} 分</div>` : ''}
       </div>
@@ -467,19 +517,16 @@ async function loadBoard() {
     section('待完成', pending, 'sec-pending', true);
     section('已收尾', settled, 'sec-settled', false);
 
-    // 选做分组 (2026-09-28 用户反馈: 改为默认展开)
+    // 选做分组 (2026-09-28 用户反馈: 默认展开; 2026-10-29: 全做完则折叠)
     // 原先默认收起, 理由是"低优先级不该稀释主任务视觉权重"。但收起后
     // 家长根本看不到自己还欠着几件选做, 反复要点开才安心 —— 隐藏在这里
     // 换来的不是"聚焦", 而是"不确定"。既然底色已改为浅灰(不再抢焦点),
     // 默认展开就不再有稀释问题, 收起与不收起的信息成本对比很明确。
-    // 2026-10-12 密度优化曾把它一并折叠, 已回退: 上面「已收尾」折叠拿到
-    // 的空间收益相同, 而这条是用户明确要求过的, 不该顺手推翻。
+    // 2026-10-29 追加: 选做全做完之后不再展开 —— 那一屏已经没有欠账,
+    // 摊开只剩"已完成"的重复信息, 还把首屏往下挤。全做完时折叠成一行
+    // 摘要 (选做 2/2), 入口仍在, 家长想回看随时点开。
     if (b.optional_items && b.optional_items.length) {
-      const opt = b.optional_items;
-      const optDone = opt.filter(i => i.status === 'done').length;
-      const card = el(`<details class="card optional-card" open><summary class="card-title">选做 (${opt.length})<span class="count">${optDone}/${opt.length}</span></summary><div class="card-body"></div></details>`);
-      opt.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, null, _focusActualId)));
-      root.appendChild(card);
+      root.appendChild(optionalGroupCard(b.optional_items, null));
     }
   } catch (e) {
     root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
@@ -2014,15 +2061,10 @@ function renderDayDetail(root, d, items) {
   const pending = required.filter(i => !isSettled(i));
   const settled = required.filter(isSettled);
 
-  root.appendChild(el(`<div class="card">
-    <div class="progress-text">
-      <span>必做已收尾 <strong>${settled.length}</strong> / ${required.length}</span>
-      <span class="muted">完成 ${required.filter(i => i.status === 'done').length} · 选做 ${optional.length}</span>
-    </div>
-  </div>`));
-
   // 提示条与看板同源 (2026-09-29): 同一份数据在两个界面给出不同的话,
   // 家长会以为其中一边算错了。isToday 由 d 与今天比较得出, 不能写死。
+  // 2026-10-29: 全部做完时走庆祝横幅, 与看板一致 —— 位置也一样放在
+  // 进度卡上方, 家长一眼先看到"这天做完了", 再往下核对数字。
   if (pending.length || required.length) {
     const estRemaining = pending.reduce((s, i) => s + (i.est_minutes || 0), 0);
     const hint = boardHint({
@@ -2032,8 +2074,16 @@ function renderDayDetail(root, d, items) {
       skipped: settled.filter(i => i.status === 'skipped').length,
       estRemaining,
     });
-    root.appendChild(el(`<div class="board-hint ${hint.cls}">${hint.html}</div>`));
+    const hintEl = hintBlock(hint);
+    if (hintEl) root.appendChild(hintEl);
   }
+
+  root.appendChild(el(`<div class="card">
+    <div class="progress-text">
+      <span>必做已收尾 <strong>${settled.length}</strong> / ${required.length}</span>
+      <span class="muted">完成 ${required.filter(i => i.status === 'done').length} · 选做 ${optional.length}</span>
+    </div>
+  </div>`));
 
   const section = (title, list) => {
     if (!list.length) return;
@@ -2045,13 +2095,11 @@ function renderDayDetail(root, d, items) {
   section('待完成', pending);
   section('已收尾', settled);
 
+  // 选做分组与看板同源 (2026-10-29): 复用 optionalGroupCard, 全做完
+  // 时同样折叠成一行。同一份数据两个界面表现不同, 家长会怀疑其中
+  // 一边显示错了。
   if (optional.length) {
-    const optDone = optional.filter(i => i.status === 'done').length;
-    // open: 与看板选做分组保持一致 —— 同一份数据在两个界面表现不同,
-    // 家长会怀疑其中一边显示错了。
-    const c = el(`<details class="card optional-card" open><summary class="card-title">选做 (${optional.length})<span class="count">${optDone}/${optional.length}</span></summary><div class="card-body"></div></details>`);
-    optional.forEach(item => c.querySelector('.card-body').appendChild(renderAssignment(item, true, refreshCalendarDetail, _focusActualId)));
-    root.appendChild(c);
+    root.appendChild(optionalGroupCard(optional, refreshCalendarDetail));
   }
 }
 
