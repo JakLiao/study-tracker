@@ -112,7 +112,7 @@
         <circle cx="8.4" cy="17.1" r="1.2" fill="currentColor" opacity=".5" />
       </symbol>
       <!-- 复盘: 递增柱状图 (回看一段时间的量) -->
-      <symbol id="i-tab-weekly" viewBox="0 0 24 24">
+      <symbol id="i-tab-review" viewBox="0 0 24 24">
         <path d="M4 20.2h16" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" />
         <rect x="5.6" y="12.4" width="3.5" height="5.4" rx="1.4" fill="currentColor" opacity=".55" />
@@ -152,7 +152,7 @@
       <button data-tab="board" class="active" role="tab" aria-selected="true"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-board"></use></svg><span>看板</span></button>
       <button data-tab="entry" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-entry"></use></svg><span>登记</span></button>
       <button data-tab="list" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-calendar"></use></svg><span>日历</span></button>
-      <button data-tab="weekly" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-weekly"></use></svg><span>复盘</span></button>
+      <button data-tab="review" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-review"></use></svg><span>复盘</span></button>
       <button data-tab="settings" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-settings"></use></svg><span>设置</span></button>
     </nav>
     <div id="health-bar" aria-live="polite"></div>
@@ -227,13 +227,22 @@
     </section>
 
     <!-- ====== 复盘 ====== -->
-    <section id="view-weekly" class="view" role="tabpanel">
+    <section id="view-review" class="view" role="tabpanel">
       <h2>周期复盘</h2>
-      <div class="row">
-        <button data-week="current" class="primary week-btn active">本周</button>
-        <button data-week="last" class="ghost week-btn">上周</button>
+      <div class="row review-range">
+        <button data-period="current" class="primary period-btn">本周</button>
+        <button data-period="last" class="ghost period-btn">上周</button>
+        <button data-period="month" class="ghost period-btn">本月</button>
+        <!-- 周末显示开关 (2026-10-30): 默认不勾 = 不显示周末。
+             作业都在上学最后一天 (通常周五) 布置, 周末既没作业也不存在
+             "上了学却没写"的情况 —— 在图上只是一根空柱, 在分档卡里只是
+             一张 0 分钟的卡, 看着像漏统计, 实际什么也没有。 -->
+        <label class="weekend-toggle">
+          <input type="checkbox" id="chk-weekend" />
+          <span>显示周末</span>
+        </label>
       </div>
-      <div id="weekly-content"></div>
+      <div id="review-content"></div>
     </section>
 
     <!-- ====== 设置 ====== -->

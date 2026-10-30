@@ -47,7 +47,7 @@ def _strip_comments(css: str) -> str:
 
 # ===== 复盘偏差表 ======
 
-def test_weekly_short_label_columns_never_wrap(styles):
+def test_review_short_label_columns_never_wrap(styles):
     """两字列(type=阅读/样本)不能被竖排成两行。
 
     这是本轮唯一改动的桌面规则。锁住的是"短标签列 nowrap", 而不是
@@ -55,39 +55,39 @@ def test_weekly_short_label_columns_never_wrap(styles):
     这条断言就该失效。
     """
     css = _strip_comments(styles)
-    rule = re.search(r"\.weekly-table th,\s*\.weekly-table td\s*\{([^}]*)\}", css)
-    assert rule, "缺少 .weekly-table 的 nowrap 规则"
+    rule = re.search(r"\.review-table th,\s*\.review-table td\s*\{([^}]*)\}", css)
+    assert rule, "缺少 .review-table 的 nowrap 规则"
     assert "white-space: nowrap" in rule.group(1)
 
 
-def test_weekly_advice_column_may_wrap(styles):
+def test_review_advice_column_may_wrap(styles):
     """"建议"是一整段中文, 必须允许折行 —— 否则会横向溢出。"""
     css = _strip_comments(styles)
-    rule = re.search(r"\.weekly-table td\.col-advice\s*\{([^}]*)\}", css)
+    rule = re.search(r"\.review-table td\.col-advice\s*\{([^}]*)\}", css)
     assert rule, "缺少 .col-advice 的换行豁免"
     assert "white-space: normal" in rule.group(1)
 
 
-def test_weekly_narrow_override_still_applies(styles):
+def test_review_narrow_override_still_applies(styles):
     """桌面加的 nowrap 不能把窄屏卡片布局的换行也顶掉。
 
     §26g 的卡片规则必须排在基础 nowrap 之后且同特异度, 否则
     375px 下每格会挤成一行。
     """
     css = _strip_comments(styles)
-    nowrap = css.index(".weekly-table th,\n.weekly-table td { white-space: nowrap; }") \
-        if ".weekly-table th,\n.weekly-table td { white-space: nowrap; }" in css \
+    nowrap = css.index(".review-table th,\n.review-table td { white-space: nowrap; }") \
+        if ".review-table th,\n.review-table td { white-space: nowrap; }" in css \
         else css.index("white-space: nowrap")
-    card = css.index(".weekly-table td {", nowrap)
+    card = css.index(".review-table td {", nowrap)
     card_block = css[card:card + 400]
     assert "white-space: normal" in card_block, \
         "窄屏卡片块里必须有 white-space: normal 覆盖桌面的 nowrap"
 
 
-def test_weekly_has_class_hook(styles, app_js):
-    """样式挂在 .weekly-table 上, JS 必须真的输出这个 class。"""
-    assert 'class="weekly-table"' in app_js
-    assert ".weekly-table" in styles
+def test_review_has_class_hook(styles, app_js):
+    """样式挂在 .review-table 上, JS 必须真的输出这个 class。"""
+    assert 'class="review-table"' in app_js
+    assert ".review-table" in styles
 
 
 # ===== 桌面断点边界 ======

@@ -1,4 +1,4 @@
-"""周复盘偏差分析."""
+"""复盘偏差分析 (周 / 月)."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -11,25 +11,39 @@ from ..errors import SampleTooSmallError
 # 周一=0 ... 周日=6, 与 date.weekday() 对齐
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
+# 统计周期的取值与中文名。前端按钮与后端参数用同一套词 (current/last/month),
+# 文案里的"本周/上周/本月"也集中在这里 —— 散落在各处各写一遍, 迟早会漏改。
+PERIOD_LABELS = {"current": "本周", "last": "上周", "month": "本月"}
 
-def _week_range(week: str, today: date) -> tuple[date, date]:
-    """周一为一周开始."""
+
+def _period_range(period: str, today: date) -> tuple[date, date]:
+    """统计区间.
+
+    - current / last: 自然周, 周一为一周开始, 固定 7 天。
+    - month: 本月 1 日至**今日** (month-to-date)。
+
+    为什么本月不到月底: 本月尚未到来的日子没有数据, 算进分母会把
+    "平日日均"稀释成假的 —— 比如 10 月 5 日看本月, 4 个平日里有 3 个
+    还没发生, 日均只剩真实值的三分之一。家长拿这个数去估"每天要写
+    多久", 会被带偏。本周虽是整周 (含未到的日子), 但一周里未到的
+    日子最多 3 天且多半落在周末档, 影响远小于整月。
+    """
     monday = today - timedelta(days=today.weekday())
-    if week == "current":
-        return monday, monday + timedelta(days=6)
-    if week == "last":
+    if period == "last":
         last_mon = monday - timedelta(days=7)
         return last_mon, last_mon + timedelta(days=6)
+    if period == "month":
+        return today.replace(day=1), today
     # 默认 current
     return monday, monday + timedelta(days=6)
 
 
-def _empty_result(week: str, today: date, sample_size: int = 0, note: str | None = None):
-    start, end = _week_range(week, today)
+def _empty_result(period: str, today: date, sample_size: int = 0, note: str | None = None):
+    start, end = _period_range(period, today)
     return {
-        "week": week,
-        "week_start": start.isoformat(),
-        "week_end": end.isoformat(),
+        "period": period,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
         "sample_size": sample_size,
         "note": note,
         "by_type": [],
@@ -38,8 +52,8 @@ def _empty_result(week: str, today: date, sample_size: int = 0, note: str | None
     }
 
 
-def build_weekly_analytics(week: str, today: date) -> dict:
-    """周维度偏差: 预估 vs 实际, 按 科目 x 任务类型 聚合.
+def build_period_analytics(period: str, today: date) -> dict:
+    """周期维度偏差: 预估 vs 实际, 按 科目 x 任务类型 聚合.
 
     业务规则:
     - 只统计 status=done 且 not is_optional 的记录
@@ -47,7 +61,8 @@ def build_weekly_analytics(week: str, today: date) -> dict:
     - sample_size < 5 -> 抛 SampleTooSmallError (前端展示"样本不足")
     - sample_size >= 5 但没有可执行任务的, 返回 note 提示
     """
-    start, end = _week_range(week, today)
+    start, end = _period_range(period, today)
+    label = PERIOD_LABELS.get(period, "本周")
 
     # 未填实际用时的已完成项, 用 est_minutes 顶替。
     # 家长点"完成"时不必再被逼着填一次时长 —— 漏填的代价不该是
@@ -71,11 +86,12 @@ def build_weekly_analytics(week: str, today: date) -> dict:
     sample_size = len(rows)
     if sample_size < 5:
         raise SampleTooSmallError(
-            f"本周完成数 {sample_size} < 5, 样本不足, 不生成偏差表"
+            f"{label}完成数 {sample_size} < 5, 样本不足, 不生成偏差表"
         )
 
     if not rows:
-        return _empty_result(week, today, sample_size=0, note="本周有完成但无实际耗时数据")
+        return _empty_result(period, today, sample_size=0,
+                             note=f"{label}有完成但无实际耗时数据")
 
     # 按 (subject, task_type) 聚合
     agg: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
@@ -107,9 +123,9 @@ def build_weekly_analytics(week: str, today: date) -> dict:
     under_sorted = sorted(by_type, key=lambda x: -x["diff_minutes"])[:3]
 
     return {
-        "week": week,
-        "week_start": start.isoformat(),
-        "week_end": end.isoformat(),
+        "period": period,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
         "sample_size": sample_size,
         "by_type": by_type,
         "top_overestimate": [x for x in over_sorted if x["diff_minutes"] < 0],
@@ -155,7 +171,7 @@ def _make_advice(subject: str, task_type: str, diff: float, avg_est: float, avg_
 # 选做的估时质量不是家长要校准的东西。两个口径服务于两个问题, 不冲突。
 #
 # 排除的记录: task_type='observation' (观察作业, 不产生实际书写负担),
-# 与 build_weekly_analytics 保持一致, 否则两处样本对不上。
+# 与 build_period_analytics 保持一致, 否则两处样本对不上。
 
 # 平日档: 周一~周四。这四天作业结构最稳定, 适合看"每天固定要写多少"。
 _PLAIN_WEEKDAYS = (0, 1, 2, 3)
@@ -208,18 +224,20 @@ def classify_day(d: date, holidays: dict[str, str], makeup: dict[str, str]) -> t
     return "off", "未知"
 
 
-def build_daily_time_stats(week: str, today: date) -> dict:
+def build_daily_time_stats(period: str, today: date) -> dict:
     """每日各科作业用时 (按上学日口径).
 
     返回结构:
-      days        7 天逐日明细 (含被剔除的假期, 让家长看得见"为什么少了一天")
+      days        区间内逐日明细 (含被剔除的假期, 让家长看得见"为什么少了一天");
+                  周视图 7 天, 月视图是当月 1 日至今日
       school_days 计入统计的上学日 (plain + friday + makeup)
       plain_avg   周一~周四 日均 (各科 + 合计)
       friday      周五 单列
       weekend     周末单列
       makeup      调休上班日单列
+      subject_share  各科时间占用 (预估 / 实际分开), 给占比饼图用
     """
-    start, end = _week_range(week, today)
+    start, end = _period_range(period, today)
     holidays = _calendar_holidays()
     makeup = _calendar_makeup()
 
@@ -240,7 +258,7 @@ def build_daily_time_stats(week: str, today: date) -> dict:
     per_day: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     # 各科时间占用 (给"占比饼图"用): 预估与实际分开累加。
     # 预估按 est_minutes; 实际按上面那个 minutes (即 COALESCE(actual, est)),
-    # 与逐日用时同一口径 —— 这样饼图两个环的合计就是柱状图的总用时, 对得上账。
+    # 与逐日用时同一口径 —— 这样饼图两个环的合计与柱状图的总用时对得上账。
     share_est: dict[str, int] = defaultdict(int)
     share_actual: dict[str, int] = defaultdict(int)
     for r in rows:
@@ -265,7 +283,8 @@ def build_daily_time_stats(week: str, today: date) -> dict:
     weekend_days: list[dict] = []
     makeup_days: list[dict] = []
 
-    for i in range(7):
+    # 区间长度: 周视图 7 天, 月视图是当月 1 日至今日 (最多 31 天)。
+    for i in range((end - start).days + 1):
         d = start + timedelta(days=i)
         ds = d.isoformat()
         kind, label = classify_day(d, holidays, makeup)
@@ -314,22 +333,31 @@ def build_daily_time_stats(week: str, today: date) -> dict:
         }
 
     def _bucket(entries: list[dict]) -> dict:
-        return {"days": len(entries), "total_minutes": sum(e["total_minutes"] for e in entries)}
+        """一档天数的合计。avg_minutes 是该档的日均 —— 月视图里各档天数
+        相差悬殊 (平日二十来天 vs 周末八九天), 只看合计等于在比"哪档天多",
+        必须给日均才有可比性。"""
+        total = sum(e["total_minutes"] for e in entries)
+        n = len(entries)
+        return {
+            "days": n,
+            "total_minutes": total,
+            "avg_minutes": round(total / n, 1) if n else 0,
+        }
 
     school_days = plain_days + friday_days + makeup_days
     excluded = [e for e in days if not e["is_school_day"]]
 
     # 各科时间占用: 预估与实际各一份, 合计相同口径。
-    # 注意这里统计的是**整周** (含周末与假期实际完成的作业), 不是"上学日
-    # 日均" —— 占比看的是一周的总盘子, 周末真写了作业那部分时间也是
-    # 家长付出的, 不该从饼图里抹掉。
+    # 注意这里统计的是**整个区间** (含周末与假期实际完成的作业), 不是
+    # "上学日日均" —— 占比看的是一段时间的总盘子, 周末真写了作业那部分
+    # 时间也是家长付出的, 不该从饼图里抹掉。
     est_by_subject = _ordered(dict(share_est))
     actual_by_subject = _ordered(dict(share_actual))
 
     return {
-        "week": week,
-        "week_start": start.isoformat(),
-        "week_end": end.isoformat(),
+        "period": period,
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
         "days": days,
         "plain_avg": _avg(plain_days),
         "friday": _bucket(friday_days),

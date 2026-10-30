@@ -290,7 +290,7 @@ def test_special_does_not_leak_across_months(app_client):
     assert "2026-10-01" not in sep_sp
 
 
-def test_special_matches_weekly_review_classification(app_client):
+def test_special_matches_review_classification(app_client):
     """角标的分类必须与周复盘页算出的一致 —— 同一套校历, 两处判定。
 
     复盘页把假期/周末从"上学日"里剔除, 月历角标是这套判定的可视版。

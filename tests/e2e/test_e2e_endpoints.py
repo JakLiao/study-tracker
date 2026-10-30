@@ -8,7 +8,7 @@
 - /api/assignments/batch
 - /api/board/today (含 deadline 提醒 / 选做分组)
 - 状态流转 todo->doing->done + 实际耗时录入
-- /api/analytics/weekly (样本 < 5 是否真的返 "样本不足")
+- /api/analytics/review (样本 < 5 是否真的返 "样本不足")
 - /api/settings (非法 key / 非法 value)
 - /api/export
 - 数据持久化: 重启服务后数据还在不在
@@ -299,9 +299,9 @@ def section_delete_todo(assignment_ids):
     assert r.status_code == 400, f"已 done 删除应被拒, 实际 {r.status_code}"
 
 
-def section_weekly_analytics():
-    hr("9. /api/analytics/weekly 样本不足")
-    r = get("/analytics/weekly?week=current")
+def section_review_analytics():
+    hr("9. /api/analytics/review 样本不足")
+    r = get("/analytics/review?period=current")
     print(f"  status: {r.status_code}")
     j = r.json()
     print(f"  body: {json.dumps(j, ensure_ascii=False, indent=2)[:600]}")
@@ -442,7 +442,7 @@ def main():
     aid = section_status_and_completion(ids)
     section_edit(aid)
     section_delete_todo(ids)
-    section_weekly_analytics()
+    section_review_analytics()
     section_settings()
     section_export()
     section_duplicate_parse()

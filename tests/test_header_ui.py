@@ -138,7 +138,7 @@ def test_tab_labels_all_chinese(index_html):
 def test_every_tab_has_an_icon(index_html):
     """五个 Tab 各配一个图形: 低龄用户先认形再认字。"""
     for tab, sym in [("board", "i-tab-board"), ("entry", "i-tab-entry"),
-                     ("list", "i-tab-calendar"), ("weekly", "i-tab-weekly"),
+                     ("list", "i-tab-calendar"), ("review", "i-tab-review"),
                      ("settings", "i-tab-settings")]:
         m = re.search(r'<button[^>]*data-tab="%s"[^>]*>(.*?)</button>' % tab, index_html)
         assert m, f"缺少 {tab} Tab"

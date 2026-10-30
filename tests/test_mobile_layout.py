@@ -389,17 +389,17 @@ def test_landscape_compacts_chrome(styles):
 # 浏览器把"建议"那列压到约 30px, 整段中文变成"实/际/比/预/估/多/6/分/钟…"
 # 一行一个字, 单行撑到 250px。与 26c 是同一类病, 治法也相同。
 
-def test_weekly_table_becomes_cards(styles):
-    block = _phone_block(styles, ".weekly-table { display: block; }")
-    assert re.search(r"\.weekly-table thead\s*\{\s*display:\s*none", block)
-    assert re.search(r"\.weekly-table td\s*\{[^}]*display:\s*grid", block)
+def test_review_table_becomes_cards(styles):
+    block = _phone_block(styles, ".review-table { display: block; }")
+    assert re.search(r"\.review-table thead\s*\{\s*display:\s*none", block)
+    assert re.search(r"\.review-table td\s*\{[^}]*display:\s*grid", block)
     assert 'content: attr(data-label)' in block
 
 
-def test_weekly_advice_spans_full_width(styles):
+def test_review_advice_spans_full_width(styles):
     """"建议"是一段话, 不是个值 —— 必须整行, 否则又被压成窄条。"""
-    block = _phone_block(styles, ".weekly-table { display: block; }")
-    adv = re.search(r"\.weekly-table td\.col-advice\s*\{([^}]*)\}", block)
+    block = _phone_block(styles, ".review-table { display: block; }")
+    adv = re.search(r"\.review-table td\.col-advice\s*\{([^}]*)\}", block)
     assert adv, "缺少 col-advice 的整行规则"
     assert "grid-column: 1 / -1" in adv.group(1)
     assert "display: block" in adv.group(1)
@@ -407,17 +407,17 @@ def test_weekly_advice_spans_full_width(styles):
     assert re.search(r"td\.col-advice::before\s*\{\s*content:\s*''", block)
 
 
-def test_weekly_subject_tag_not_stretched(styles):
+def test_review_subject_tag_not_stretched(styles):
     """网格项默认行内轴 stretch, 科目徽章会被拉成横贯整行的色带
     (截图里"语文"两个字占了 311px)。"""
-    block = _phone_block(styles, ".weekly-table { display: block; }")
-    td = re.search(r"\.weekly-table td\s*\{([^}]*)\}", block)
+    block = _phone_block(styles, ".review-table { display: block; }")
+    td = re.search(r"\.review-table td\s*\{([^}]*)\}", block)
     assert "justify-items: start" in td.group(1)
 
 
-def test_weekly_cells_have_labels(app_js):
+def test_review_cells_have_labels(app_js):
     code = "\n".join(l for l in app_js.splitlines() if not l.strip().startswith("//"))
-    block = code.split('class="weekly-table"')[1].split("r.top_overestimate")[0]
+    block = code.split('class="review-table"')[1].split("r.top_overestimate")[0]
     assert block.count("data-label=") == 7, "偏差表 7 列都要有 data-label"
     assert 'class="col-advice"' in block
     # 表头必须是真 thead, 否则窄屏没法整体收起来

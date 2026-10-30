@@ -184,10 +184,10 @@ class SettingPatch(BaseModel):
 
 
 # ====== Analytics ======
-class WeeklyAnalytics(BaseModel):
-    week: Literal["current", "last"]
-    week_start: date
-    week_end: date
+class ReviewAnalytics(BaseModel):
+    period: Literal["current", "last", "month"]
+    period_start: date
+    period_end: date
     sample_size: int
     note: str | None = None
     by_type: list[dict] = []

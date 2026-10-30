@@ -43,7 +43,7 @@ def test_analytics_sample_too_small_rejected(app_client):
     # 只有 2 条完成记录
     _seed_done_record("语文", "背诵", 15, 20, "2026-09-21")
     _seed_done_record("数学", "计算", 10, 12, "2026-09-22")
-    r = app_client.get("/api/analytics/weekly?week=current")
+    r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4011"
 
@@ -59,7 +59,7 @@ def test_analytics_aggregates_by_subject_and_type(app_client):
     fake_today = datetime(2026, 9, 25, 10, 0, 0)
     with patch("app.routers.analytics.datetime") as mock_dt:
         mock_dt.now.return_value = fake_today
-        r = app_client.get("/api/analytics/weekly?week=current")
+        r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 200
     data = r.json()
     assert data["sample_size"] == 6
@@ -74,7 +74,7 @@ def test_observation_excluded_from_analytics(app_client):
     monday = date(2026, 9, 21)
     for i in range(5):
         _seed_done_record("数学", "observation", 10, 30, (monday + timedelta(days=i)).isoformat())
-    r = app_client.get("/api/analytics/weekly?week=current")
+    r = app_client.get("/api/analytics/review?period=current")
     # observation 不计入, 实际样本为 0
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4011"
@@ -84,7 +84,7 @@ def test_optional_excluded_from_analytics(app_client):
     monday = date(2026, 9, 21)
     for i in range(5):
         _seed_done_record("数学", "计算", 10, 30, (monday + timedelta(days=i)).isoformat(), is_optional=True)
-    r = app_client.get("/api/analytics/weekly?week=current")
+    r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4011"
 
@@ -97,13 +97,13 @@ def test_analytics_last_week(app_client):
     fake_today = datetime(2026, 9, 25, 10, 0, 0)
     with patch("app.routers.analytics.datetime") as mock_dt:
         mock_dt.now.return_value = fake_today
-        r = app_client.get("/api/analytics/weekly?week=last")
+        r = app_client.get("/api/analytics/review?period=last")
     assert r.status_code == 200
-    assert r.json()["week"] == "last"
+    assert r.json()["period"] == "last"
 
 
-def test_analytics_invalid_week(app_client):
-    r = app_client.get("/api/analytics/weekly?week=banana")
+def test_analytics_invalid_period(app_client):
+    r = app_client.get("/api/analytics/review?period=banana")
     # Query pattern regex 失败 -> RequestValidationError -> 4003
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4003"
@@ -120,7 +120,7 @@ def test_analytics_missing_actual_falls_back_to_est(app_client):
     fake_today = datetime(2026, 9, 25, 10, 0, 0)
     with patch("app.routers.analytics.datetime") as mock_dt:
         mock_dt.now.return_value = fake_today
-        r = app_client.get("/api/analytics/weekly?week=current")
+        r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 200
     data = r.json()
     # 关键: 以前会被 actual_minutes IS NOT NULL 滤掉而报 4011
@@ -142,7 +142,7 @@ def test_analytics_mixed_filled_and_missing_actual(app_client):
     fake_today = datetime(2026, 9, 25, 10, 0, 0)
     with patch("app.routers.analytics.datetime") as mock_dt:
         mock_dt.now.return_value = fake_today
-        r = app_client.get("/api/analytics/weekly?week=current")
+        r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 200
     row = r.json()["by_type"][0]
     assert row["sample_size"] == 5
@@ -158,7 +158,7 @@ def test_analytics_missing_actual_not_double_counted(app_client):
     for i in range(5):
         _seed_record("语文", "阅读", 15, None, (monday + timedelta(days=i)).isoformat(),
                      status="todo")
-    r = app_client.get("/api/analytics/weekly?week=current")
+    r = app_client.get("/api/analytics/review?period=current")
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "4011"
 
@@ -442,23 +442,210 @@ def test_empty_week_returns_zeros_not_error():
     assert all(d["total_minutes"] == 0 for d in r["days"])
 
 
+# ====== 各科时间占比 (饼图数据源, 2026-10-29) ======
+#
+# 复盘页的两张饼图 (预计 / 实际) 与上面的逐日用时共用同一批样本、同一套
+# 口径。这里守的是两件事:
+#   1. 预计与实际必须分开累加 —— 合成一个数就画不出两张图, 而且
+#      "估得准不准"这个信息会整个消失;
+#   2. 实际环的合计必须等于柱状图的总用时 —— 两处对不上账, 家长会
+#      先怀疑图, 再怀疑数据, 最后不再信这页。
+
+
+def test_subject_share_splits_est_and_actual():
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, 10, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"] == {"语文": 30, "数学": 20}
+    assert share["est"]["total_minutes"] == 50
+    assert share["actual"]["by_subject"] == {"语文": 50, "数学": 10}
+    assert share["actual"]["total_minutes"] == 60
+
+
+def test_subject_share_actual_total_matches_daily_totals():
+    """实际环合计 === 柱状图各天合计。两条数字必须来自同一批作业。"""
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, None, "2026-10-13")  # 未填 -> 按预估
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    day_total = sum(d["total_minutes"] for d in r["days"])
+    assert r["subject_share"]["actual"]["total_minutes"] == day_total
+
+
+def test_subject_share_missing_actual_falls_back_to_est():
+    """未填实耗的按预估顶替 —— 与逐日用时同一口径, 两张图才对得上。"""
+    _seed_done_record("英语", "背诵", 25, None, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"]["英语"] == 25
+    assert share["actual"]["by_subject"]["英语"] == 25
+
+
+def test_subject_share_observation_excluded_optional_included():
+    """观察作业不产生书写负担, 不进占比; 选做进 (选了又做了, 时间就花了)。"""
+    _seed_done_record("语文", "observation", 30, 30, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, 20, "2026-10-12", is_optional=True)
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert r["subject_share"]["actual"]["by_subject"] == {"数学": 20}
+
+
+def test_subject_share_counts_whole_week_including_weekend():
+    """占比看的是整周: 周末真写了的时间也是家长付出的, 不该被抹掉。"""
+    _seed_done_record("语文", "阅读", 30, 30, "2026-10-18")  # 周日
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert r["subject_share"]["actual"]["total_minutes"] == 30
+    assert r["weekend"]["total_minutes"] == 30
+
+
+def test_subject_share_empty_week_is_zero():
+    """空周返回全 0 而不是抛错 —— 复盘页不该整块崩掉。"""
+    r = build_daily_time_stats("current", date(2026, 7, 6))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"] == {}
+    assert share["est"]["total_minutes"] == 0
+    assert share["actual"]["by_subject"] == {}
+    assert share["actual"]["total_minutes"] == 0
+
+
+def test_subject_share_order_follows_config_subjects():
+    """饼图扇形顺序必须固定 (语->数->英), 颜色才对得上科目。"""
+    for subj in ("英语", "数学", "语文"):
+        _seed_done_record(subj, "阅读", 10, 10, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert list(r["subject_share"]["est"]["by_subject"].keys()) == ["语文", "数学", "英语"]
+
+
+# ====== 本月统计 (2026-10-30) ======
+#
+# 复盘页新增"本月"周期。月的口径与周有两处根本不同, 都在这组用例里锁住:
+#   1. 区间是"1 日至今日"而不是整月 —— 未来的日子没有数据, 算进分母
+#      会把日均稀释成假的;
+#   2. 各档天数相差悬殊 (平日二十来天 vs 周五四五天), 所以每档都要给日均,
+#      只给合计的话横向比的是"哪档天多"而不是"哪档更重"。
+
+
+def test_month_range_starts_at_first_and_ends_today():
+    """本月 = 当月 1 日至今日 (不含未来)。"""
+    r = build_daily_time_stats("month", date(2026, 10, 15))
+    assert r["period_start"] == "2026-10-01"
+    assert r["period_end"] == "2026-10-15"
+    assert len(r["days"]) == 15
+
+
+def test_month_excludes_future_days():
+    """今天之后的作业不该进本月统计。
+
+    反例: today=10/15 时 10/20 那天的作业如果被算进来, 区间长度会
+    多出 5 天, 而这几天一分用时都没有 —— 平日日均直接被稀释。
+    """
+    _seed_done_record("语文", "阅读", 40, 40, "2026-10-20")
+    r = build_daily_time_stats("month", date(2026, 10, 15))
+    assert r["period_end"] == "2026-10-15"
+    assert all(d["date"] <= "2026-10-15" for d in r["days"])
+    assert r["plain_avg"]["total_minutes"] == 0
+
+
+def test_month_covers_days_before_today_in_same_month():
+    """本月要把当月已过去的日子都算进来, 不能只算今天。"""
+    _seed_done_record("语文", "阅读", 30, 30, "2026-10-02")
+    _seed_done_record("数学", "计算", 20, 20, "2026-10-14")
+    r = build_daily_time_stats("month", date(2026, 10, 15))
+    d2 = next(x for x in r["days"] if x["date"] == "2026-10-02")
+    d14 = next(x for x in r["days"] if x["date"] == "2026-10-14")
+    assert d2["total_minutes"] == 30
+    assert d14["total_minutes"] == 20
+
+
+def test_month_buckets_expose_daily_average():
+    """每档都要给日均 —— 月里各档天数差几倍, 只看合计没法比。
+
+    2026-10-15 (周四) 为例: 10/1~10/7 国庆假期, 10/8 起复课。
+    平日档 = 10/8 + 10/12~10/15 共 5 天, 周五 = 10/9, 调休 = 10/10,
+    休息 = 10/11。
+    """
+    r = build_daily_time_stats("month", date(2026, 10, 15))
+    for bucket in ("friday", "weekend", "makeup"):
+        assert "avg_minutes" in r[bucket], f"{bucket} 缺 avg_minutes"
+    assert r["plain_avg"]["days"] == 5
+    assert r["friday"]["days"] == 1  # 10/9
+    assert r["weekend"]["days"] == 1  # 10/11 (10/10 是调休, 算上学日)
+    assert r["makeup"]["days"] == 1  # 10/10
+    assert r["school_day_count"] == 7
+
+
+def test_month_bucket_avg_matches_total_over_days():
+    """avg_minutes 必须等于合计除以天数, 不能是别的口径。"""
+    _seed_done_record("语文", "阅读", 40, 40, "2026-10-09")  # 周五
+    r = build_daily_time_stats("month", date(2026, 10, 15))
+    fri = r["friday"]
+    assert fri["days"] == 1
+    assert fri["total_minutes"] == 40
+    assert fri["avg_minutes"] == 40.0
+
+
+def test_month_deviation_aggregates_whole_month(app_client):
+    """偏差表按整月聚合, 样本远多于一周。"""
+    for day in range(1, 11):
+        _seed_done_record("语文", "背诵", 15, 25, f"2026-10-{day:02d}")
+    fake_today = datetime(2026, 10, 15, 10, 0, 0)
+    with patch("app.routers.analytics.datetime") as mock_dt:
+        mock_dt.now.return_value = fake_today
+        r = app_client.get("/api/analytics/review?period=month")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["period"] == "month"
+    assert data["period_start"] == "2026-10-01"
+    assert data["period_end"] == "2026-10-15"
+    assert data["sample_size"] == 10
+
+
+def test_month_period_is_accepted_by_api(app_client):
+    """接口认得 period=month, 且非法值仍被拒。"""
+    assert app_client.get("/api/analytics/review-time?period=month").status_code == 200
+    assert app_client.get("/api/analytics/review?period=month").status_code in (200, 400)
+
+
+def test_month_empty_range_returns_zeros_not_error():
+    """本月还没有任何数据时返回全 0, 不能抛错 —— 复盘页不该整块崩掉。
+
+    2026-07-06 (周一): 7/1~7/6 共 6 天, 平日档 = 7/1(周三)、7/2(周四)、
+    7/6(周一) 共 3 天, 周五 = 7/3, 周末 = 7/4、7/5。
+    """
+    r = build_daily_time_stats("month", date(2026, 7, 6))
+    assert r["plain_avg"]["total_minutes"] == 0
+    assert r["plain_avg"]["days"] == 3
+    assert r["school_day_count"] == 4
+    assert all(d["total_minutes"] == 0 for d in r["days"])
+
+
 # ====== API ======
 
-def test_weekly_time_endpoint_returns_200(app_client):
+def test_review_time_endpoint_returns_200(app_client):
     """独立接口: 不受偏差表"样本 < 5 就 4011"的连累。
 
     一周只完成 3 条作业时偏差表算不出来, 但用时统计照样有结论 ——
     挂在同一条接口后面会被 4011 一起藏掉。
     """
-    r = app_client.get("/api/analytics/weekly-time?week=current")
+    r = app_client.get("/api/analytics/review-time?period=current")
     assert r.status_code == 200
     data = r.json()
     for k in ("days", "plain_avg", "friday", "weekend", "makeup",
-              "school_day_count", "excluded_days", "school_avg"):
+              "school_day_count", "excluded_days", "school_avg",
+              "subject_share"):
         assert k in data, f"缺少字段 {k}"
 
 
-def test_weekly_time_works_with_fewer_than_five_samples(app_client):
+def test_review_time_endpoint_returns_subject_share(app_client):
+    """饼图数据源在同一条接口里, 结构固定: 预估/实际各一份, 各带 by_subject 与合计。"""
+    r = app_client.get("/api/analytics/review-time?period=current")
+    share = r.json()["subject_share"]
+    for side in ("est", "actual"):
+        assert side in share, f"缺少 {side}"
+        assert "by_subject" in share[side]
+        assert "total_minutes" in share[side]
+
+
+def test_review_time_works_with_fewer_than_five_samples(app_client):
     """只有 3 条完成时偏差表报 4011, 用时接口必须照常返回。
 
     日期按真实"本周一"推算 —— 直接写死 2026-09-21 的话, 那些数据落在
@@ -471,15 +658,15 @@ def test_weekly_time_works_with_fewer_than_five_samples(app_client):
     for i in range(3):
         _seed_done_record("语文", "阅读", 20, 20, (monday + _dt.timedelta(days=i)).isoformat())
 
-    assert app_client.get("/api/analytics/weekly?week=current").status_code == 400, \
+    assert app_client.get("/api/analytics/review?period=current").status_code == 400, \
         "3 条样本应触发偏差表的样本不足"
-    r = app_client.get("/api/analytics/weekly-time?week=current")
+    r = app_client.get("/api/analytics/review-time?period=current")
     assert r.status_code == 200
     assert r.json()["plain_avg"]["total_minutes"] > 0, "用时统计应照常给出结论"
 
 
-def test_weekly_time_invalid_week_rejected(app_client):
-    r = app_client.get("/api/analytics/weekly-time?week=banana")
+def test_review_time_invalid_period_rejected(app_client):
+    r = app_client.get("/api/analytics/review-time?period=banana")
     assert r.status_code == 400
 
 
@@ -496,21 +683,21 @@ def _code(js: str) -> str:
     return "\n".join(l for l in js.splitlines() if not l.strip().startswith("//"))
 
 
-def test_load_weekly_clears_container_before_append():
-    """切「本周 / 上周」必须先清空容器。
+def test_load_review_clears_container_before_append():
+    """切「本周 / 上周 / 本月」必须先清空容器。
 
     回归: 用时统计与偏差表都是 appendChild 进去的, 不清空的话点「上周」
     会在旧的一周下面**再接一周** —— 页面上同时出现两周的柱子与分档卡,
     家长会以为那是"两周合计"。
     """
-    body = _code(_app_js()).split("async function loadWeekly(week) {")[1].split("\n}")[0]
+    body = _code(_app_js()).split("async function loadReview(period) {")[1].split("\n}")[0]
     clear = body.find("root.innerHTML = ''")
     first_append = body.find("root.appendChild")
-    assert clear >= 0, "loadWeekly 必须先清空 weekly-content"
+    assert clear >= 0, "loadReview 必须先清空 review-content"
     assert first_append > clear, "清空必须发生在 appendChild 之前"
 
 
-def test_load_weekly_has_no_stuck_loading_placeholder():
+def test_load_review_has_no_stuck_loading_placeholder():
     """不要用 innerHTML 塞「加载中…」占位。
 
     回归: 两块内容都用 appendChild 追加, appendChild 顶不掉先放进去的
@@ -519,7 +706,7 @@ def test_load_weekly_has_no_stuck_loading_placeholder():
     必须先剥注释 —— 这条断言本身就得在注释里解释"为什么不能写加载中",
     不剥的话它会匹配到自己。
     """
-    body = _code(_app_js()).split("async function loadWeekly(week) {")[1].split("\n}")[0]
+    body = _code(_app_js()).split("async function loadReview(period) {")[1].split("\n}")[0]
     assert "加载中" not in body, "占位不会被 appendChild 顶掉, 会永久残留"
 
 
@@ -528,6 +715,150 @@ def test_deviation_table_still_renders():
     js = _app_js()
     assert "function renderDeviationTable(" in js
     assert '<th>偏差</th>' in js
+
+
+# ====== 各科时间占比饼图 (前端接线) ======
+
+def test_subject_share_pies_are_rendered():
+    """饼图必须有, 且是两张 (预计 / 实际) —— 合成一张就看不出差异。"""
+    js = _app_js()
+    assert "function renderSubjectShare(" in js
+    assert "function renderPie(" in js
+    body = _code(js).split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
+    assert "预计时间占比" in body
+    assert "实际时间占比" in body
+    assert body.count("renderPie(") >= 2, "预计与实际必须各画一张饼"
+
+
+def test_subject_share_is_wired_into_review_block():
+    """用时统计块里必须真的调了饼图, 否则后端给了数据界面上没有。"""
+    body = _code(_app_js()).split("async function loadReviewTime(period) {")[1] \
+        .split("\nfunction ")[0]
+    assert "renderSubjectShare(view)" in body
+
+
+# ====== 本月: 前端接线 (2026-10-30) ======
+
+def test_period_buttons_offer_week_last_and_month():
+    """复盘页必须有 本周 / 上周 / 本月 三个周期按钮。
+
+    少了「本月」这页就只剩按周统计, 用户要自己数月份 —— 那正是加这功能的
+    理由。data-period 的取值必须与后端 PERIOD_PATTERN 一致。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "app/static/index.html").read_text(encoding="utf-8")
+    for period, label in [("current", "本周"), ("last", "上周"), ("month", "本月")]:
+        m = re.search(
+            r'<button[^>]*data-period="%s"[^>]*>(.*?)</button>' % period, html, re.S)
+        assert m, f"缺少 {label} 周期按钮"
+        assert re.sub(r"<[^>]+>", "", m.group(1)).strip() == label, m.group(1)
+
+
+def test_period_buttons_drive_load_review():
+    """按钮必须把 period 传给后端, 而不是写死某一周。
+
+    周期切换统一走 setReviewPeriod (按钮高亮与数据加载在同一个函数里,
+    否则两者会脱节 —— 详见 test_weekend_toggle.py 的说明)。
+    """
+    code = _code(_app_js())
+    m = re.search(r"\.period-btn'\)\.forEach\(b => \{(.*?)\n\}\);", code, re.S)
+    assert m, "找不到周期按钮的点击处理"
+    assert "setReviewPeriod(b.dataset.period)" in m.group(1)
+
+
+def test_review_api_uses_period_param():
+    """两条接口都用 period 参数 —— 后端已不接受 week=。"""
+    code = _code(_app_js())
+    assert "/analytics/review?period=" in code
+    assert "/analytics/review-time?period=" in code
+    assert "week=" not in code, "接口参数已改成 period, 不该再有 week="
+
+
+def test_chart_adapts_to_many_days():
+    """一个月的三十来天塞进同一张图, 标签必须按密度减。
+
+    回归风险: 沿用 7 天那套画法 (每格都写星期名 + 柱内数字 + 柱顶总数),
+    30 格每格才 21px, 文字会互相压, 整张图糊成一片。
+    """
+    code = _code(_app_js())
+    body = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
+    assert "const n = days.length;" in body, "柱子数必须按实际天数算, 不能写死 7"
+    assert "const dense = n > 10;" in body, "必须有密集视图的分支"
+    assert "plotW / 7" not in body, "格子宽度不能写死 7 天"
+
+
+def test_month_view_shows_daily_average_per_bucket():
+    """月视图各档以日均为主, 合计退到小字 —— 天数差几倍时合计没法比。"""
+    code = _code(_app_js())
+    body = code.split("function renderBuckets(r, withWeekend) {")[1].split("\nfunction ")[0]
+    assert "isMonth" in body
+    assert "avg_minutes" in body, "月视图要用后端给的各档日均"
+
+
+def test_period_label_map_covers_all_three():
+    """前端文案用的周期名要覆盖三个取值, 否则会显示 undefined。"""
+    js = _app_js()
+    m = re.search(r"const PERIOD_LABEL = \{(.*?)\}", js, re.S)
+    assert m, "缺少 PERIOD_LABEL"
+    for period in ("current", "last", "month"):
+        assert re.search(r"\b%s\s*:" % period, m.group(1)), f"PERIOD_LABEL 缺 {period}"
+
+
+def test_review_page_path_renamed_to_review():
+    """复盘页路径由 weekly 改为 review —— 页面上有按月统计了, 名字要跟上。
+
+    前后端两侧都要改: 前端 hash 路由 + 后端 FRONTEND_PAGES 兜底清单,
+    少改一处就会出现"点菜单能进, 直接输 /review 就 404"。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "app/static/app.js").read_text(encoding="utf-8")
+    html = (root / "app/static/index.html").read_text(encoding="utf-8")
+    main_py = (root / "app/main.py").read_text(encoding="utf-8")
+    assert "'review'" in js and "'weekly'" not in js, "前端路由表应只有 review"
+    assert 'data-tab="review"' in html
+    assert 'id="view-review"' in html
+    assert '"review"' in main_py and '"weekly"' not in main_py
+
+
+def test_subject_share_skipped_when_week_has_no_time():
+    """整周零用时不画饼图 —— 页面里只留一处空态, 不塞两个空饼。
+
+    调用方必须判空再 appendChild: 直接 appendChild(null) 会在页面上
+    留下一个字面量 "null"。
+    """
+    code = _code(_app_js())
+    body = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
+    assert "if (!estTotal && !actTotal) return null;" in body
+    call = code.split("async function loadReviewTime(period) {")[1].split("\nfunction ")[0]
+    assert "if (pies) wrap.appendChild(pies);" in call
+
+
+def test_pie_uses_fixed_subject_order():
+    """扇形顺序必须走 orderedSubjects, 不能用 Object.entries (键序不定)。"""
+    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
+    assert "orderedSubjects(bySubject)" in body
+    assert "Object.entries(bySubject)" not in body
+
+
+def test_pie_labels_subject_name_on_slice():
+    """科目名必须直接标在扇形上, 不用在图例和色块之间来回对照。"""
+    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
+    assert 'class="wt-pie-label"' in body
+    assert "${escapeAttr(name)}</text>" in body
+    # 放不下时要退一档只留名字, 而不是把字挤到相邻扇形上
+    assert "pieLabelTier(frac)" in body
+
+
+def test_pie_grid_places_two_charts_side_by_side():
+    """两张饼并排。窄屏靠 grid 的 auto-fit 自动换行, 不另写断点。"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "app/static/styles.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.wt-pies\s*\{([^}]*)\}", css)
+    assert rule, "缺少 .wt-pies 的栅格规则"
+    assert "repeat(auto-fit, minmax(220px, 1fr))" in rule.group(1)
 
 
 # ====== 科目顺序固定 (语 -> 数 -> 英) ======
@@ -609,7 +940,7 @@ def test_plain_avg_order_and_chart_order_agree():
     """
     code = _code(_app_js())
     chart = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
-    buckets = code.split("function renderBuckets(r) {")[1].split("\nfunction ")[0]
+    buckets = code.split("function renderBuckets(r, withWeekend) {")[1].split("\nfunction ")[0]
     assert "orderedSubjects(d.by_subject)" in chart
     assert "orderedSubjects(pa.by_subject)" in buckets
 
@@ -727,164 +1058,3 @@ def test_health_response_shape(app_client):
     data = r.json()
     for k in ("status", "ai_reachable", "ai_model", "db_ok"):
         assert k in data
-
-
-
-def test_subject_share_splits_est_and_actual():
-    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
-    _seed_done_record("数学", "计算", 20, 10, "2026-10-12")
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    share = r["subject_share"]
-    assert share["est"]["by_subject"] == {"语文": 30, "数学": 20}
-    assert share["est"]["total_minutes"] == 50
-    assert share["actual"]["by_subject"] == {"语文": 50, "数学": 10}
-    assert share["actual"]["total_minutes"] == 60
-
-
-
-def test_subject_share_actual_total_matches_daily_totals():
-    """实际环合计 === 柱状图各天合计。两条数字必须来自同一批作业。"""
-    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
-    _seed_done_record("数学", "计算", 20, None, "2026-10-13")  # 未填 -> 按预估
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    day_total = sum(d["total_minutes"] for d in r["days"])
-    assert r["subject_share"]["actual"]["total_minutes"] == day_total
-
-
-
-def test_subject_share_missing_actual_falls_back_to_est():
-    """未填实耗的按预估顶替 —— 与逐日用时同一口径, 两张图才对得上。"""
-    _seed_done_record("英语", "背诵", 25, None, "2026-10-12")
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    share = r["subject_share"]
-    assert share["est"]["by_subject"]["英语"] == 25
-    assert share["actual"]["by_subject"]["英语"] == 25
-
-
-
-def test_subject_share_observation_excluded_optional_included():
-    """观察作业不产生书写负担, 不进占比; 选做进 (选了又做了, 时间就花了)。"""
-    _seed_done_record("语文", "observation", 30, 30, "2026-10-12")
-    _seed_done_record("数学", "计算", 20, 20, "2026-10-12", is_optional=True)
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    assert r["subject_share"]["actual"]["by_subject"] == {"数学": 20}
-
-
-
-def test_subject_share_counts_whole_week_including_weekend():
-    """占比看的是整周: 周末真写了的时间也是家长付出的, 不该被抹掉。"""
-    _seed_done_record("语文", "阅读", 30, 30, "2026-10-18")  # 周日
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    assert r["subject_share"]["actual"]["total_minutes"] == 30
-    assert r["weekend"]["total_minutes"] == 30
-
-
-
-def test_subject_share_empty_week_is_zero():
-    """空周返回全 0 而不是抛错 —— 复盘页不该整块崩掉。"""
-    r = build_daily_time_stats("current", date(2026, 7, 6))
-    share = r["subject_share"]
-    assert share["est"]["by_subject"] == {}
-    assert share["est"]["total_minutes"] == 0
-    assert share["actual"]["by_subject"] == {}
-    assert share["actual"]["total_minutes"] == 0
-
-
-
-def test_subject_share_order_follows_config_subjects():
-    """饼图扇形顺序必须固定 (语->数->英), 颜色才对得上科目。"""
-    for subj in ("英语", "数学", "语文"):
-        _seed_done_record(subj, "阅读", 10, 10, "2026-10-12")
-    r = build_daily_time_stats("current", date(2026, 10, 15))
-    assert list(r["subject_share"]["est"]["by_subject"].keys()) == ["语文", "数学", "英语"]
-
-
-# ====== 本月统计 (2026-10-30) ======
-#
-# 复盘页新增"本月"周期。月的口径与周有两处根本不同, 都在这组用例里锁住:
-#   1. 区间是"1 日至今日"而不是整月 —— 未来的日子没有数据, 算进分母
-#      会把日均稀释成假的;
-#   2. 各档天数相差悬殊 (平日二十来天 vs 周五四五天), 所以每档都要给日均,
-#      只给合计的话横向比的是"哪档天多"而不是"哪档更重"。
-
-
-
-def test_weekly_time_endpoint_returns_subject_share(app_client):
-    """饼图数据源在同一条接口里, 结构固定: 预估/实际各一份, 各带 by_subject 与合计。"""
-    r = app_client.get("/api/analytics/weekly-time?week=current")
-    share = r.json()["subject_share"]
-    for side in ("est", "actual"):
-        assert side in share, f"缺少 {side}"
-        assert "by_subject" in share[side]
-        assert "total_minutes" in share[side]
-
-
-
-def test_subject_share_pies_are_rendered():
-    """饼图必须有, 且是两张 (预计 / 实际) —— 合成一张就看不出差异。"""
-    js = _app_js()
-    assert "function renderSubjectShare(" in js
-    assert "function renderPie(" in js
-    body = _code(js).split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
-    assert "预计时间占比" in body
-    assert "实际时间占比" in body
-    assert body.count("renderPie(") >= 2, "预计与实际必须各画一张饼"
-
-
-
-def test_subject_share_is_wired_into_weekly_block():
-    """用时统计块里必须真的调了饼图, 否则后端给了数据界面上没有。"""
-    body = _code(_app_js()).split("async function loadWeeklyTime(week) {")[1] \
-        .split("\nfunction ")[0]
-    assert "renderSubjectShare(r)" in body
-
-
-# ====== 本月: 前端接线 (2026-10-30) ======
-
-
-
-def test_subject_share_skipped_when_week_has_no_time():
-    """整周零用时不画饼图 —— 页面里只留一处空态, 不塞两个空饼。
-
-    调用方必须判空再 appendChild: 直接 appendChild(null) 会在页面上
-    留下一个字面量 "null"。
-    """
-    code = _code(_app_js())
-    body = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
-    assert "if (!estTotal && !actTotal) return null;" in body
-    call = code.split("async function loadWeeklyTime(week) {")[1].split("\nfunction ")[0]
-    assert "if (pies) wrap.appendChild(pies);" in call
-
-
-
-def test_pie_uses_fixed_subject_order():
-    """扇形顺序必须走 orderedSubjects, 不能用 Object.entries (键序不定)。"""
-    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
-    assert "orderedSubjects(bySubject)" in body
-    assert "Object.entries(bySubject)" not in body
-
-
-
-def test_pie_labels_subject_name_on_slice():
-    """科目名必须直接标在扇形上, 不用在图例和色块之间来回对照。"""
-    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
-    assert 'class="wt-pie-label"' in body
-    assert "${escapeAttr(name)}</text>" in body
-    # 放不下时要退一档只留名字, 而不是把字挤到相邻扇形上
-    assert "pieLabelTier(frac)" in body
-
-
-
-def test_pie_grid_places_two_charts_side_by_side():
-    """两张饼并排。窄屏靠 grid 的 auto-fit 自动换行, 不另写断点。"""
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1]
-    css = (root / "app/static/styles.css").read_text(encoding="utf-8")
-    rule = re.search(r"\.wt-pies\s*\{([^}]*)\}", css)
-    assert rule, "缺少 .wt-pies 的栅格规则"
-    assert "repeat(auto-fit, minmax(220px, 1fr))" in rule.group(1)
-
-
-# ====== 科目顺序固定 (语 -> 数 -> 英) ======
-# 用户要求: 每天各科按固定顺序堆叠。不固定的话色块位置逐日变化
-# (取决于入库顺序), 家长没法把颜色对应到科目, 堆叠图就失去意义。

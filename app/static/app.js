@@ -222,10 +222,13 @@ function toast(msg, ms = 3000) {
 // ====== Tab 切换 + hash 路由 (2026-09-28) ======
 // 每个菜单页有独立 URI, 方便直接打开/收藏/分享:
 //   #/board 看板  #/entry 登记  #/list 日历
-//   #/weekly 复盘  #/settings 设置
+//   #/review 复盘  #/settings 设置
 // 用 hash 而非 /board 真实路径: 无需后端配合、刷新不会 404,
 // 且不会与将来的 /api/* 路由抢前缀。
-const TABS = ['board', 'entry', 'list', 'weekly', 'settings'];
+//
+// 复盘页原名 weekly (2026-10-30 改名 review): 该页除按周外还提供
+// "本月", 名字里带 weekly 已与内容不符。
+const TABS = ['board', 'entry', 'list', 'review', 'settings'];
 const DEFAULT_TAB = 'board';
 
 // 抑制 hashchange 回调里的再次写回, 否则 switchTab <-> hashchange
@@ -271,7 +274,9 @@ function switchTab(name, opts) {
     loadCalendar();
     if (_calSelected) loadList(_calSelected);
   }
-  if (tab === 'weekly') loadWeekly('current');
+  // 复盘页保留上次选的周期 (与日历页保留上次翻到的月份同理), 别把家长
+  // 刚选好的「本月」又弹回「本周」。
+  if (tab === 'review') setReviewPeriod(_reviewPeriod);
   if (tab === 'settings') loadSettings();
 }
 document.querySelectorAll('#tabs button').forEach(btn => {
@@ -2149,18 +2154,80 @@ document.getElementById('btn-load-yesterday').addEventListener('click', () => {
 });
 
 // ====== 复盘 ======
-document.querySelectorAll('.week-btn').forEach(b => {
-  b.addEventListener('click', () => {
-    document.querySelectorAll('.week-btn').forEach(x => {
-      x.classList.remove('primary'); x.classList.add('ghost');
-    });
-    b.classList.remove('ghost'); b.classList.add('primary');
-    loadWeekly(b.dataset.week);
+// 统计周期: 本周 / 上周 / 本月。period 的取值与后端一致
+// (app/routers/analytics.py 的 PERIOD_PATTERN), 别处不要另起一套名字。
+const PERIOD_LABEL = { current: '本周', last: '上周', month: '本月' };
+
+// 当前选中的周期。切走再切回时要用同一个周期重画, 否则高亮的按钮
+// 与画出来的数据对不上 (点「本月」-> 去看板 -> 回来, 按钮还亮着「本月」,
+// 但画的是「本周」)。
+let _reviewPeriod = 'current';
+
+// ====== 周末显示开关 (2026-10-30) ======
+// 默认不展示。作业都在上学最后一天 (通常周五) 布置, 周末既没有作业,
+// 也不存在"上了学却没写"的情况 —— 留着只是两根空柱和一张 0 分钟的卡,
+// 看着像漏统计, 实际什么也没有。
+//
+// 只影响前端展示: 后端的统计口径一律不动 (平日日均、偏差表、占比饼图的
+// 算法与数值都不变), 只是不把周末那两天画出来。
+//
+// 存 localStorage 而不是后端设置项: 这是纯显示偏好, 放后端的话设置页会
+// 多一行看不懂的 true/false 文本框, 还得多一套 bool 类型的校验。
+const SHOW_WEEKEND_KEY = 'review_show_weekend';
+
+function showWeekend() {
+  try {
+    return localStorage.getItem(SHOW_WEEKEND_KEY) === '1';
+  } catch (e) {
+    return false;  // 隐私模式等禁用 localStorage 时退回默认
+  }
+}
+
+function setShowWeekend(on) {
+  try {
+    localStorage.setItem(SHOW_WEEKEND_KEY, on ? '1' : '0');
+  } catch (e) {
+    // 存不了就算了, 只是这次不记住 —— 不该因此报错挡住页面
+  }
+}
+
+// 切换统计周期。按钮高亮与数据必须一起走这里 —— 以前高亮由点击事件
+// 单独改, 而 switchTab 进页面时又固定 loadReview('current'), 两者会
+// 脱节: 家长选了「本月」, 切去看板再回来, 数据变成「本周」而按钮还亮着
+// 「本月」。
+function setReviewPeriod(period) {
+  _reviewPeriod = period;
+  document.querySelectorAll('.period-btn').forEach(x => {
+    const on = x.dataset.period === period;
+    x.classList.toggle('primary', on);
+    x.classList.toggle('ghost', !on);
   });
+  loadReview(period);
+}
+
+document.querySelectorAll('.period-btn').forEach(b => {
+  b.addEventListener('click', () => setReviewPeriod(b.dataset.period));
 });
 
-async function loadWeekly(week) {
-  const root = document.getElementById('weekly-content');
+// 周末开关: 勾上 = 画出周末那两天。切换后按当前周期重画。
+const weekendBox = document.getElementById('chk-weekend');
+if (weekendBox) {
+  const syncWeekendToggle = () => {
+    weekendBox.checked = showWeekend();
+    // 勾上后文字加深 (不用 :has(), 那在老浏览器里整条规则失效)
+    weekendBox.closest('.weekend-toggle')?.classList.toggle('is-on', weekendBox.checked);
+  };
+  syncWeekendToggle();
+  weekendBox.addEventListener('change', () => {
+    setShowWeekend(weekendBox.checked);
+    syncWeekendToggle();
+    loadReview(_reviewPeriod);
+  });
+}
+
+async function loadReview(period) {
+  _reviewPeriod = period;
+  const root = document.getElementById('review-content');
   // 必须清空: 下面两块是 appendChild 进去的, 不会自动顶掉旧内容。
   // 不清的话点「上周」会在旧的一周下面再接一周, 页面越点越长。
   // 这里不用 innerHTML 塞「加载中…」占位 —— 两条接口并发返回后追加,
@@ -2168,28 +2235,28 @@ async function loadWeekly(week) {
   // 留着一行永远不消失的"加载中…"。
   root.innerHTML = '';
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
-  // (见 /analytics/weekly-time 的说明), 所以顺序不能反过来等 —— 先 await
+  // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
-  const timeP = loadWeeklyTime(week).catch(
+  const timeP = loadReviewTime(period).catch(
     e => el(`<div class="error-banner">用时统计加载失败: ${e.message}</div>`));
-  const devP = loadWeeklyDeviation(week);
+  const devP = loadReviewDeviation(period);
   root.appendChild(await timeP);
   root.appendChild(await devP);
 }
 
 // 偏差表单独包一层: 它有"样本不足"这个正常分支, 不该把异常抛到调用方,
 // 否则上面已经渲染好的用时统计会被一起清掉。
-async function loadWeeklyDeviation(week) {
+async function loadReviewDeviation(period) {
   try {
-    const r = await api('GET', `/analytics/weekly?week=${week}`);
-    const box = el(`<div class="weekly-deviation">
+    const r = await api('GET', `/analytics/review?period=${period}`);
+    const box = el(`<div class="review-deviation">
       <div class="card">
-        <strong>${r.week_start} ~ ${r.week_end}</strong>
+        <strong>${r.period_start} ~ ${r.period_end}</strong>
         <span class="muted"> · 样本 ${r.sample_size} 条</span>
       </div>
     </div>`);
     if (!r.by_type.length) {
-      box.appendChild(el(`<div class="muted">${r.note || '本周无完成数据'}</div>`));
+      box.appendChild(el(`<div class="muted">${r.note || `${PERIOD_LABEL[period] || '本周'}无完成数据`}</div>`));
     } else {
       renderDeviationTable(box, r);
     }
@@ -2231,9 +2298,28 @@ const DAY_KIND_META = {
   holiday:{ label: '假期',   hint: '法定假日, 不计入平均' },
 };
 
-async function loadWeeklyTime(week) {
-  const r = await api('GET', `/analytics/weekly-time?week=${week}`);
+async function loadReviewTime(period) {
+  const r = await api('GET', `/analytics/review-time?period=${period}`);
   const wrap = el('<div class="wt-block"></div>');
+  const isMonth = r.period === 'month';
+  const label = PERIOD_LABEL[period] || '本周';
+  const withWeekend = showWeekend();
+
+  // 周末 (kind='off', 不上学的普通休息日) 在实际使用中几乎没有作业:
+  // 作业都在上学最后一天 (通常周五) 布置, 所以周末那两天往往既没数据
+  // 也没"上了学却没写"的情况 —— 画出来只是两根空柱 + 一张 0 分钟的卡。
+  //
+  // 只按 kind 精确过滤, 不按星期几过滤: 调休上班的周六 (kind='makeup')
+  // 与法定假期 (kind='holiday') 都落在周六周日, 但它们是有真实作业的上
+  // 学日, 藏起来等于丢数据。
+  //
+  // 统计口径一律不动: 平日日均、占比饼图、偏差表都是后端算好的, 原样用。
+  // 这里只决定"哪些天要画出来"。
+  const view = withWeekend ? r : {
+    ...r,
+    days: r.days.filter(d => d.kind !== 'off'),
+    excluded_days: (r.excluded_days || []).filter(e => e.kind !== 'off'),
+  };
 
   // ===== 概览卡 =====
   const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
@@ -2247,7 +2333,7 @@ async function loadWeeklyTime(week) {
         <div class="wt-head-side">
           <div class="muted">上学日</div>
           <div class="wt-side-num">${r.school_day_count}<span class="wt-unit-sm"> 天</span></div>
-          <div class="muted">统计区间 ${r.week_start.slice(5)} ~ ${r.week_end.slice(5)}</div>
+          <div class="muted">统计区间 ${r.period_start.slice(5)} ~ ${r.period_end.slice(5)}${isMonth ? ' (至今)' : ''}</div>
         </div>
       </div>
       <div class="muted wt-scope">口径: 只算已完成作业 (跳过的不计), 未填实际用时按预估计; 选做计入; 观察作业不计。</div>
@@ -2259,34 +2345,44 @@ async function loadWeeklyTime(week) {
   // 静默显示会让家长把它当稳定基线, 所以必须说出来。
   if (pa.days > 0 && pa.days <= 2) {
     wrap.appendChild(el(`<div class="wt-warn">
-      本周只有 <strong>${pa.days}</strong> 个平日 (周一至周四), 平日日均只由这 ${pa.days} 天算出,
+      ${label}只有 <strong>${pa.days}</strong> 个平日 (周一至周四), 平日日均只由这 ${pa.days} 天算出,
       参考意义有限 —— 看「分档对照」里的绝对值更稳妥。
     </div>`));
   }
 
   // ===== 柱状图: 每天各科堆叠 =====
-  wrap.appendChild(renderTimeChart(r));
+  wrap.appendChild(renderTimeChart(view));
 
   // ===== 饼图: 各科时间占比 (预计 / 实际) =====
-  const pies = renderSubjectShare(r);
+  const pies = renderSubjectShare(view);
   if (pies) wrap.appendChild(pies);
 
-
   // ===== 分档卡片: 平日 / 周五 / 周末 / 调休 =====
-  wrap.appendChild(renderBuckets(r));
+  wrap.appendChild(renderBuckets(view, withWeekend));
 
   // ===== 图例 =====
-  wrap.appendChild(renderLegend());
+  wrap.appendChild(renderLegend(withWeekend));
 
   // 被剔除的日子要显式说出来。国庆那周若无提示, 家长会以为少统计了 4 天。
-  if (r.excluded_days && r.excluded_days.length) {
-    const txt = r.excluded_days
-      .map(e => `${e.date.slice(5)} ${e.kind_label}`)
-      .join(' · ');
+  if (view.excluded_days && view.excluded_days.length) {
+    let txt;
+    if (isMonth) {
+      // 一个月里有十来个不上学的日子, 逐日列出来是噪音 —— 按类型汇总,
+      // 具体是哪几天看上面的柱状图 (虚线柱) 就够了。
+      const byKind = {};
+      view.excluded_days.forEach(e => {
+        byKind[e.kind_label] = (byKind[e.kind_label] || 0) + 1;
+      });
+      txt = Object.entries(byKind).map(([k, v]) => `${k} ${v} 天`).join(' · ');
+    } else {
+      txt = view.excluded_days
+        .map(e => `${e.date.slice(5)} ${e.kind_label}`)
+        .join(' · ');
+    }
     wrap.appendChild(el(`<p class="muted wt-excluded">已剔除 (不上学): ${txt}</p>`));
   }
 
-  const noData = r.days.every(d => d.total_minutes === 0);
+  const noData = view.days.every(d => d.total_minutes === 0);
   if (noData) {
     wrap.appendChild(el(`<div class="empty">
       <div class="empty-icon">📊</div>
@@ -2303,14 +2399,21 @@ function renderTimeChart(r) {
   const padL = 34, padR = 10, padT = 16, padB = 42;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
-  const maxMin = Math.max(...r.days.map(d => d.total_minutes), 1);
+  const days = r.days;
+  const n = days.length;
+  // 视图密度决定能画多少东西。一周 7 天每格近 94px, 什么都能写;
+  // 本月三十来天每格只有 21px —— 星期名、柱内数字、柱顶总数都塞不下,
+  // 硬画出来是互相压字, 比不画更难读。所以密集时只留"哪几天高"这个信息。
+  const dense = n > 10;
+  const labelEvery = dense ? Math.ceil(n / 7) : 1;  // 密集时每隔几天标一个日期
+  const maxMin = Math.max(...days.map(d => d.total_minutes), 1);
   // 纵轴上限取"好看的整数", 再由它均分 2 段 —— 直接对 maxMin 取整到 10
   // 会得到 190 这种刻度, 均分后是 190/95/0, 中间那档不是整数, 家长读图
   // 时得自己在脑子里换算。按 1/2/5 阶梯向上取, 两档都落在整数上。
   const step = maxMin <= 50 ? 50 : maxMin <= 100 ? 50 : maxMin <= 200 ? 100
              : maxMin <= 400 ? 200 : Math.ceil(maxMin / 200) * 200;
   const niceMax = Math.max(step, Math.ceil(maxMin / step) * step);
-  const slot = plotW / 7;
+  const slot = plotW / n;
   const barW = Math.min(56, slot * 0.6);
 
   let g = '';
@@ -2322,7 +2425,7 @@ function renderTimeChart(r) {
     g += `<text class="wt-axis" x="${padL - 6}" y="${y + 3}" text-anchor="end">${val}</text>`;
   }
 
-  r.days.forEach((d, i) => {
+  days.forEach((d, i) => {
     const cx = padL + slot * i + slot / 2;
     const x = cx - barW / 2;
     if (!d.is_school_day) {
@@ -2343,29 +2446,42 @@ function renderTimeChart(r) {
         // 段内数字紧贴色块上沿。只在该段够高时画 —— 太窄的段塞数字会
         // 压到相邻段上, 三个数字叠在一起比不画更难读。
         if (h >= 13) {
-          g += `<text class="wt-seg" x="${cx}" y="${y + h / 2 + 3.5}"
-                 text-anchor="middle">${mins}</text>`;
+          // 柱子本身也要够宽: 本月每根柱只有 12px, 写进去的数字会溢出
+          // 柱子、盖到隔壁那根上。宽度不够就只留色块 (悬停仍能看到分钟数)。
+          if (barW >= 24) {
+            g += `<text class="wt-seg" x="${cx}" y="${y + h / 2 + 3.5}"
+                   text-anchor="middle">${mins}</text>`;
+          }
         }
         acc += mins;
       });
       // 柱顶标总数: 家长最先想看的是"今天总共多少"
-      const totalY = padT + plotH - (plotH * acc / niceMax) - 5;
-      g += `<text class="wt-total" x="${cx}" y="${Math.max(totalY, 10)}" text-anchor="middle">${d.total_minutes}</text>`;
-    } else {
+      if (!dense) {
+        const totalY = padT + plotH - (plotH * acc / niceMax) - 5;
+        g += `<text class="wt-total" x="${cx}" y="${Math.max(totalY, 10)}" text-anchor="middle">${d.total_minutes}</text>`;
+      }
+    } else if (!dense) {
       g += `<text class="wt-zero" x="${cx}" y="${padT + plotH - 6}" text-anchor="middle">0</text>`;
     }
     // x 轴标签: 星期 + 日期。假期额外标出节日名。
-    g += `<text class="wt-xlabel" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${d.weekday_label}</text>`;
-    g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 30}" text-anchor="middle">${d.date.slice(5)}</text>`;
-    if (!d.is_school_day) {
-      g += `<text class="wt-xkind" x="${cx}" y="${H - padB + 42}" text-anchor="middle">${escapeAttr(d.kind_label)}</text>`;
+    if (!dense) {
+      g += `<text class="wt-xlabel" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${d.weekday_label}</text>`;
+      g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 30}" text-anchor="middle">${d.date.slice(5)}</text>`;
+      if (!d.is_school_day) {
+        g += `<text class="wt-xkind" x="${cx}" y="${H - padB + 42}" text-anchor="middle">${escapeAttr(d.kind_label)}</text>`;
+      }
+    } else if (i % labelEvery === 0) {
+      // 密集时只标日号 (每 labelEvery 天一个), 星期名与完整日期都留白 ——
+      // 否则 30 个 "周一/周二" 连成一片, 反而看不出哪天是哪天; 完整日期
+      // "10-05" 在 21px 宽的格子里也要溢出到隔壁去。
+      g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${Number(d.date.slice(8, 10))}</text>`;
     }
   });
 
   // 科目图例: 堆叠图的颜色必须能对上名字, 否则"橙色那一段是多少"
   // 只能靠猜。顺序与柱内堆叠一致 (语->数->英)。
   const allSubs = orderedSubjects(
-    r.days.reduce((acc, d) => Object.assign(acc, d.by_subject), {}));
+    days.reduce((acc, d) => Object.assign(acc, d.by_subject), {}));
   const legend = allSubs.map(s =>
     `<span class="wt-lg"><i class="wt-lg-dot" style="background:${subjectColor(s)}"></i>${escapeAttr(s)}</span>`
   ).join('');
@@ -2527,7 +2643,7 @@ function renderSubjectShare(r) {
   // 一起藏周末: 周末的用时是真花掉的, 抹掉就等于少算了家长的付出。
   // 两者对得上账的前提是周末本来就没作业 —— 实测确实如此 (作业都在上学
   // 最后一天布置), 所以隐藏周末不会让饼图比柱子多出时间。
-  const scope = '整周';
+  const scope = r.period === 'month' ? '整月' : '整周';
 
   // 实际与预估的差额。一句话说明两个环差在哪, 不用家长自己对表。
   let delta = '';
@@ -2565,9 +2681,15 @@ function renderSubjectShare(r) {
 
 // 平日 / 周五 / 周末 / 调休 四档对照。这四档的作业量不是同一回事,
 // 混在一起平均会得到一个不存在的数字, 所以并排摆出来让家长自己比。
-function renderBuckets(r) {
+//
+// withWeekend=false 时不画「周末」那张卡: 周末那档的量几乎恒为 0 (作业
+// 都是上学最后一天布置的), 摆一张 0 分钟的卡在家长眼前只会让人以为
+// 数据漏了。「长档」= 周五 + 周末合计, 它的分母含周末, 所以周末不展示
+// 时长档也一并去掉 —— 留着一张混了看不见的日子算出来的卡同样说不清。
+function renderBuckets(r, withWeekend) {
   const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
   const subs = orderedSubjects(pa.by_subject);
+  const isMonth = r.period === 'month';
 
   // 周五与周末合成"长档": 周五通常已经把周末的量布置下去了,
   // 分开看会低估周末负担, 合并才是真实的"周末档"。
@@ -2576,43 +2698,68 @@ function renderBuckets(r) {
   const longTotal = fridayTotal + weekendTotal;
   const longDays = (r.friday?.days || 0) + (r.weekend?.days || 0);
 
-  const card = (title, sub, days, total, avg, cls) => {
-    const bar = avg > 0 && pa.total_minutes > 0
-      ? `<div class="wt-meter"><span style="width:${Math.min(100, avg / pa.total_minutes * 100).toFixed(1)}%"></span></div>`
+  // 每档备齐 天数 / 合计 / 日均 三个数, 两种视图只是挑不同的数当主角:
+  //   周视图: 合计当主角 —— 这一周各档一共花了多少, 直接可比。
+  //           周五/周末的日均没意义 (就一两天), 所以 avg 留空, 不画量表。
+  //   月视图: 日均当主角 —— 各档天数差得远 (平日二十来天 vs 周五四五天),
+  //           拿合计横向比等于在比"哪档天多"而不是"哪档更重"。
+  //           合计退到小字里, 想看总量时也在。
+  const buckets = [
+    { title: '平日', sub: '周一至周四', days: pa.days,
+      total: Math.round((pa.total_minutes || 0) * (pa.days || 0)), avg: pa.total_minutes, cls: 'is-plain' },
+    { title: '周五', sub: '通常含周末作业量', days: r.friday?.days || 0,
+      total: fridayTotal, avg: isMonth ? (r.friday?.avg_minutes ?? null) : null, cls: 'is-friday' },
+  ];
+  // 周末那两档只在"显示周末"时出现 —— 「长档」的分母含周末, 周末不画
+  // 时它也说不清, 一起去掉 (详见函数头的注释)。
+  if (withWeekend) {
+    buckets.push({ title: '周末', sub: '周六至周日', days: r.weekend?.days || 0,
+      total: weekendTotal, avg: isMonth ? (r.weekend?.avg_minutes ?? null) : null, cls: 'is-off' });
+    buckets.push({ title: '长档', sub: '周五 + 周末合计', days: longDays, total: longTotal,
+      avg: longDays ? Math.round(longTotal / longDays) : 0, cls: 'is-long' });
+  }
+  if ((r.makeup?.days || 0) > 0) {
+    buckets.push({ title: '调休', sub: '周末补班, 要上学', days: r.makeup.days,
+      total: r.makeup.total_minutes,
+      avg: isMonth ? (r.makeup.avg_minutes ?? null) : null, cls: 'is-makeup' });
+  }
+
+  const card = (b) => {
+    const bar = b.avg > 0 && pa.total_minutes > 0
+      ? `<div class="wt-meter"><span style="width:${Math.min(100, b.avg / pa.total_minutes * 100).toFixed(1)}%"></span></div>`
       : '';
-    const chips = subs.length && Object.keys(avg || {}).length
+    const chips = subs.length && Object.keys(b.avg || {}).length
       ? `<div class="wt-chips">${subs.map(s =>
-          `<span class="wt-chip"><i style="background:${subjectColor(s)}"></i>${escapeAttr(s)} ${avg[s]}分</span>`).join('')}</div>`
+          `<span class="wt-chip"><i style="background:${subjectColor(s)}"></i>${escapeAttr(s)} ${b.avg[s]}分</span>`).join('')}</div>`
       : '';
-    return el(`<div class="wt-bucket ${cls || ''}">
+    const head = isMonth ? (b.avg ?? 0) : b.total;
+    const note = isMonth
+      ? `${b.days} 天 · 合计 ${b.total} 分`
+      : (b.avg != null ? `日均 ${b.avg} 分 · ${b.days} 天` : `${b.days} 天`);
+    return el(`<div class="wt-bucket ${b.cls}">
       <div class="wt-bucket-head">
-        <div class="wt-bucket-title">${title}</div>
-        <div class="wt-bucket-sub">${sub}</div>
+        <div class="wt-bucket-title">${b.title}</div>
+        <div class="wt-bucket-sub">${b.sub}</div>
       </div>
-      <div class="wt-bucket-num"><strong>${total}</strong><span class="wt-unit">分钟</span></div>
-      ${avg != null ? `<div class="muted">日均 ${avg} 分 · ${days} 天</div>` : `<div class="muted">${days} 天</div>`}
+      <div class="wt-bucket-num"><strong>${head}</strong><span class="wt-unit">分钟</span></div>
+      <div class="muted">${note}</div>
       ${bar}
       ${chips}
     </div>`);
   };
 
-  const box = el('<div class="card"><div class="card-title">分档对照<span class="count">同一周内</span></div>'
+  const box = el(`<div class="card"><div class="card-title">分档对照<span class="count">${isMonth ? '同一个月内' : '同一周内'}</span></div>`
     + '<div class="wt-buckets"></div></div>');
   const row = box.querySelector('.wt-buckets');
-  row.appendChild(card('平日', '周一至周四', pa.days, Math.round((pa.total_minutes || 0) * (pa.days || 0)),
-    pa.total_minutes, 'is-plain'));
-  row.appendChild(card('周五', '通常含周末作业量', r.friday?.days || 0, fridayTotal, null, 'is-friday'));
-  row.appendChild(card('周末', '周六至周日', r.weekend?.days || 0, weekendTotal, null, 'is-off'));
-  row.appendChild(card('长档', '周五 + 周末合计', longDays, longTotal,
-    longDays ? Math.round(longTotal / longDays) : 0, 'is-long'));
-  if ((r.makeup?.days || 0) > 0) {
-    row.appendChild(card('调休', '周末补班, 要上学', r.makeup.days, r.makeup.total_minutes, null, 'is-makeup'));
-  }
+  buckets.forEach(b => row.appendChild(card(b)));
   return box;
 }
 
-function renderLegend() {
+// 口径说明: 解释图上各档日子的颜色。周末不展示时, "休息"这一档根本
+// 不会出现, 图例里留着它等于解释一个看不见的东西 —— 过滤掉。
+function renderLegend(withWeekend) {
   const items = Object.entries(DAY_KIND_META)
+    .filter(([k]) => withWeekend || k !== 'off')
     .map(([k, m]) => `<span class="wt-lg"><i class="wt-lg-dot k-${k}"></i>${m.label} — ${m.hint}</span>`)
     .join('');
   return el(`<div class="card wt-legend-box"><div class="muted wt-legend-title">口径说明</div><div class="wt-legend">${items}</div></div>`);
@@ -2623,7 +2770,7 @@ function renderDeviationTable(box, r) {
   // 7 列里"建议"是一整段中文, 挤进 344px 后会被压成一列一个字,
   // 完全读不了。窄屏改成每行一张卡, 表头收起, 标签由 data-label 提供。
   // 宽屏不读这两个属性, 对桌面零影响。
-  const tbl = el(`<table class="weekly-table">
+  const tbl = el(`<table class="review-table">
     <thead><tr><th>科目</th><th>类型</th><th>样本</th><th>估</th><th>实</th><th>偏差</th><th>建议</th></tr></thead>
     <tbody></tbody>
   </table>`);

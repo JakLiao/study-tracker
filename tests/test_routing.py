@@ -24,7 +24,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-TABS = ["board", "entry", "list", "weekly", "settings"]
+TABS = ["board", "entry", "list", "review", "settings"]
 
 
 @pytest.fixture(scope="module")
@@ -265,7 +265,7 @@ setTimeout(() => {
   out.viewAfterClick = active();
 
   // 模拟前进/后退: 直接改 hash 并触发 hashchange
-  w.location.hash = '#/weekly';
+  w.location.hash = '#/review';
   w.dispatchEvent(new w.HashChangeEvent('hashchange'));
   out.hashAfterPop = w.location.hash;
   out.viewAfterPop = active();
@@ -320,9 +320,9 @@ def test_deeplink_entry():
 
 
 @needs_node
-def test_deeplink_weekly():
-    out = _run_live("#/weekly")
-    assert out["activeView"] == "view-weekly", out
+def test_deeplink_review():
+    out = _run_live("#/review")
+    assert out["activeView"] == "view-review", out
 
 
 @needs_node
@@ -348,8 +348,8 @@ def test_click_menu_updates_url():
 @needs_node
 def test_popstate_switches_view():
     out = _run_live("#/board")
-    assert out["viewAfterPop"] == "view-weekly", out
-    assert out["tabAfterPop"] == "weekly", out
+    assert out["viewAfterPop"] == "view-review", out
+    assert out["tabAfterPop"] == "review", out
 
 
 @needs_node

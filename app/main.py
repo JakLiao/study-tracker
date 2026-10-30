@@ -31,7 +31,10 @@ logger = logging.getLogger("study.main")
 # 菜单页面对应的路径(2026-09-28)。前端主路由是 hash(#/board), 这份清单
 # 只用于同路径兜底, 必须显式枚举而不是写 catch-all —— 否则 /api/notfound
 # 之类的真实 404 会被悄悄返回首页, 排障时看到的是首页而不是 404。
-FRONTEND_PAGES = frozenset({"board", "entry", "list", "weekly", "settings"})
+#
+# "review" 是复盘页(2026-10-30 由 weekly 改名): 该页已不只按周统计,
+# 还有"本月", 名字里带 weekly 就与内容不符了。
+FRONTEND_PAGES = frozenset({"board", "entry", "list", "review", "settings"})
 
 
 def create_app() -> FastAPI:
