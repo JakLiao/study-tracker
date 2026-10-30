@@ -2310,7 +2310,10 @@ footer {
   cursor: pointer;
 }
 .cal-cell.blank { border-color: transparent; background: transparent; cursor: default; }
-.cal-cell:hover:not(.blank) { background: var(--surface-2); }
+/* 热力格子的底色就是它的数据, 悬停不能把底色刷成 --surface-2 —— 那样
+   鼠标一划过, "这天最久"的红色就消失了。 */
+.cal-cell:not(.heat):hover:not(.blank) { background: var(--surface-2); }
+.cal-cell.heat:hover:not(.blank) { filter: brightness(1.04); }
 
 .cal-day { font-size: var(--fs-body-s); font-weight: 500; line-height: 1.1; }
 .cal-cell.we .cal-day { color: #C77B8A; }
@@ -2396,12 +2399,79 @@ footer {
   font-size: var(--fs-caption);
   color: var(--text-2);
 }
+/* 作者样式里的 display:flex 会盖掉浏览器对 [hidden] 的 display:none,
+   切模式时图例得真的消失, 不能只是换个 class。 */
+.cal-legend[hidden] { display: none; }
 .cal-legend span { display: flex; align-items: center; gap: var(--space-1); }
 .lg { width: 12px; height: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); display: inline-block; }
 .lg-has  { background: var(--cal-has-bg); border-color: #F0C79E; }
 .lg-done { background: var(--cal-done-bg); border-color: #A9D6A0; }
 .lg-part { background: var(--cal-part-bg); border-color: #EBD48A; }
 .lg-opt  { background: var(--cal-opt-bg); border-color: #CFC4E8; }
+
+/* ===== 24b. 日历双模式切换 + 用时热力图 (2026-10-30) =====
+   需求: 除了"完成情况", 再加一种"用时热力图" —— 当天完成得越久, 颜色越红。
+   色系参考 YlOrRd (浅黄 -> 琥珀 -> 橙 -> 砖红), 与截图给的色卡同族。
+   分档由 app.js 的 heatLevel() 决定 (阈值 60/100/140/180 分钟);
+   这里的 .heat-l1~l5 必须与它逐档对应, 图例文字也要跟着改。
+   每档的 ink 都实测过 WCAG AA (>= 4.5:1): 浅三档配深棕, 最深的砖红配米白。
+   热力色只作用于底色, 不叠加第二层色块 —— 格子里的数字才是读数。 */
+.cal-mode {
+  display: inline-flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  margin-bottom: var(--space-2);
+  gap: 2px;
+}
+.cal-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-3);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.cal-mode-btn:hover:not(:disabled) { background: var(--surface-2); }
+/* 选中段用深棕底 + 米白字 (6.6:1)。这里必须把 hover 一起钉住,
+   否则 button:hover:not(:disabled) 的 (0,2,1) 会把深棕底刷成浅底。 */
+.cal-mode-btn.active,
+.cal-mode-btn.active:hover:not(:disabled) {
+  background: var(--text-1);
+  color: var(--bg);
+}
+
+/* 五档热力底色。档位越高越红, l5 是"这天投入最多"的终点。 */
+.cal-cell.heat-l1 { background: #FFF4CC; border-color: #EFD79A; --heat-ink: #7A5A05; --heat-badge: rgba(122, 90, 5, 0.14); }
+.cal-cell.heat-l2 { background: #FFE28C; border-color: #EDC96A; --heat-ink: #6E4A00; --heat-badge: rgba(110, 74, 0, 0.15); }
+.cal-cell.heat-l3 { background: #FFC061; border-color: #E7A948; --heat-ink: #5C3A00; --heat-badge: rgba(92, 58, 0, 0.16); }
+.cal-cell.heat-l4 { background: #FF9A45; border-color: #E2822F; --heat-ink: #4A3728; --heat-badge: rgba(74, 55, 40, 0.16); }
+.cal-cell.heat-l5 { background: #C2400F; border-color: #A6360B; --heat-ink: #FFF8F0; --heat-badge: rgba(255, 248, 240, 0.22); }
+
+/* 日期数字 / 用时 / 徽标统一跟着档位 ink 走。必须写在 .cal-cell.we .cal-day
+   之后 —— 周六日的淡红日期压在深橙底上几乎看不见。 */
+.cal-cell.heat { color: var(--heat-ink); }
+.cal-cell.heat .cal-day,
+.cal-cell.heat .cal-time { color: var(--heat-ink); }
+.cal-cell.heat .cal-badge {
+  background: var(--heat-badge);
+  color: var(--heat-ink);
+}
+/* 角标在热力格子上必须换浅色底: 原来的半透明蓝/红底叠在砖红上会糊成一片,
+   深蓝字压深红底只有 ~2:1。改成米白不透明底后, 三类角标的前景色
+   (#1F5C7A / #A3144A / #9C4A59) 都能回到 5:1 以上。 */
+.cal-cell.heat .cal-mark { background: rgba(255, 248, 240, 0.94); }
+
+.lg-heat0 { background: var(--surface);    border-color: var(--border); }
+.lg-heat1 { background: #FFF4CC; border-color: #EFD79A; }
+.lg-heat2 { background: #FFE28C; border-color: #EDC96A; }
+.lg-heat3 { background: #FFC061; border-color: #E7A948; }
+.lg-heat4 { background: #FF9A45; border-color: #E2822F; }
+.lg-heat5 { background: #C2400F; border-color: #A6360B; }
 
 .list-detail-head {
   display: flex;
@@ -2418,6 +2488,12 @@ footer {
    数字优先保住 —— 家长扫的是日期, 完成度只是辅助信号。总用时同理收起。 */
 @media (max-width: 480px) {
   .cal-badge, .cal-time { display: none; }
+  /* 热力图在窄屏要保住用时数字: 底色 + 数字才算完整读数, 只留底色等于
+     让家长猜深橙到底是 120 分还是 180 分。徽标仍收起, 它是次要信息。 */
+  .cal-cell.heat .cal-time { display: block; }
+  /* 模式切换铺满一行, 44px 触控下限, 两根手指都点得准 */
+  .cal-mode { display: flex; width: 100%; }
+  .cal-mode-btn { flex: 1; min-height: 44px; text-align: center; }
   /* 周末角标在窄屏收起 —— 格子里的周六日数字本来就是淡红, 再挂一个
      "周末"只是重复; 假期/调休必须留着, 那是家长真正缺的信息。 */
   .cal-mark-weekend { display: none; }

@@ -204,16 +204,33 @@
         <button id="cal-next" class="ghost" aria-label="下个月">下月 →</button>
         <button id="cal-today" class="ghost">回到今天</button>
       </div>
+      <!-- 双模式切换 (2026-10-30): 完成情况 / 用时热力图。
+           两种模式共用同一份 _calData, 切模式不发请求, 只重画格子。 -->
+      <div class="cal-mode" role="group" aria-label="日历查看模式">
+        <button type="button" class="cal-mode-btn active" data-cal-mode="completion"
+                aria-pressed="true">完成情况</button>
+        <button type="button" class="cal-mode-btn" data-cal-mode="heat"
+                aria-pressed="false">用时热力图</button>
+      </div>
       <div class="cal-weekdays" aria-hidden="true">
         <span>一</span><span>二</span><span>三</span><span>四</span>
         <span>五</span><span class="we">六</span><span class="we">日</span>
       </div>
       <div id="cal-grid" class="cal-grid"></div>
-      <div class="cal-legend">
+      <div class="cal-legend" id="cal-legend-completion">
         <span><i class="lg lg-has"></i>有作业</span>
         <span><i class="lg lg-done"></i>全完成</span>
         <span><i class="lg lg-part"></i>部分完成</span>
         <span><i class="lg lg-opt"></i>仅选做</span>
+      </div>
+      <!-- 热力图图例: 分档与 app.js 的 heatLevel() 阈值 (60/100/140/180) 一一对应 -->
+      <div class="cal-legend" id="cal-legend-heat" hidden>
+        <span><i class="lg lg-heat0"></i>无</span>
+        <span><i class="lg lg-heat1"></i>1-59分</span>
+        <span><i class="lg lg-heat2"></i>60-99分</span>
+        <span><i class="lg lg-heat3"></i>100-139分</span>
+        <span><i class="lg lg-heat4"></i>140-179分</span>
+        <span><i class="lg lg-heat5"></i>180分+</span>
       </div>
 
       <div class="list-detail-head">

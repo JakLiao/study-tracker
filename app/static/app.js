@@ -1930,6 +1930,23 @@ let _calYear = null;
 let _calMonth = null;
 let _calSelected = null;
 let _calData = null;
+// 日历查看模式 (2026-10-30): 'completion' 按必做收尾状态上色,
+// 'heat' 按当天总用时上色 (越久越红)。两种模式共用同一份 _calData,
+// 切模式不发请求, 只重画格子 —— 数据里早就有 actual_total 了。
+let _calMode = 'completion';
+
+// 用时热力图分档阈值 (分钟)。参考图的 YlOrRd 色系: 浅黄 -> 琥珀 -> 橙 -> 砖红。
+// 取值按真实数据定 (日用时 20~278 分, 中位数 135): 60 / 100 / 140 / 180
+// 分别落在 1 小时 / 1.5 小时 / 2.3 小时 / 3 小时, 是家长有直觉的节点。
+// 分档必须与 styles.css 的 .heat-l1 ~ .heat-l5 和页面图例逐档对应。
+const HEAT_EDGES = [60, 100, 140, 180];
+function heatLevel(minutes) {
+  if (!minutes || minutes <= 0) return 0;          // 没投入时间: 不上色
+  for (let i = 0; i < HEAT_EDGES.length; i++) {
+    if (minutes < HEAT_EDGES[i]) return i + 1;
+  }
+  return HEAT_EDGES.length + 1;
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -1980,6 +1997,9 @@ async function loadCalendar() {
 function renderCalendar() {
   const grid = document.getElementById('cal-grid');
   const r = _calData;
+  if (!r) return;
+  // 模式按钮与图例的选中态跟着 _calMode 走 (切月/切 Tab 回来都保持一致)
+  syncCalendarMode();
   // 记住焦点格子: 下面整块重建会销毁当前聚焦的按钮, 浏览器会把焦点
   // 交给详情区里第一个可聚焦控件 (某条作业的"实耗"输入框) 并把它滚进
   // 视野 —— 表现为"点一下日期, 页面却跳到底部", 家长紧接着敲的数字还会
@@ -1989,6 +2009,7 @@ function renderCalendar() {
     : null;
   const keepFocus = activeDate ? activeDate.date : null;
   grid.innerHTML = '';
+  const heat = _calMode === 'heat';
   // 周一起始: 后端 first_weekday 是 Monday=0, 与 cal-weekdays 表头顺序一致。
   for (let i = 0; i < r.first_weekday; i++) {
     grid.appendChild(el('<div class="cal-cell blank"></div>'));
@@ -2001,6 +2022,13 @@ function renderCalendar() {
     // 0 不显示 —— 还没做完的那天挂一个"0分"只是噪声, 家长扫月历要看的是
     // 已经投入了多少。
     const mins = day ? (day.actual_total || 0) : 0;
+    // 底色口径 (2026-10-30 双模式):
+    //   completion  按必做收尾状态上色 —— 原有口径, 看"做没做完"
+    //   heat        按当天总用时上色 —— 越久越红, 看"投入了多少"
+    const lvl = heat ? heatLevel(mins) : 0;
+    const cellCls = heat
+      ? (lvl ? `heat heat-l${lvl}` : '')
+      : dayState(day);
     // 特殊日角标 (2026-10-26): 假期 / 调休 / 周末。放在格子右上角, 小字 ——
     // 日期数字仍是主角, 角标只补一句"那天为什么不一样"(为什么没作业、
     // 为什么周六还要上课)。与作业有无无关, 所以取的是后端另给的 special 表。
@@ -2008,9 +2036,12 @@ function renderCalendar() {
     const mark = sp
       ? `<span class="cal-mark cal-mark-${escapeAttr(sp.kind)}" title="${escapeAttr(sp.name)}">${escapeAttr(sp.label)}</span>`
       : '';
+    // 热力图模式下把用时写进 aria-label: 颜色深浅屏幕阅读器读不出来,
+    // 得有一句可读的等价描述。
+    const heatLabel = heat && mins > 0 ? ` 用时 ${mins} 分` : '';
     const cell = el(`
-      <button class="cal-cell ${dayState(day)} ${ds === _calSelected ? 'selected' : ''} ${weekday >= 5 ? 'we' : ''}"
-              data-date="${ds}" aria-label="${ds}${sp ? ' ' + escapeAttr(sp.name) : ''}">
+      <button class="cal-cell ${cellCls} ${ds === _calSelected ? 'selected' : ''} ${weekday >= 5 ? 'we' : ''}"
+              data-date="${ds}" aria-label="${ds}${heatLabel}${sp ? ' ' + escapeAttr(sp.name) : ''}">
         <span class="cal-day">${d}</span>
         ${mark}
         ${day && day.total ? `<span class="cal-badge">${day.required ? `${day.required_done}/${day.required}` : '选'}</span>` : ''}
@@ -2027,6 +2058,31 @@ function renderCalendar() {
     if (again) again.focus({ preventScroll: true });
   }
 }
+
+// 模式切换的视觉同步: 按钮选中态 + 图例显隐。只碰 DOM, 不碰数据。
+function syncCalendarMode() {
+  document.querySelectorAll('.cal-mode-btn').forEach(b => {
+    const on = b.dataset.calMode === _calMode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const cl = document.getElementById('cal-legend-completion');
+  const hl = document.getElementById('cal-legend-heat');
+  if (cl) cl.hidden = _calMode !== 'completion';
+  if (hl) hl.hidden = _calMode !== 'heat';
+}
+
+function setCalendarMode(mode) {
+  if (mode !== 'completion' && mode !== 'heat') return;
+  if (mode === _calMode) return;
+  _calMode = mode;
+  // 数据已加载就直接重画, 不重新请求 —— 两种口径都在同一份响应里。
+  if (_calData) renderCalendar();
+}
+
+document.querySelectorAll('.cal-mode-btn').forEach(b => {
+  b.addEventListener('click', () => setCalendarMode(b.dataset.calMode));
+});
 
 async function selectDate(ds) {
   _calSelected = ds;
