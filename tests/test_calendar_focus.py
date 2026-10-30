@@ -363,3 +363,42 @@ def test_cal_time_still_hidden_on_narrow_screens(styles):
     # 徽标与用时标签要一起收起: 两者都是格子里第三行的辅助信息
     assert any(".cal-badge, .cal-time" in b for b in blocks), \
         "窄屏应同时收起 .cal-badge 与 .cal-time"
+
+
+def _pc_block(styles: str) -> str:
+    """PC 端字号块。整个日历只有这一处放大字号。"""
+    m = re.search(
+        r"@media \(min-width: 768px\) and \(min-height: 501px\) \{([\s\S]*?)\n\}", styles)
+    assert m, "缺少 PC 端 (>=768px 且 >=501px 高) 的日历字号规则"
+    return m.group(1)
+
+
+def test_pc_fonts_are_larger(styles):
+    """2026-10-30 用户要求"PC 端日历字体加大"。
+
+    桌面格子约 95px 见方, 原来的 14/11/12px 三行字偏小。这里锁住
+    放大后的值 —— 将来有人把这些行删掉, 就等于把需求回退了。
+    """
+    block = _pc_block(_strip(styles))
+    assert re.search(r"\.cal-day\s*\{[^}]*font-size:\s*18px", block), \
+        "PC 端日期数字应为 18px"
+    assert re.search(r"\.cal-time\s*\{[^}]*font-size:\s*14px", block), \
+        "PC 端用时数字应为 14px"
+    assert re.search(r"\.cal-badge\s*\{[^}]*font-size:\s*13px", block), \
+        "PC 端完成度徽标应为 13px"
+    assert re.search(r"\.cal-weekdays\s*\{[^}]*font-size:\s*15px", block), \
+        "PC 端星期表头应为 15px"
+
+
+def test_pc_font_bump_is_scoped_to_tall_wide_windows(styles):
+    """放大字号必须同时卡宽度和高度。
+
+    只卡 min-width 会漏进 (max-height: 500px) 那组横屏/矮窗口规则 ——
+    那儿格子被压到 44px, 18px 的日期加上徽标、用时一共要 50 多像素,
+    会直接溢出格子。这两个条件缺一不可。
+    """
+    assert "min-width: 768px" in styles
+    assert "min-height: 501px" in styles
+    blocks = re.findall(r"@media \(min-width: 768px\)([^{]*)\{", styles)
+    assert any("min-height: 501px" in b for b in blocks), \
+        "PC 字号块的 min-width 条件旁必须同时带 min-height: 501px"

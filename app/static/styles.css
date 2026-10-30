@@ -2473,6 +2473,22 @@ footer {
 .lg-heat4 { background: #FF9A45; border-color: #E2822F; }
 .lg-heat5 { background: #C2400F; border-color: #A6360B; }
 
+/* PC 端字号加大 (2026-10-30)。桌面上的格子是 90~150px 的方块, 原来的
+   14px 日期 / 11px 徽标 / 12px 用时在 27 寸屏上要凑近才读得清; 手机端
+   反过来是 46~63px 的小格, 塞不下这么大的字。所以只在 "宽度够 + 高度够"
+   时才放大: 带上 min-height 501px 是为了避开 (max-height: 500px) 那组
+   横屏/矮窗口的密度规则 —— 否则矮窗口里格子被压到 44px, 大字会溢出。 */
+@media (min-width: 768px) and (min-height: 501px) {
+  .cal-weekdays { font-size: 15px; }
+  .cal-day { font-size: 18px; font-weight: 600; }
+  .cal-badge { font-size: 13px; padding: 2px 6px; }
+  .cal-time { font-size: 14px; }
+  .cal-mark { font-size: 11px; }
+  .cal-legend { font-size: 14px; }
+  .lg { width: 14px; height: 14px; }
+  .cal-mode-btn { font-size: 14px; padding: 6px var(--space-4); }
+}
+
 .list-detail-head {
   display: flex;
   align-items: center;
