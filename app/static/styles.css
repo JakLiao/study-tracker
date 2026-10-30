@@ -2462,6 +2462,512 @@ footer {
   }
 }
 
+/* ===== 21c. 各科时间占比饼图 (2026-10-29) =====
+   预计与实际并排两张饼图。位置在每日用时柱状图正下方 —— 柱状图回答
+   "哪天写了多久", 饼图回答"时间都花在哪个科目上", 两张图连着看才是
+   完整的用时画像; 拆到别处会让家长在两个问题之间来回跳。 */
+.wt-pies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+.wt-pie { text-align: center; }
+.wt-pie-head { font-weight: 600; font-size: var(--fs-body-s); }
+.wt-pie-total {
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 两个环的差额。一句话说清, 不用家长自己对着两张图减。 */
+.wt-share-delta {
+  margin-top: var(--space-1);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.wt-pie-chart {
+  display: block;
+  width: 100%;
+  max-width: 190px;
+  height: auto;
+  margin: var(--space-2) auto 0;
+}
+/* 扇形之间留一道底色描边: 两块颜色挨在一起时边界不清, 家长会以为
+   是同一科被切成了两块。 */
+.wt-pie-slice {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+/* 扇形里直接标的科目名: 白字 + 描边, 与柱状图段内数字 (.wt-seg) 同一套
+   做法, 在三种科目色上都够对比。字号比百分比大一号 —— 名字是主角,
+   百分比只是附注。 */
+.wt-pie-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.22);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+/* 扇形里的百分比: 白字 + 描边, 与柱状图段内数字 (.wt-seg) 同一套做法,
+   在三种科目色上都够对比。 */
+.wt-pie-pct {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #fff;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.22);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+.wt-pie-empty {
+  padding: var(--space-4) 0;
+  font-size: var(--fs-caption-sm);
+}
+.wt-pie-legend {
+  list-style: none;
+  margin: var(--space-2) auto 0;
+  padding: 0;
+  max-width: 260px;
+  text-align: left;
+}
+.wt-pie-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.wt-pie-legend li:last-child { border-bottom: none; }
+.wt-pie-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
+}
+.wt-pie-legend b {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.wt-pie-legend em {
+  font-style: normal;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+
+/* ===== 22. 字符计数 =====
+   从 --text-3(#BFA894) 提到 --text-2(#8A6F5C): 10000 字上限是硬约束,
+   粘一整篇课文很容易顶到上限, 而原来的浅棕在 --bg 上几乎看不见。
+   贴到输入框正下方同一行(见 .entry-tools), 右对齐不变。 */
+.char-count {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  text-align: right;
+  margin-top: 4px;
+}
+.char-count.warn { color: var(--status-overdue); font-weight: 600; }
+
+/* ===== 22b. 录入区工具行 / 操作行 =====
+   示例与清空放输入框正下方(此前只能靠 placeholder 记住格式, 一开始
+   输入就没了); 字数统计同一行右对齐, 视线不用来回跳。 */
+.entry-tools {
+  margin: var(--space-2) 0 0;
+  align-items: center;
+}
+.entry-tools .char-count {
+  margin-top: 0;
+  margin-left: auto;
+}
+.entry-tools button {
+  font-size: var(--fs-caption);
+}
+
+/* 移动端软键盘弹起时, 输入框以下的内容会被键盘盖住, "解析"按钮就点不到。
+   把操作行吸在视口底部 (fixed 底栏之上), 输入时按钮始终可见。
+   桌面端不吸 —— 一屏放得下, 吸底反而让按钮与内容脱节。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .entry-actions {
+    position: sticky;
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+    z-index: 800;
+    margin: var(--space-2) calc(-1 * var(--space-3)) 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* ===== 23. Toast (设计文档 §9 坑 2 兜底) ===== */
+.toast {
+  position: fixed;
+  bottom: calc(56px + var(--space-4) + env(safe-area-inset-bottom, 0));
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text-1);
+  color: var(--bg);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  z-index: 1100;
+  box-shadow: var(--shadow-card);
+  animation: toast-in 0.2s ease-out;
+}
+.toast.hidden { display: none; }
+@keyframes toast-in {
+  from { transform: translate(-50%, 8px); opacity: 0; }
+  to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+/* ===== 24. 作业日历 (2026-09-28) =====
+   目标: 点一个日期就能看到当天做了什么、完成到什么程度。
+   布局顺序刻意是"月历在上、当天详情在下"—— 家长是"先选日子, 再看那天",
+   与看板的读写顺序一致。 */
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+.cal-title {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  min-width: 120px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  text-align: center;
+  margin-bottom: var(--space-1);
+}
+.cal-weekdays .we { color: #C77B8A; }   /* 周末淡红, 与格子里的 .we 呼应 */
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--space-1);
+}
+
+.cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  /* 固定比例而非固定高度: 5 行的月份 (31 天) 与 6 行的 (30 天) 高度一致,
+     翻月时页面不会跳动 */
+  aspect-ratio: 1 / 1;
+  min-height: 40px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.cal-cell.blank { border-color: transparent; background: transparent; cursor: default; }
+.cal-cell:hover:not(.blank) { background: var(--surface-2); }
+
+.cal-day { font-size: var(--fs-body-s); font-weight: 500; line-height: 1.1; }
+.cal-cell.we .cal-day { color: #C77B8A; }
+
+/* 完成度徽标: "3/5"。放在格子底部, 不挤占日期数字的识别位 */
+.cal-badge {
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(74, 55, 40, 0.08);
+  color: var(--text-2);
+}
+
+/* 当天总用时 "130分" (2026-10-15)。与看板概览卡那个数字同口径, 家长在
+   月历上扫一眼就能看出哪天投入得多。不加底色 —— 格子的底色已经在讲
+   完成状态, 再加一层色块会把状态盖过去。
+
+   前景色必须跟着格子状态走 (--cal-*-ink), 不能用 --text-3:
+   实测 --text-3(#BFA894) 在四种底色上只有 1.80~2.00:1, 远低于
+   WCAG AA 的 4.5:1, 屏幕上几乎看不见 (截图复核确认)。各状态的 ink
+   是同一套语义色的深色版, 5.61~7.55:1, 且与徽标 "3/5" 用的是同一个
+   色 —— 于是"完成度"和"投入时间"在视觉上归为一家, 而不是两个孤立的
+   数字浮在格子里。 */
+.cal-time {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-2);   /* 无作业格 (白底) 的兜底, 见下方各状态覆盖 */
+  font-variant-numeric: tabular-nums;
+}
+.cal-cell.has .cal-time         { color: var(--cal-has-ink); }
+.cal-cell.partial .cal-time     { color: var(--cal-part-ink); }
+.cal-cell.all-done .cal-time    { color: var(--cal-done-ink); }
+.cal-cell.optional-only .cal-time { color: var(--cal-opt-ink); }
+
+/* 特殊日角标 (2026-10-26): 假期 / 调休 / 周末。
+   贴在格子右上角, 小字 —— 月历上家长扫的是"几号", 角标只负责补一句
+   "那天为什么不一样": 假期没作业、周末不上学、调休的周六还要上课。
+   所以它绝不能压住日期数字, 也不能比数字更显眼: 10px 字, 浅底色。
+
+   三种颜色各司其职:
+     holiday  红 (与"周末淡红"同一家族但更深) —— 法定假期, 最该看见
+     makeup   蓝 —— 周末补班, 这天要上学, 与"不上学"的默认印象相反
+     weekend  玫瑰 —— 普通周末, 最弱的一档, 只是提醒一下
+   前景色都压在 4.5:1 以上 (小字也算正文, 不按"大字"放宽)。 */
+.cal-mark {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.cal-mark-holiday { background: rgba(194, 24, 91, 0.10); color: #A3144A; }
+.cal-mark-makeup  { background: rgba(46, 122, 158, 0.12); color: #1F5C7A; }
+.cal-mark-weekend { background: rgba(199, 123, 138, 0.14); color: #9C4A59; }
+
+/* 四种状态底色。语义见 :root 中的 --cal-* 注释 */
+.cal-cell.has         { background: var(--cal-has-bg);  border-color: #F0C79E; }
+.cal-cell.has .cal-badge { background: rgba(122, 74, 33, 0.14); color: var(--cal-has-ink); }
+.cal-cell.partial     { background: var(--cal-part-bg); border-color: #EBD48A; }
+.cal-cell.partial .cal-badge { background: rgba(122, 90, 5, 0.14); color: var(--cal-part-ink); }
+.cal-cell.all-done    { background: var(--cal-done-bg); border-color: #A9D6A0; }
+.cal-cell.all-done .cal-badge { background: rgba(30, 91, 37, 0.14); color: var(--cal-done-ink); }
+.cal-cell.optional-only { background: var(--cal-opt-bg); border-color: #CFC4E8; }
+.cal-cell.optional-only .cal-badge { background: rgba(75, 59, 122, 0.14); color: var(--cal-opt-ink); }
+
+/* 选中态用双层描边而非加粗边框 —— border-width 变化会让整个 grid 重排 */
+.cal-cell.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--warn-soft), 0 0 0 3px var(--accent);
+}
+
+.cal-legend {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin: var(--space-3) 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.cal-legend span { display: flex; align-items: center; gap: var(--space-1); }
+.lg { width: 12px; height: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); display: inline-block; }
+.lg-has  { background: var(--cal-has-bg); border-color: #F0C79E; }
+.lg-done { background: var(--cal-done-bg); border-color: #A9D6A0; }
+.lg-part { background: var(--cal-part-bg); border-color: #EBD48A; }
+.lg-opt  { background: var(--cal-opt-bg); border-color: #CFC4E8; }
+
+.list-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+}
+.list-detail-head h3 { margin: 0; }
+.list-detail-head .row { margin: 0; }
+
+/* 窄屏: 7 列格子放不下 "3/5" 徽标, 改用左下角圆点表示"有作业/已完成"。
+   数字优先保住 —— 家长扫的是日期, 完成度只是辅助信号。总用时同理收起。 */
+@media (max-width: 480px) {
+  .cal-badge, .cal-time { display: none; }
+  /* 周末角标在窄屏收起 —— 格子里的周六日数字本来就是淡红, 再挂一个
+     "周末"只是重复; 假期/调休必须留着, 那是家长真正缺的信息。 */
+  .cal-mark-weekend { display: none; }
+  .cal-cell.has::after,
+  .cal-cell.partial::after,
+  .cal-cell.all-done::after,
+  .cal-cell.optional-only::after {
+    content: '';
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.55;
+  }
+  .cal-cell.has::after         { background: var(--cal-has-ink); }
+  .cal-cell.partial::after     { background: var(--cal-part-ink); }
+  .cal-cell.all-done::after    { background: var(--cal-done-ink); }
+  .cal-cell.optional-only::after { background: var(--cal-opt-ink); }
+  /* 44px 触控下限: 480px 宽下 7 列格子每格约 63px 宽, 抬到 44px 高
+     仍放得下 6 行月历, 不会把日历撑到需要滚动。 */
+  .cal-cell { min-height: 44px; }
+}
+
+/* ===== 26. 移动端 ergonomics (2026-09-29) =====
+   这一段全部来自 375px 真实测量, 不是凭感觉调的:
+     - 40 个可点元素低于 44px (次操作按钮 22px、原文链接 26x19、tab 36px)
+     - 输入框字号 14px / 13.3px → iOS Safari 聚焦时自动放大且不还原
+     - 预览表 640px 塞进 334px 视口, 横向滚动近一倍屏宽
+   桌面的紧凑密度是有意为之(见 test_row_actions 的 22px 断言), 不该被
+   顺手改掉 —— 所以下面全部只在窄屏生效, 桌面版一行不动。 */
+
+/* --- 26a. 触控目标 ≥44px ---
+   逐个列出修饰类而不是只写 .status-btn: .status-btn.done 是双类选择器
+   (特异度 0,2,0), 裸 .status-btn (0,1,0) 压不住它, 34px 会原样留着。
+
+   断点与第 19 节保持一致(宽 <=767px 或 矮 <=500px), 否则横屏手机
+   会退回桌面密度。 */
+@media (max-width: 767px), (max-height: 500px) {
+  button,
+  .row-actions button,
+  .status-btn,
+  .status-btn.done,
+  .status-btn.skipped,
+  .status-btn.redo,
+  .status-btn.undo,
+  .status-btn.opt-toggle,
+  .status-btn.edit,
+  .status-btn.danger {
+    min-height: 44px;
+  }
+  /* nav#tabs button 故意不在这个列表里: 第 19 节已经给了它 52px,
+     同特异度下这条会把它压回 44px, 主导航值得那 8px。 */
+  .status-btn { padding: 0 var(--space-3); }
+  .row-actions { gap: var(--space-2); }   /* 8px 最小间隔, 避免误触相邻操作 */
+
+  /* "原文"是个裸 <span>, 视觉上只有 26x19 —— 比它承载的"点开弹窗"
+     这个动作该有的代价小得多。撑成行内块, 点击区随之长大,
+     文字本身的大小不变, 不会把行高顶开。
+     横向也要补: 只加 min-height 的话它仍只有 34px 宽。 */
+  .assignment-row .source-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+    padding: 0 var(--space-2);
+  }
+}
+
+/* --- 26b. 输入控件: 字号 16px 起, 高度 44px 起 ---
+   iOS Safari 对 < 16px 的输入框会在聚焦时自动放大页面, 且失焦后不还原,
+   于是家长点一下"实际用时"就被留在放大态, 之后整个页面都是错的。
+   16px 是唯一能规避的取值, 代价仅是字号大一点。
+   选择器与第 5 节的基础规则逐条对齐 —— 只写裸 input 会被
+   input[type="text"] (0,1,1) 压过去, 等于没改。
+   断点同样用"宽 <=767px 或 矮 <=500px", 见第 19 节说明。 */
+@media (max-width: 767px), (max-height: 500px) {
+  input,
+  select,
+  textarea,
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"],
+  /* 设置页的紧凑输入框自带 14px 字号, 类选择器 (0,1,0) 压得住裸
+     input (0,0,1); 漏掉它就等于这块设置页仍在被 iOS 自动放大。 */
+  .setting-input {
+    font-size: 16px;
+    min-height: 44px;
+  }
+  /* 与 .setting-card .save-btn 同为双类 (0,2,0): 必须原样带上前缀,
+     写成 .save-btn 会被基础规则的 34px 压回去。 */
+  .setting-card .save-btn { min-height: 44px; }
+  /* 481~639px 这一段基础规则是 40px, 也在 639px 查询里补齐 */
+  .cal-cell { min-height: 44px; }
+  /* 桌面端为省空间把数字框限到 88px, 手机上 16px 字号放不下三位数+单位 */
+  .assignment-row .actual-input { width: 100%; }
+  .prompt-body input { height: 52px; }
+  .preview-table input[type="number"] { max-width: none; }
+
+  /* 复选框单独处理: 它是原生控件, 撑到 44px 高会被浏览器画成一个
+     又高又窄的怪方块。给 24px(仍是默认的近两倍), 由 44px 高的
+     网格行提供视觉间距。这是刻意的取舍 —— 主操作(完成/删除/确认)
+     全部拿到完整 44px, 复选框是次级开关。 */
+  input[type="checkbox"] {
+    min-height: 24px;
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* --- 26c. 预览表: 横向滚动 -> 卡片 ---
+   9 列固定布局在 334px 可用宽度里只能横向滚, 而滚过去的列恰恰是
+   家长最不需要的(置信/原文/操作), 留在屏幕里的反而是任务名 —— 正好
+   反了。窄屏改成每条作业一张卡, 标签由 data-label 提供。 */
+@media (max-width: 640px) {
+  #parse-result { overflow-x: visible; }
+  .preview-table { min-width: 0; display: block; }
+  .preview-table thead { display: none; }
+  .preview-table tbody,
+  .preview-table tr { display: block; width: auto; }
+  /* 宽度必须用 :nth-child(n) 复位。基础规则是
+     `.preview-table td:nth-child(8) { width: 92px }` —— (0,2,1),
+     比裸的 `.preview-table td` (0,1,1) 高一级, 直接写 width:auto 会被
+     压回去: 单元格仍卡在 92px, 里面的网格只剩不到一个字宽, 原文
+     变成"一列一个字", 单张卡片能撑到 774px。
+     这里只复位宽度, 不能顺手写 display —— 那样 (0,2,1) 会反过来
+     压掉下面 (0,1,1) 的 display:grid, 标签和输入框就变成上下两行堆叠。 */
+  .preview-table td:nth-child(n) { width: auto; }
+  .preview-table tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+  /* 桌面端为了压行高给 td 强制了 nowrap + 省略号, 卡片里必须放开:
+     任务名常有二三十字, 截断了家长就没法核对是哪条作业了。 */
+  .preview-table td {
+    display: grid;
+    grid-template-columns: 4.5em minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    border: 0;
+    padding: 3px 0;
+  }
+  .preview-table td::before {
+    content: attr(data-label);
+    font-size: var(--fs-caption);
+    color: var(--text-3);
+  }
+  .preview-table .col-src small {
+    white-space: normal;      /* 同上: 原文要能看全 */
+    display: inline;
+  }
+  /* 删除键自带 aria-label, 再加一列"操作"标签纯属噪音 */
+  .preview-table td.col-del::before { content: ''; }
+  .preview-table .row-del { min-height: 44px; padding: 0 var(--space-3); }
+
+  /* 归属日下面那句红字提示要占满整卡宽度。挤在标签右边的窄列里会
+     被折成"AI 未识别 / 归属日, 请 / 确认"三行, 反而比不提示更抢眼。 */
+  .preview-table .need-date-hint {
+    grid-column: 1 / -1;
+    margin: 2px 0 0;
+    font-size: var(--fs-caption);
+    line-height: 1.4;
+  }
+}
+
 /* --- 26g. 复盘偏差表: 7 列 -> 卡片 ---
    和 26c 是同一类问题, 但更严重: 预览表最宽的一列是原文, 复盘表最宽
    的是"建议" —— 一整段中文。table 只有 width:100%, 没有任何列宽约束,

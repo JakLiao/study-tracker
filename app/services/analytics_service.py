@@ -226,7 +226,7 @@ def build_daily_time_stats(week: str, today: date) -> dict:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT due_date, subject,
+            SELECT due_date, subject, est_minutes,
                    COALESCE(actual_minutes, est_minutes) AS minutes
             FROM assignments
             WHERE due_date BETWEEN ? AND ?
@@ -238,9 +238,16 @@ def build_daily_time_stats(week: str, today: date) -> dict:
 
     # 先按 (日期, 科目) 累加 —— 一次查询, 不按天循环查库
     per_day: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # 各科时间占用 (给"占比饼图"用): 预估与实际分开累加。
+    # 预估按 est_minutes; 实际按上面那个 minutes (即 COALESCE(actual, est)),
+    # 与逐日用时同一口径 —— 这样饼图两个环的合计就是柱状图的总用时, 对得上账。
+    share_est: dict[str, int] = defaultdict(int)
+    share_actual: dict[str, int] = defaultdict(int)
     for r in rows:
         subj = r["subject"] or "其他"
         per_day[r["due_date"]][subj] += int(r["minutes"] or 0)
+        share_est[subj] += int(r["est_minutes"] or 0)
+        share_actual[subj] += int(r["minutes"] or 0)
 
     # 科目顺序固定为 语文 -> 数学 -> 英语 (config.SUBJECTS 的顺序)。
     # 不这么做的话, dict 的键序来自 SQL 返回顺序, 也就是入库顺序 ——
@@ -312,6 +319,13 @@ def build_daily_time_stats(week: str, today: date) -> dict:
     school_days = plain_days + friday_days + makeup_days
     excluded = [e for e in days if not e["is_school_day"]]
 
+    # 各科时间占用: 预估与实际各一份, 合计相同口径。
+    # 注意这里统计的是**整周** (含周末与假期实际完成的作业), 不是"上学日
+    # 日均" —— 占比看的是一周的总盘子, 周末真写了作业那部分时间也是
+    # 家长付出的, 不该从饼图里抹掉。
+    est_by_subject = _ordered(dict(share_est))
+    actual_by_subject = _ordered(dict(share_actual))
+
     return {
         "week": week,
         "week_start": start.isoformat(),
@@ -328,4 +342,14 @@ def build_daily_time_stats(week: str, today: date) -> dict:
         ],
         # 全部上学日的日均, 供只想看一个总数的人用
         "school_avg": _avg(school_days),
+        "subject_share": {
+            "est": {
+                "by_subject": est_by_subject,
+                "total_minutes": sum(est_by_subject.values()),
+            },
+            "actual": {
+                "by_subject": actual_by_subject,
+                "total_minutes": sum(actual_by_subject.values()),
+            },
+        },
     }

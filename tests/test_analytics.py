@@ -727,3 +727,164 @@ def test_health_response_shape(app_client):
     data = r.json()
     for k in ("status", "ai_reachable", "ai_model", "db_ok"):
         assert k in data
+
+
+
+def test_subject_share_splits_est_and_actual():
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, 10, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"] == {"语文": 30, "数学": 20}
+    assert share["est"]["total_minutes"] == 50
+    assert share["actual"]["by_subject"] == {"语文": 50, "数学": 10}
+    assert share["actual"]["total_minutes"] == 60
+
+
+
+def test_subject_share_actual_total_matches_daily_totals():
+    """实际环合计 === 柱状图各天合计。两条数字必须来自同一批作业。"""
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, None, "2026-10-13")  # 未填 -> 按预估
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    day_total = sum(d["total_minutes"] for d in r["days"])
+    assert r["subject_share"]["actual"]["total_minutes"] == day_total
+
+
+
+def test_subject_share_missing_actual_falls_back_to_est():
+    """未填实耗的按预估顶替 —— 与逐日用时同一口径, 两张图才对得上。"""
+    _seed_done_record("英语", "背诵", 25, None, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"]["英语"] == 25
+    assert share["actual"]["by_subject"]["英语"] == 25
+
+
+
+def test_subject_share_observation_excluded_optional_included():
+    """观察作业不产生书写负担, 不进占比; 选做进 (选了又做了, 时间就花了)。"""
+    _seed_done_record("语文", "observation", 30, 30, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, 20, "2026-10-12", is_optional=True)
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert r["subject_share"]["actual"]["by_subject"] == {"数学": 20}
+
+
+
+def test_subject_share_counts_whole_week_including_weekend():
+    """占比看的是整周: 周末真写了的时间也是家长付出的, 不该被抹掉。"""
+    _seed_done_record("语文", "阅读", 30, 30, "2026-10-18")  # 周日
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert r["subject_share"]["actual"]["total_minutes"] == 30
+    assert r["weekend"]["total_minutes"] == 30
+
+
+
+def test_subject_share_empty_week_is_zero():
+    """空周返回全 0 而不是抛错 —— 复盘页不该整块崩掉。"""
+    r = build_daily_time_stats("current", date(2026, 7, 6))
+    share = r["subject_share"]
+    assert share["est"]["by_subject"] == {}
+    assert share["est"]["total_minutes"] == 0
+    assert share["actual"]["by_subject"] == {}
+    assert share["actual"]["total_minutes"] == 0
+
+
+
+def test_subject_share_order_follows_config_subjects():
+    """饼图扇形顺序必须固定 (语->数->英), 颜色才对得上科目。"""
+    for subj in ("英语", "数学", "语文"):
+        _seed_done_record(subj, "阅读", 10, 10, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    assert list(r["subject_share"]["est"]["by_subject"].keys()) == ["语文", "数学", "英语"]
+
+
+# ====== 本月统计 (2026-10-30) ======
+#
+# 复盘页新增"本月"周期。月的口径与周有两处根本不同, 都在这组用例里锁住:
+#   1. 区间是"1 日至今日"而不是整月 —— 未来的日子没有数据, 算进分母
+#      会把日均稀释成假的;
+#   2. 各档天数相差悬殊 (平日二十来天 vs 周五四五天), 所以每档都要给日均,
+#      只给合计的话横向比的是"哪档天多"而不是"哪档更重"。
+
+
+
+def test_weekly_time_endpoint_returns_subject_share(app_client):
+    """饼图数据源在同一条接口里, 结构固定: 预估/实际各一份, 各带 by_subject 与合计。"""
+    r = app_client.get("/api/analytics/weekly-time?week=current")
+    share = r.json()["subject_share"]
+    for side in ("est", "actual"):
+        assert side in share, f"缺少 {side}"
+        assert "by_subject" in share[side]
+        assert "total_minutes" in share[side]
+
+
+
+def test_subject_share_pies_are_rendered():
+    """饼图必须有, 且是两张 (预计 / 实际) —— 合成一张就看不出差异。"""
+    js = _app_js()
+    assert "function renderSubjectShare(" in js
+    assert "function renderPie(" in js
+    body = _code(js).split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
+    assert "预计时间占比" in body
+    assert "实际时间占比" in body
+    assert body.count("renderPie(") >= 2, "预计与实际必须各画一张饼"
+
+
+
+def test_subject_share_is_wired_into_weekly_block():
+    """用时统计块里必须真的调了饼图, 否则后端给了数据界面上没有。"""
+    body = _code(_app_js()).split("async function loadWeeklyTime(week) {")[1] \
+        .split("\nfunction ")[0]
+    assert "renderSubjectShare(r)" in body
+
+
+# ====== 本月: 前端接线 (2026-10-30) ======
+
+
+
+def test_subject_share_skipped_when_week_has_no_time():
+    """整周零用时不画饼图 —— 页面里只留一处空态, 不塞两个空饼。
+
+    调用方必须判空再 appendChild: 直接 appendChild(null) 会在页面上
+    留下一个字面量 "null"。
+    """
+    code = _code(_app_js())
+    body = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
+    assert "if (!estTotal && !actTotal) return null;" in body
+    call = code.split("async function loadWeeklyTime(week) {")[1].split("\nfunction ")[0]
+    assert "if (pies) wrap.appendChild(pies);" in call
+
+
+
+def test_pie_uses_fixed_subject_order():
+    """扇形顺序必须走 orderedSubjects, 不能用 Object.entries (键序不定)。"""
+    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
+    assert "orderedSubjects(bySubject)" in body
+    assert "Object.entries(bySubject)" not in body
+
+
+
+def test_pie_labels_subject_name_on_slice():
+    """科目名必须直接标在扇形上, 不用在图例和色块之间来回对照。"""
+    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
+    assert 'class="wt-pie-label"' in body
+    assert "${escapeAttr(name)}</text>" in body
+    # 放不下时要退一档只留名字, 而不是把字挤到相邻扇形上
+    assert "pieLabelTier(frac)" in body
+
+
+
+def test_pie_grid_places_two_charts_side_by_side():
+    """两张饼并排。窄屏靠 grid 的 auto-fit 自动换行, 不另写断点。"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    css = (root / "app/static/styles.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.wt-pies\s*\{([^}]*)\}", css)
+    assert rule, "缺少 .wt-pies 的栅格规则"
+    assert "repeat(auto-fit, minmax(220px, 1fr))" in rule.group(1)
+
+
+# ====== 科目顺序固定 (语 -> 数 -> 英) ======
+# 用户要求: 每天各科按固定顺序堆叠。不固定的话色块位置逐日变化
+# (取决于入库顺序), 家长没法把颜色对应到科目, 堆叠图就失去意义。

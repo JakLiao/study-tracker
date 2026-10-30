@@ -2267,6 +2267,11 @@ async function loadWeeklyTime(week) {
   // ===== 柱状图: 每天各科堆叠 =====
   wrap.appendChild(renderTimeChart(r));
 
+  // ===== 饼图: 各科时间占比 (预计 / 实际) =====
+  const pies = renderSubjectShare(r);
+  if (pies) wrap.appendChild(pies);
+
+
   // ===== 分档卡片: 平日 / 周五 / 周末 / 调休 =====
   wrap.appendChild(renderBuckets(r));
 
@@ -2371,6 +2376,191 @@ function renderTimeChart(r) {
          aria-label="每日各科作业用时堆叠柱状图">${g}</svg>
     ${legend ? `<div class="wt-legend wt-subjects">${legend}</div>` : ''}
   </div>`);
+}
+
+// ====== 各科时间占比饼图 (2026-10-29) ======
+//
+// 为什么预计与实际要分成两张图, 而不是合成一个环:
+//   合成的话每个科目占两段, 一眼看过去全是"语文语文语文", 想比较
+//   "当初估的分布"与"实际发生的分布"完全无从下手。分开两张, 形状
+//   可比, 差在哪一眼就看出来 —— 这才是家长翻这页想看的东西。
+//
+// 口径与上面逐日用时完全一致 (只算 done、实耗为空按预估计、选做计入、
+// 观察作业不计), 所以两个环的合计就是柱状图的总用时, 三处对得上账。
+// 统计区间是**整周**: 周末真写了作业的那部分时间也是家长付出的,
+// 从占比里抹掉会让"这周时间都去哪了"答非所问。
+
+const PIE_CX = 95, PIE_CY = 95, PIE_R = 68;
+
+function piePoint(cx, cy, r, rad) {
+  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
+}
+
+// 一块扇形。整圆 (只有一个科目且占满 100%) 必须单独画: 起止点重合时
+// SVG 的 A 命令画出来是一条退化直线, 整块饼会凭空消失。
+function pieSlice(cx, cy, r, a0, a1, fill, label) {
+  const title = `<title>${label}</title>`;
+  if (a1 - a0 >= Math.PI * 2 - 1e-6) {
+    return `<circle class="wt-pie-slice" cx="${cx}" cy="${cy}" r="${r}" fill="${fill}">${title}</circle>`;
+  }
+  const [x0, y0] = piePoint(cx, cy, r, a0);
+  const [x1, y1] = piePoint(cx, cy, r, a1);
+  const large = (a1 - a0) > Math.PI ? 1 : 0;
+  const d = `M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} `
+          + `A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
+  return `<path class="wt-pie-slice" d="${d}" fill="${fill}">${title}</path>`;
+}
+
+// 百分比用最大余数法取整, 保证几个数加起来正好 100%。
+// 各自四舍五入会得到 33% + 33% + 33% = 99%, 家长会怀疑图画错了。
+function sharePercents(mins) {
+  const total = mins.reduce((s, m) => s + m, 0);
+  if (!total) return mins.map(() => 0);
+  const exact = mins.map(m => (m / total) * 100);
+  const out = exact.map(x => Math.floor(x));
+  let rest = 100 - out.reduce((s, v) => s + v, 0);
+  const byRem = exact
+    .map((x, i) => ({ i, rem: x - Math.floor(x) }))
+    .sort((a, b) => b.rem - a.rem);
+  for (let k = 0; rest > 0; k++, rest--) out[byRem[k % byRem.length].i] += 1;
+  return out;
+}
+
+// 扇形上能放下几行字?
+//
+// 文字是横排的矩形, 会不会压到相邻扇形, 取决于它在标签半径上张开的
+// 角度。张角最大的不是外侧角, 而是**靠圆心那一侧的角** —— 同样的横
+// 竖偏移, 离圆心越近张角越大。所以两个方向各算一次取大的:
+//   标签在左右两侧时: atan2(半高, 标签半径 - 半宽)
+//   标签在上下一侧时: atan2(半宽, 标签半径 - 半高)
+// 扇形超过半圈时它已经包住大半张图, 一定放得下。
+//
+// 分两档是有意的: 科目名是主角, 哪怕放不下百分比也要把名字放上去;
+// 实在放不下才只留给图例 —— 挤在一起的字比没有字更难读。
+const PIE_LABEL_R = PIE_R * 0.72;   // 标签离圆心的距离
+const PIE_LABEL_HALF_W = 12;        // "语文"两字 @12px 的半宽
+
+function pieLabelHalfAngle(halfH) {
+  return Math.max(
+    Math.atan2(halfH, PIE_LABEL_R - PIE_LABEL_HALF_W),
+    Math.atan2(PIE_LABEL_HALF_W, PIE_LABEL_R - halfH)
+  );
+}
+// 单行 (只有科目名) 与双行 (名字 + 百分比) 的门槛
+const PIE_ANGLE_ONE = pieLabelHalfAngle(6);    // 单行半高 6
+const PIE_ANGLE_TWO = pieLabelHalfAngle(12);   // 双行合起来半高 12
+
+// 返回 0 (放不下) / 1 (只放科目名) / 2 (科目名 + 百分比)
+function pieLabelTier(frac) {
+  if (frac > 0.5) return 2;
+  const half = (frac * Math.PI) / 2;
+  if (half >= PIE_ANGLE_TWO) return 2;
+  if (half >= PIE_ANGLE_ONE) return 1;
+  return 0;
+}
+
+// 一张饼。by_subject 为空或合计为 0 时给出空态, 不画空饼 ——
+// 一个只有灰色底的圆会被误读成"占比为 0"。
+function renderPie(bySubject, total, ariaLabel) {
+  const subs = orderedSubjects(bySubject).filter(s => (bySubject[s] || 0) > 0);
+  if (!subs.length || !total) {
+    return el(`<div class="wt-pie-empty muted">该区间没有已完成的作业</div>`);
+  }
+  const mins = subs.map(s => bySubject[s] || 0);
+  const pcts = sharePercents(mins);
+
+  let slices = '';
+  let labels = '';
+  let a = -Math.PI / 2;   // 从 12 点方向起画, 顺时针
+  subs.forEach((name, i) => {
+    const frac = mins[i] / total;
+    const a0 = a;
+    const a1 = a + frac * Math.PI * 2;
+    slices += pieSlice(PIE_CX, PIE_CY, PIE_R, a0, a1, subjectColor(name),
+      `${name} ${mins[i]} 分钟 (${pcts[i]}%)`);
+    // 扇形里直接写科目名 (+ 百分比), 不用在图例和色块之间来回对照。
+    // 放不下就退一档只写名字, 再放不下才只留给图例。
+    const tier = pieLabelTier(frac);
+    if (tier >= 1) {
+      const [lx, ly] = piePoint(PIE_CX, PIE_CY, PIE_LABEL_R, (a0 + a1) / 2);
+      const nameY = tier >= 2 ? ly - 6 : ly;
+      labels += `<text class="wt-pie-label" x="${lx.toFixed(1)}" y="${nameY.toFixed(1)}"
+                 text-anchor="middle" dominant-baseline="middle">${escapeAttr(name)}</text>`;
+      if (tier >= 2) {
+        labels += `<text class="wt-pie-pct" x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}"
+                   text-anchor="middle" dominant-baseline="middle">${pcts[i]}%</text>`;
+      }
+    }
+    a = a1;
+  });
+
+  const legend = subs.map((name, i) => `<li>
+      <i style="background:${subjectColor(name)}"></i>
+      <span class="wt-pie-name">${escapeAttr(name)}</span>
+      <b>${mins[i]} 分</b>
+      <em>${pcts[i]}%</em>
+    </li>`).join('');
+
+  return el(`<div class="wt-pie-body">
+    <svg class="wt-pie-chart" viewBox="0 0 190 190" role="img"
+         aria-label="${escapeAttr(ariaLabel)}">${slices}${labels}</svg>
+    <ul class="wt-pie-legend">${legend}</ul>
+  </div>`);
+}
+
+// 预计 / 实际 两张饼并排。放在柱状图正下方: 柱状图回答"哪天写了多久",
+// 饼图回答"时间都花在哪个科目上", 两张图连着看才是完整的用时画像。
+function renderSubjectShare(r) {
+  // subject_share 缺失时按空处理, 下面会因合计为 0 而整块不画 —— 不能
+  // 在这里返回 el(''): 那是 null, appendChild(null) 会在页面上留下一个
+  // 字面量 "null"。
+  const share = r.subject_share || {};
+  const est = share.est || { by_subject: {}, total_minutes: 0 };
+  const act = share.actual || { by_subject: {}, total_minutes: 0 };
+  const estTotal = est.total_minutes || 0;
+  const actTotal = act.total_minutes || 0;
+  // 整段零用时: 整块不画。调用方据此跳过, 页面里只留那一处空态。
+  if (!estTotal && !actTotal) return null;
+  // "整周" / "整月" —— 统计口径的名字要跟着周期走。
+  //
+  // 饼图统计的是**整个区间** (后端算好的 subject_share), 不跟着柱状图
+  // 一起藏周末: 周末的用时是真花掉的, 抹掉就等于少算了家长的付出。
+  // 两者对得上账的前提是周末本来就没作业 —— 实测确实如此 (作业都在上学
+  // 最后一天布置), 所以隐藏周末不会让饼图比柱子多出时间。
+  const scope = '整周';
+
+  // 实际与预估的差额。一句话说明两个环差在哪, 不用家长自己对表。
+  let delta = '';
+  if (estTotal > 0 && actTotal > 0) {
+    const diff = actTotal - estTotal;
+    delta = diff === 0
+      ? `实际与预估一致, 合计 ${actTotal} 分钟`
+      : `实际比预估${diff > 0 ? '多' : '少'} ${Math.abs(diff)} 分钟 `
+        + `(预估 ${estTotal} · 实际 ${actTotal})`;
+  }
+
+  const card = el(`<div class="card">
+    <div class="card-title">各科时间占比<span class="count">${scope}</span></div>
+    ${delta ? `<div class="muted wt-share-delta">${delta}</div>` : ''}
+    <div class="wt-pies"></div>
+  </div>`);
+
+  const row = card.querySelector('.wt-pies');
+  const estCol = el(`<div class="wt-pie">
+    <div class="wt-pie-head">预计时间占比</div>
+    <div class="wt-pie-total">合计 ${estTotal} 分钟</div>
+  </div>`);
+  estCol.appendChild(renderPie(est.by_subject, estTotal, '各科预计时间占比饼图'));
+  const actCol = el(`<div class="wt-pie">
+    <div class="wt-pie-head">实际时间占比</div>
+    <div class="wt-pie-total">合计 ${actTotal} 分钟</div>
+  </div>`);
+  actCol.appendChild(renderPie(act.by_subject, actTotal, '各科实际时间占比饼图'));
+  row.appendChild(estCol);
+  row.appendChild(actCol);
+
+  card.appendChild(el(`<div class="muted wt-scope">口径: 已完成作业 (跳过不计), 未填实际用时按预估计入; 选做计入, 观察作业不计; 统计区间为${scope}。</div>`));
+  return card;
 }
 
 // 平日 / 周五 / 周末 / 调休 四档对照。这四档的作业量不是同一回事,
