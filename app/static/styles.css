@@ -28,6 +28,13 @@
   --c-英: #4A7C42;
   --c-英-soft: #E8F0E2;
 
+  /* 任务来源色 (M1 统一任务池): 培训/习惯没有科目, 用颜色区分来源.
+     与三个科目色同样压到白字 >= 4.5:1, 且不与语(橘)/数(蓝)/英(绿)混淆。 */
+  --c-training: #6B4C9A;
+  --c-training-soft: #EDE6F7;
+  --c-habit: #2E7D6B;
+  --c-habit-soft: #E1F1ED;
+
   /* 状态色 */
   --status-todo: #BFA894;
   --status-doing: #D97706;
@@ -227,7 +234,10 @@ h3 { font-size: var(--fs-h2); margin: var(--space-5) 0 var(--space-2); font-weig
 .muted { color: var(--text-3); font-size: var(--fs-caption); }
 
 /* ===== 5. 输入控件 ===== */
-textarea, input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], select {
+/* input:not([type]) 覆盖没写 type 的文本框 (等价于 text, 但
+   [type="text"] 属性选择器匹配不到); time 也要列进来, 否则时间框
+   会退回浏览器默认的方角灰边框, 和旁边的选择框完全不在一个样式里。 */
+textarea, input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], input[type="time"], input:not([type]), select {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
@@ -413,6 +423,9 @@ tr:last-child td { border-bottom: none; }
 .subject-tag.语文 { background: var(--c-语); }
 .subject-tag.数学 { background: var(--c-数); }
 .subject-tag.英语 { background: var(--c-英); }
+/* 培训/习惯任务的标签显示项目名, 用来源色以区别于学科作业的科目色 */
+.subject-tag.training { background: var(--c-training); }
+.subject-tag.habit { background: var(--c-habit); }
 
 /* ===== 10. 置信度视觉 (设计文档 §9 坑 3 — 必须显眼) ===== */
 .confidence-row {
@@ -723,6 +736,8 @@ tr.is-optional .muted {
 .subj-time.语文.is-done { background: var(--c-语); }
 .subj-time.数学.is-done { background: var(--c-数); }
 .subj-time.英语.is-done { background: var(--c-英); }
+.subj-time.training.is-done { background: var(--c-training); }
+.subj-time.habit.is-done { background: var(--c-habit); }
 .subj-time.is-done .st-name,
 .subj-time.is-done .st-num,
 .subj-time.is-done .st-num strong,
@@ -1265,6 +1280,11 @@ tr.is-optional .muted {
   padding: var(--space-3);
 }
 .modal.hidden { display: none; }
+/* 通用隐藏类。JS 侧用 classList.add('hidden') 收起弹窗底部那颗「取消」,
+   之前只有 .modal.hidden / .toast.hidden 两条具体规则, 通用类没定义 ——
+   按钮算出来的 display 仍是 block, 于是只读弹窗里「取消」和「返回」并排出现
+   (2026-10-30 用户截图)。 */
+.hidden { display: none; }
 .modal-body {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -1450,6 +1470,16 @@ button.primary.modal-danger:hover:not(:disabled) {
   min-width: 0;
   height: 34px;
 }
+/* 时间框: 数字靠左, 时钟图标由浏览器画在输入框最右端。输入框铺满整列
+   时, 图标离数字有几百像素, 看着像另一个控件 (2026-10-30 用户截图批注)。
+   让时间框按内容收窄, 图标就自然贴着数字; justify-self:start 把它留在
+   网格列的左缘, 与上面「项目」「星期」两行的输入框左边缘对齐。
+   不用 ::-webkit-calendar-picker-indicator 调 margin/opacity ——
+   Chrome 把这个图标画在内部 shadow DOM 里, 外层样式进不去, 实测无效。 */
+.form-grid input[type="time"] {
+  width: auto;
+  justify-self: start;
+}
 .form-grid .form-check input { margin: 0; }
 
 /* ===== 弹窗表单里的自绘下拉 (作业类型 · 2026-10-02) =====
@@ -1551,6 +1581,151 @@ button.primary.modal-danger:hover:not(:disabled) {
   font-size: var(--fs-caption);
   color: var(--text-3);
   cursor: default;
+}
+
+/* ===== 17d. 自绘项目下拉 (2026-10-30) =====
+   原生 <select> 展开后的候选面板由操作系统绘制, CSS 一处也改不动:
+   Windows Chrome 上是蓝底白字的系统面板, 落在奶油糖果配色里像贴错了
+   别的应用 (与 §17c 自绘作业类型下拉是同一个原因)。所以项目下拉也自绘。
+
+   触发键做成"输入框 + 右侧小三角"的样子, 与同一表单里的输入框同宽
+   同高, 看上去仍是这一行的控件, 而不是突然冒出来的一个新东西。
+   旁边常驻一个「＋新建项目」: 项目一个都没有时, 家长原本只能退出弹窗
+   去设置页或录入页绕一圈, 在这里等于死路。 */
+.picker {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.picker-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+  min-width: 0;
+}
+/* 浮层挂在触发键这一格里, 面板宽度就跟触发键一样宽 —— 挂在整行上会
+   比触发键宽出一截, 看着像另一个控件。 */
+.picker-slot {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+}
+.picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.picker-trigger:hover { background: var(--surface-2); }
+.picker.is-open .picker-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 空状态不是错误, 用弱色说明"还没建", 不做成红色警告的样子。 */
+.picker-value.is-empty { color: var(--text-3); }
+/* 三角箭头: 纯 CSS 拼的, 与 .combo-toggle 同一套做法。 */
+.picker-caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 2px solid var(--text-2);
+  border-bottom: 2px solid var(--text-2);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .15s;
+}
+.picker.is-open .picker-caret { transform: rotate(225deg) translateY(-2px); }
+.picker-new {
+  flex: none;
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+.picker-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  /* 浮层比触发键宽一点: 触发键在窄屏上被「＋新建项目」挤得只剩百来像素,
+     浮层跟着一样窄的话, 里面的输入框连项目名都显示不全。 */
+  min-width: 220px;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.picker-list {
+  display: block;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.picker-list[hidden] { display: none; }
+.picker-option {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-option:hover,
+.picker-option.is-active { background: var(--surface-2); }
+.picker-option.is-active { background: var(--accent-soft); }
+/* 选中的那一项要看得出来, 不然家长不知道当前挂在哪个项目下。 */
+.picker-option.is-selected {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.picker-empty {
+  display: block;
+  padding: var(--space-2);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+.picker-create {
+  display: flex;
+  flex-wrap: wrap;          /* 放不下时输入框独占一行, 不被压成一条缝 */
+  gap: var(--space-2);
+  align-items: center;
+  padding-top: var(--space-2);
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+}
+.picker-create[hidden] { display: none; }
+.picker-create-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 34px;
+}
+.picker-create-ok {
+  flex: none;
+  font-size: var(--fs-caption);
+  white-space: nowrap;
 }
 
 /* 窄屏下标签列不能占 76px, 否则控件被压得没法用 */

@@ -4,34 +4,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .env_loader import database_url_with_name, load_dotenv_if_exists
+
 
 # 项目根目录
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
-def _load_dotenv_if_exists() -> None:
-    """手工解析 .env (避免引入 python-dotenv 依赖).
-    仅在 KEY 不存在时尝试注入; 已存在的系统环境变量优先级最高.
-    解析规则: KEY=VALUE, 跳过空行与 # 开头行, 不支持引号嵌套.
-    """
-    env_path = ROOT_DIR / ".env"
-    if not env_path.exists():
-        return
-    for raw in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        # 已有系统环境变量不覆盖 (系统优先)
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-_load_dotenv_if_exists()
+load_dotenv_if_exists(ROOT_DIR)
 
 
 # ====== AI 配置 ======
@@ -58,12 +38,25 @@ HOST: str = os.environ.get("HOST", "127.0.0.1").strip()
 PORT: int = int(os.environ.get("PORT", "8876"))
 
 
-# ====== 数据库 ======
+# ====== 数据库 (PostgreSQL) ======
+# 连接串只从环境变量 / .env 读, 代码里不再有兜底默认值 ——
+# 兜底里带真实密码, 等于把密码抄进了版本库, 换密码时还会漏改一处。
+# 没配就报错: 让"忘配"当场暴露, 好过静默连到某个错库上。
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "").strip()
+
+# 测试库: 与业务库同实例、不同库名, 避免测试清表影响真实家庭数据。
+# 连接参数(主机/端口/用户/密码)沿用 DATABASE_URL, 只换库名 —— 密码因此
+# 只有 .env 一个出处。
+TEST_DATABASE_URL: str = os.environ.get(
+    "TEST_DATABASE_URL",
+    database_url_with_name(DATABASE_URL, "study_tracker_test"),
+).strip()
+
+# 历史 SQLite 文件: 只用于一次性数据导入与归档, 运行时不再读写
 _raw_db_path = os.environ.get("STUDY_DB_PATH", "./data/study.db")
 if Path(_raw_db_path).is_absolute():
     DB_PATH: Path = Path(_raw_db_path).resolve()
 else:
-    # 相对路径相对项目根解析
     DB_PATH = (ROOT_DIR / _raw_db_path).resolve()
 
 
@@ -80,6 +73,10 @@ DEFAULT_TASK_TYPE_BASELINE = {
 DEFAULT_SCHOOL_DISMISS = "16:30"
 DEFAULT_DINNER = "18:30"
 DEFAULT_GRADE = "3"
+# M5 每日负荷上限 (分钟): 课表 + 未完成任务预估超过它就在周计划页标"超载"。
+# 不写进 settings 默认种子: 该值目前只在周计划页读取, 家长想调再手动
+# 往 settings 里加一条 daily_load_limit 即可, 不必为它加一行设置界面。
+DEFAULT_DAILY_LOAD_MINUTES = 120
 
 SUBJECTS = ("语文", "数学", "英语")
 STATUSES = ("todo", "doing", "done", "skipped")

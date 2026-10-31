@@ -2284,7 +2284,7 @@ if (weekendBox) {
 async function loadReview(period) {
   _reviewPeriod = period;
   const root = document.getElementById('review-content');
-  // 必须清空: 下面两块是 appendChild 进去的, 不会自动顶掉旧内容。
+  // 必须清空: 下面几块是 appendChild 进去的, 不会自动顶掉旧内容。
   // 不清的话点「上周」会在旧的一周下面再接一周, 页面越点越长。
   // 这里不用 innerHTML 塞「加载中…」占位 —— 两条接口并发返回后追加,
   // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上

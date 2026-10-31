@@ -247,23 +247,21 @@ def test_edit_optional_writes_to_completion_logs(app_client):
     """选做变更要落进 completion_logs, 口径与 /optional 接口一致。
 
     这张表是"这条怎么变成选做的"的唯一去处, 但没有读取接口, 所以直接
-    查库断言。import 写在函数内与其他测试一致: conftest 每个用例都会
-    reload app.config, 模块级 import 会拿到旧模块的 DB_PATH。
+    查库断言。
     """
-    import sqlite3
+    import psycopg
+    from psycopg.rows import dict_row
+
     from app import config
+
     aid = _add_one(app_client, is_optional=False)
     app_client.patch(f"/api/assignments/{aid}", json={"is_optional": True})
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
+    with psycopg.connect(config.DATABASE_URL, row_factory=dict_row) as conn:
         row = conn.execute(
             "SELECT action, from_value, to_value FROM completion_logs "
-            "WHERE assignment_id = ? ORDER BY at DESC, id DESC LIMIT 1",
+            "WHERE assignment_id = %s ORDER BY at DESC, id DESC LIMIT 1",
             (aid,),
         ).fetchone()
-    finally:
-        conn.close()
     assert row is not None, "选做变更没有留痕"
     assert row["action"] == "edited"
     assert "is_optional" in (row["from_value"] or "") + (row["to_value"] or "")
@@ -487,11 +485,15 @@ def test_edit_optional_field_label_is_explicit(app_js):
 # 出现的位置, 而不只是"存在": 存在但乱序, 断言照样通过, 等于没锁。
 
 def test_edit_field_order_matches_spec(app_js):
-    """编辑弹窗字段顺序: 归属日→科目→作业项→作业类型→预计用时→是否选做→截止时间。"""
+    """编辑弹窗字段顺序: 归属日→任务来源→科目→项目→作业项→作业类型→预计用时→是否选做→截止时间。
+
+    M1 统一任务池在归属日之后插入「任务来源」与「项目」两个字段,
+    与「手动添加」弹窗保持同一顺序。
+    """
     block = app_js.split("function openEditAssignmentModal(")[1].split("\n}")[0]
     grid = re.search(r'<div class="form-grid">(.*?)</div>', block, re.S).group(1)
     got = re.findall(r'<span class="form-label">([^<]+)</span>', grid)
-    assert got == ["归属日", "科目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"], \
+    assert got == ["归属日", "任务来源", "科目", "项目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"], \
         f"字段顺序与设计不符: {got}"
 
 
@@ -1226,7 +1228,7 @@ def test_optional_untouched_sends_nothing(live):
 @needs_jsdom
 def test_manual_form_field_order(live):
     """手动添加的字段顺序与设计一致, 且与编辑弹窗相同。"""
-    spec = ["归属日", "科目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"]
+    spec = ["归属日", "任务来源", "科目", "项目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"]
     assert live["manualFieldOrder"] == spec, f"字段顺序不符: {live['manualFieldOrder']}"
 
 

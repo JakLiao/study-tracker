@@ -570,7 +570,7 @@ needs_jsdom = pytest.mark.skipif(not jsdom_available, reason="需要 node 与 js
 
 @needs_jsdom
 def test_live_tab_is_登记(live):
-    assert live["tabs"] == ["看板", "登记", "日历", "复盘", "设置"]
+    assert live["tabs"] == ["看板", "登记", "日历", "周计划", "复盘", "设置"]
 
 
 @needs_jsdom

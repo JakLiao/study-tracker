@@ -1,125 +1,76 @@
-"""SQLite 单文件连接 + 建表.
+"""PostgreSQL 连接 + schema 迁移入口.
 
-设计原则:
-- 单文件 SQLite, 无迁移工具 (v1 表结构稳定)
-- WAL 模式: 并发读 + 单写不阻塞
-- 外键开启
-- 行用 sqlite3.Row, 默认 dict-like
-- 上下文管理器式 get_conn()
+设计:
+- psycopg 3, 单连接池由服务层按请求短连接获取 (单家庭规模足够)
+- schema 由 app/migrations 版本化管理 (schema_meta + 有序步骤)
+- autocommit=True: 保留 service 层显式 BEGIN/COMMIT 的事务写法,
+  读语句各自独立提交, 不需要额外包裹
+- 行用 dict_row, 与原先 sqlite3.Row 的按名取值一致
 """
 from __future__ import annotations
 
-import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Iterator
 
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.pq import TransactionStatus
+
 from . import config
+from .migrations.runner import migrate
 
 
-# DDL 一次性建表, v1 不引入 alembic / 迁移
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS assignments (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    subject         TEXT NOT NULL CHECK (subject IN ('语文','数学','英语')),
-    task_name       TEXT NOT NULL,
-    due_date        TEXT NOT NULL,           -- ISO date YYYY-MM-DD
-    deadline_time   TEXT,                    -- ISO datetime or NULL
-    is_optional     INTEGER NOT NULL DEFAULT 0,  -- 0/1
-    est_minutes     INTEGER NOT NULL CHECK (est_minutes BETWEEN 1 AND 180),
-    actual_minutes  INTEGER CHECK (actual_minutes IS NULL OR actual_minutes BETWEEN 0 AND 240),
-    status          TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo','doing','done','skipped')),
-    task_type       TEXT,
-    source_span     TEXT NOT NULL,
-    confidence      TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
-    batch_id        INTEGER,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    FOREIGN KEY (batch_id) REFERENCES parsed_batches(id) ON DELETE SET NULL
-);
+def init_db(url: str | None = None) -> dict:
+    """初始化数据库 (启动时调用一次).
 
-CREATE INDEX IF NOT EXISTS idx_assignments_due_date ON assignments(due_date);
-CREATE INDEX IF NOT EXISTS idx_assignments_subject_due ON assignments(subject, due_date);
--- 查重用: insert_assignments 按 (subject, due_date) 批量捞已有 task_name。
--- 现有 idx_assignments_subject_due 前缀已是 (subject, due_date), 本就覆盖该查询,
--- 不额外加索引, 避免重复索引拖慢写入。
-CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
+    建库/升级统一走迁移器: 空库会建全套表; 后续版本按 schema_meta 补跑。
+    """
+    target = _resolve_url(url)
+    report = migrate(target)
 
-CREATE TABLE IF NOT EXISTS parsed_batches (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    raw_text            TEXT NOT NULL,
-    raw_text_hash       TEXT NOT NULL UNIQUE,
-    parsed_at           TEXT NOT NULL,
-    ai_model_version    TEXT NOT NULL,
-    result_count        INTEGER NOT NULL,
-    status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','discarded')),
-    note                TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_batches_hash ON parsed_batches(raw_text_hash);
-
-CREATE TABLE IF NOT EXISTS completion_logs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    assignment_id   INTEGER NOT NULL,
-    action          TEXT NOT NULL CHECK (action IN ('created','status_changed','actual_logged','edited','deleted')),
-    from_value      TEXT,
-    to_value        TEXT,
-    at              TEXT NOT NULL,
-    FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_logs_assignment_at ON completion_logs(assignment_id, at);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key         TEXT PRIMARY KEY,
-    value       TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-);
-"""
+    with psycopg.connect(target, row_factory=dict_row) as conn:
+        conn.execute("SELECT 1").fetchone()
+    return report
 
 
-def init_db(path: Path | None = None) -> None:
-    """初始化数据库 (启动时调用一次)."""
-    db_path = path or config.DB_PATH
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
-        conn.executescript(_SCHEMA)
-        # 完整性快速验证 (避免启动后才报错)
-        result = conn.execute("PRAGMA integrity_check").fetchone()
-        if result is None or result[0] != "ok":
-            raise RuntimeError(f"Database integrity check failed: {result}")
+def _resolve_url(url: str | None) -> str:
+    """取连接串, 没配就给出能照着做的报错。
+
+    不配 DATABASE_URL 时若直接把空串交给 psycopg, 报出来的是
+    "connection to server at failed" 这类看不出原因的错。这里直接告诉
+    家长去哪儿填 —— 密码只在 .env 里, 不在代码里, 所以漏配是迟早的事。
+    """
+    target = (url or config.DATABASE_URL).strip()
+    if not target:
+        raise RuntimeError(
+            "未配置 DATABASE_URL: 复制 .env.example 为 .env 并填入数据库连接串"
+            "(密码只写在 .env, 不入版本库)"
+        )
+    return target
+
+
+def connect(url: str | None = None, *, autocommit: bool = True) -> psycopg.Connection:
+    return psycopg.connect(
+        _resolve_url(url), row_factory=dict_row, autocommit=autocommit
+    )
 
 
 @contextmanager
-def get_conn() -> Iterator[sqlite3.Connection]:
+def get_conn() -> Iterator[psycopg.Connection]:
     """获取连接.
 
-    - isolation_level = "" (deferred 模式): 配合 service 层手写 BEGIN/COMMIT
-    - row_factory = sqlite3.Row, dict-like
-    - 退出时若仍在事务中, 自动 ROLLBACK (兼容 service 层在 raise 之前未 COMMIT 的情况)
+    - autocommit: 由 service 层决定事务边界 (BEGIN/COMMIT 仍照旧可用)
+    - 异常退出时若事务未收尾, 主动 ROLLBACK, 避免连接带着半个事务回到连接池
     """
-    conn = sqlite3.connect(
-        config.DB_PATH,
-        detect_types=sqlite3.PARSE_DECLTYPES,
-        isolation_level="",
-    )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = connect()
     try:
         yield conn
     except Exception:
-        # 容错: 若没有活跃事务, ROLLBACK 会抛 OperationalError, 吞掉即可
         try:
-            conn.execute("ROLLBACK")
-        except sqlite3.OperationalError:
+            if conn.info.transaction_status != TransactionStatus.IDLE:
+                conn.execute("ROLLBACK")
+        except Exception:
             pass
         raise
     finally:
         conn.close()
-
-
-def apply_wal_pragma() -> None:
-    """启动时设置 WAL (持久化)."""
-    with get_conn() as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")

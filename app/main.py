@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config
-from .db import init_db, apply_wal_pragma
+from .db import init_db
 from .errors import AppError, error_payload
 from .routers import analytics as analytics_router
 from .routers import assignments as assignments_router
@@ -34,7 +34,7 @@ logger = logging.getLogger("study.main")
 #
 # "review" 是复盘页(2026-10-30 由 weekly 改名): 该页已不只按周统计,
 # 还有"本月", 名字里带 weekly 就与内容不符了。
-FRONTEND_PAGES = frozenset({"board", "entry", "list", "review", "settings"})
+FRONTEND_PAGES = frozenset({"board", "entry", "list", "week", "review", "settings"})
 
 
 def create_app() -> FastAPI:
@@ -44,9 +44,8 @@ def create_app() -> FastAPI:
         description="小学生作业跟踪平台 v1",
     )
 
-    # 启动期: 初始化 DB + WAL + 默认设置
+    # 启动期: 初始化 DB (建表/迁移) + 默认设置
     init_db()
-    apply_wal_pragma()
     seed_settings()
 
     if not config.ai_configured():

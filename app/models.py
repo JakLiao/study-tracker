@@ -4,10 +4,10 @@ DTO 与 DB 行解耦, 用 row_to_dto / dto_to_dict 转换.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import config
 
@@ -204,18 +204,34 @@ class HealthResponse(BaseModel):
 
 
 # ====== Helpers ======
+def _as_date(value) -> date | None:
+    """兼容 PG 原生 date 与旧文本日期."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _as_datetime(value) -> datetime | None:
+    """兼容 PG 原生 datetime 与旧 ISO 文本."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
 def row_to_assignment_dto(row) -> AssignmentDTO:
-    """sqlite3.Row -> AssignmentDTO. 字段对齐."""
+    """DB 行 (psycopg dict_row) -> AssignmentDTO. 字段对齐."""
     return AssignmentDTO(
         id=row["id"],
         subject=row["subject"],
         task_name=row["task_name"],
-        due_date=date.fromisoformat(row["due_date"]),
-        deadline_time=(
-            datetime.fromisoformat(row["deadline_time"])
-            if row["deadline_time"]
-            else None
-        ),
+        due_date=_as_date(row["due_date"]),
+        deadline_time=_as_datetime(row["deadline_time"]),
         is_optional=bool(row["is_optional"]),
         est_minutes=row["est_minutes"],
         actual_minutes=row["actual_minutes"],

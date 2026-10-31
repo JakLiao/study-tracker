@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -369,40 +368,24 @@ def section_duplicate_parse():
 
 
 def section_data_persistence():
-    hr("13. 数据持久化 - DB 文件大小 + 流水")
-    db_path = Path("/home/xiaoduo/project/study-tracker/data/study.db")
-    if db_path.exists():
-        size = db_path.stat().st_size
-        print(f"  DB size: {size} bytes")
-        # 用 sqlite3 直接看
-        try:
-            out = subprocess.run(
-                ["sqlite3", str(db_path), ".tables"],
-                capture_output=True, text=True, timeout=5,
-            )
-            print(f"  tables: {out.stdout.strip()}")
-            out = subprocess.run(
-                ["sqlite3", str(db_path), "SELECT COUNT(*) FROM assignments;"],
-                capture_output=True, text=True, timeout=5,
-            )
-            print(f"  assignments count: {out.stdout.strip()}")
-            out = subprocess.run(
-                ["sqlite3", str(db_path), "SELECT COUNT(*) FROM status_log;"],
-                capture_output=True, text=True, timeout=5,
-            )
-            print(f"  status_log count: {out.stdout.strip()}")
-            out = subprocess.run(
-                ["sqlite3", str(db_path), "SELECT COUNT(*) FROM parse_batches;"],
-                capture_output=True, text=True, timeout=5,
-            )
-            print(f"  parse_batches count: {out.stdout.strip()}")
-            out = subprocess.run(
-                ["sqlite3", str(db_path), "SELECT * FROM status_log ORDER BY id DESC LIMIT 5;"],
-                capture_output=True, text=True, timeout=5,
-            )
-            print(f"  last 5 status_log:\n{out.stdout}")
-        except FileNotFoundError:
-            print("  sqlite3 CLI not installed, skip detail")
+    hr("13. 数据持久化 - PostgreSQL 行数 + 流水")
+    import psycopg
+    from psycopg.rows import dict_row
+
+    # 连接串只从环境变量 / .env 读 (密码不入版本库)
+    from app import config
+
+    url = config.DATABASE_URL
+    with psycopg.connect(url, row_factory=dict_row) as conn:
+        for table in ("assignments", "completion_logs", "parsed_batches"):
+            n = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+            print(f"  {table}: {n}")
+        rows = conn.execute(
+            "SELECT * FROM completion_logs ORDER BY id DESC LIMIT 5"
+        ).fetchall()
+        print("  last 5 completion_logs:")
+        for r in rows:
+            print(f"    {r}")
 
 
 def section_security():

@@ -27,9 +27,13 @@ fi
 
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8876}"
-
-# 数据目录
+# 数据目录 (历史 SQLite 归档 / 导出临时文件)
 mkdir -p data
+
+# 数据库连接串: 只从环境变量 / .env 读, 这里不留带密码的兜底值
+# (兜底值进版本库 = 密码进版本库)。上面已 source .env, 所以正常路径
+# 这里一定有值; 真的没配就让 Python 侧报"去 .env 里填"。
+DATABASE_URL="${DATABASE_URL:-}"
 
 # 解析自定义参数
 for arg in "$@"; do
@@ -40,10 +44,14 @@ for arg in "$@"; do
   esac
 done
 
+# 打印数据库目标时脱敏密码, 日志/截图里不泄漏凭据
+DB_DISPLAY="$(printf '%s' "$DATABASE_URL" | sed -E 's#(://[^:/@]+:)[^@]*@#\1***@#')"
+
 echo "==============================================="
 echo " study-tracker v1 · http://${HOST}:${PORT}"
 echo " AI 模型: ${MINIMAX_MODEL:-MiniMax-M3}"
 echo " AI Key : $([ -n "${MINIMAX_API_KEY:-}" ] && echo 已配置 || echo 未配置)"
+echo " DB     : ${DB_DISPLAY}"
 echo "==============================================="
 
-exec python3 -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" --log-level info
+exec env DATABASE_URL="$DATABASE_URL" python3 -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" --log-level info

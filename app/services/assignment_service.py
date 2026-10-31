@@ -8,9 +8,11 @@ from typing import Any
 from .. import config
 from ..db import get_conn
 from ..errors import (
+    AppError,
     AssignmentNotFoundError,
     BadDateFormatError,
     BadStatusError,
+    BadTaskKindError,
     BatchNotFoundError,
     DBWriteError,
     DeleteDoneForbiddenError,
@@ -18,7 +20,6 @@ from ..errors import (
     MinutesOutOfRangeError,
     MissingFieldError,
 )
-from ..models import AssignmentCreate, AssignmentDTO, AssignmentEdit, row_to_assignment_dto
 from .normalize import dedup_fingerprint, normalize_task_name
 
 
@@ -35,10 +36,10 @@ def create_parsed_batch(raw_text: str, model_version: str, result_count: int) ->
         (batch_id, is_duplicate)
     """
     text_hash = hash_text(raw_text)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     with get_conn() as conn:
         existing = conn.execute(
-            "SELECT id FROM parsed_batches WHERE raw_text_hash = ?", (text_hash,)
+            "SELECT id FROM parsed_batches WHERE raw_text_hash = %s", (text_hash,)
         ).fetchone()
         if existing:
             return existing["id"], True
@@ -46,11 +47,11 @@ def create_parsed_batch(raw_text: str, model_version: str, result_count: int) ->
             conn.execute("BEGIN")
             cur = conn.execute(
                 "INSERT INTO parsed_batches (raw_text, raw_text_hash, parsed_at, ai_model_version, result_count, status) "
-                "VALUES (?, ?, ?, ?, ?, 'pending')",
+                "VALUES (%s, %s, %s, %s, %s, 'pending') RETURNING id",
                 (raw_text, text_hash, now, model_version, result_count),
             )
             conn.execute("COMMIT")
-            return cur.lastrowid, False
+            return cur.fetchone()["id"], False
         except Exception as e:
             conn.execute("ROLLBACK")
             raise DBWriteError(f"创建批次失败: {e}") from e
@@ -58,12 +59,12 @@ def create_parsed_batch(raw_text: str, model_version: str, result_count: int) ->
 
 def confirm_batch(batch_id: int) -> None:
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM parsed_batches WHERE id = ?", (batch_id,)).fetchone()
+        row = conn.execute("SELECT id FROM parsed_batches WHERE id = %s", (batch_id,)).fetchone()
         if not row:
             raise BatchNotFoundError()
         conn.execute("BEGIN")
         try:
-            conn.execute("UPDATE parsed_batches SET status = 'confirmed' WHERE id = ?", (batch_id,))
+            conn.execute("UPDATE parsed_batches SET status = 'confirmed' WHERE id = %s", (batch_id,))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -72,12 +73,12 @@ def confirm_batch(batch_id: int) -> None:
 
 def discard_batch(batch_id: int) -> None:
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM parsed_batches WHERE id = ?", (batch_id,)).fetchone()
+        row = conn.execute("SELECT id FROM parsed_batches WHERE id = %s", (batch_id,)).fetchone()
         if not row:
             raise BatchNotFoundError()
         conn.execute("BEGIN")
         try:
-            conn.execute("UPDATE parsed_batches SET status = 'discarded' WHERE id = ?", (batch_id,))
+            conn.execute("UPDATE parsed_batches SET status = 'discarded' WHERE id = %s", (batch_id,))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -88,8 +89,8 @@ def discard_batch(batch_id: int) -> None:
 
 def _log(conn, assignment_id: int, action: str, from_v: str | None, to_v: str | None) -> None:
     conn.execute(
-        "INSERT INTO completion_logs (assignment_id, action, from_value, to_value, at) VALUES (?, ?, ?, ?, ?)",
-        (assignment_id, action, from_v, to_v, datetime.now(timezone.utc).isoformat()),
+        "INSERT INTO completion_logs (assignment_id, action, from_value, to_value, at) VALUES (%s, %s, %s, %s, %s)",
+        (assignment_id, action, from_v, to_v, datetime.now(timezone.utc)),
     )
 
 
@@ -107,7 +108,7 @@ def insert_assignments(
         skipped 为被跳过的条目摘要 [{task_name, subject, due_date, reason}, ...],
         供前端告知家长"跳过了 N 条重复"。
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     created_ids: list[int] = []
     skipped: list[dict] = []
     if not items:
@@ -122,9 +123,11 @@ def insert_assignments(
         if item.deadline_time and item.deadline_time.date() < item.due_date:
             raise FieldOutOfRangeError(f"items[{idx}].deadline_time 早于 due_date")
 
+    family_id, child_id = ensure_default_family_child()
+
     if batch_id is not None:
         with get_conn() as conn:
-            row = conn.execute("SELECT id FROM parsed_batches WHERE id = ?", (batch_id,)).fetchone()
+            row = conn.execute("SELECT id FROM parsed_batches WHERE id = %s", (batch_id,)).fetchone()
             if not row:
                 raise BatchNotFoundError()
 
@@ -134,7 +137,7 @@ def insert_assignments(
             try:
                 # 查重用的指纹集合。分两部分:
                 #   seen  —— 本次批次内已处理的 (防同一次提交里自我重复)
-                #   库中已有的 —— 按 (subject, due_date) 分组批量捞, 避免逐条查询
+                #   库中已有的 —— 按归属日一次捞全量, 再按 scope 分组, 避免逐条查询
                 seen: set[str] = set()
 
                 # 先把涉及的 (subject, due_date) 组合捞出来, 一次查完而不是 N 次 SELECT
@@ -167,7 +170,7 @@ def insert_assignments(
                             "reason": "本次提交内重复",
                         })
                         continue
-                    if norm in existing_by_combo[(item.subject, due_iso)]:
+                    if norm in existing_by_combo.get(combo, set()):
                         skipped.append({
                             "task_name": item.task_name,
                             "subject": item.subject,
@@ -187,9 +190,9 @@ def insert_assignments(
                         (
                             item.subject,
                             item.task_name,
-                            due_iso,
-                            item.deadline_time.isoformat() if item.deadline_time else None,
-                            1 if item.is_optional else 0,
+                            item.due_date,
+                            item.deadline_time,
+                            bool(item.is_optional),
                             item.est_minutes,
                             item.task_type,
                             item.source_span or item.task_name,
@@ -199,20 +202,24 @@ def insert_assignments(
                             now,
                         ),
                     )
-                    new_id = cur.lastrowid
+                    new_id = cur.fetchone()["id"]
                     created_ids.append(new_id)
                     seen.add(fp)
-                    existing_by_combo[(item.subject, due_iso)].add(norm)
+                    existing_by_combo.setdefault(combo, set()).add(norm)
                     _log(conn, new_id, "created", None, item.task_name)
 
                 if batch_id is not None:
                     conn.execute(
-                        "UPDATE parsed_batches SET status = 'confirmed' WHERE id = ?", (batch_id,)
+                        "UPDATE parsed_batches SET status = 'confirmed' WHERE id = %s", (batch_id,)
                     )
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
+    except AppError:
+        # 业务校验 (项目不属于本家庭等) 必须原样上抛, 不能被包成 5003,
+        # 否则前端拿到的是"入库失败"而不是可定位的 4014。
+        raise
     except Exception as e:
         raise DBWriteError(f"入库失败: {e}") from e
 
@@ -222,8 +229,12 @@ def insert_assignments(
 # ====== 查询 ======
 
 def get_assignment(assignment_id: int) -> AssignmentDTO:
+    family_id = default_family_id()
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+        row = conn.execute(
+            _ASSIGNMENT_WITH_PROJECT + "WHERE a.id = %s AND a.family_id = %s",
+            (assignment_id, family_id),
+        ).fetchone()
     if not row:
         raise AssignmentNotFoundError()
     return row_to_assignment_dto(row)
@@ -231,10 +242,7 @@ def get_assignment(assignment_id: int) -> AssignmentDTO:
 
 def list_by_date(d: date) -> list[AssignmentDTO]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM assignments WHERE due_date = ? ORDER BY subject, id",
-            (d.isoformat(),),
-        ).fetchall()
+        rows = conn.execute(sql, tuple(params)).fetchall()
     return [row_to_assignment_dto(r) for r in rows]
 
 
@@ -294,31 +302,34 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
         raise BadDateFormatError(f"月份必须在 1-12 之间, 收到 {month}")
     first = date(year, month, 1)
     last = date(year + (month == 12), (month % 12) + 1, 1)
+    family_id = default_family_id()
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT due_date,
                    COUNT(*)                                                    AS total,
-                   SUM(CASE WHEN is_optional = 1 THEN 1 ELSE 0 END)           AS optional,
-                   SUM(CASE WHEN is_optional = 0 AND status = 'done'    THEN 1 ELSE 0 END) AS req_done,
-                   SUM(CASE WHEN is_optional = 0 AND status = 'skipped' THEN 1 ELSE 0 END) AS req_skip,
-                   SUM(CASE WHEN is_optional = 1 AND status = 'done'    THEN 1 ELSE 0 END) AS opt_done,
-                   SUM(CASE WHEN is_optional = 1 AND status = 'skipped' THEN 1 ELSE 0 END) AS opt_skip,
+                   COUNT(*) FILTER (WHERE is_optional)                         AS optional,
+                   COUNT(*) FILTER (WHERE NOT is_optional AND status = 'done')    AS req_done,
+                   COUNT(*) FILTER (WHERE NOT is_optional AND status = 'skipped') AS req_skip,
+                   COUNT(*) FILTER (WHERE is_optional AND status = 'done')        AS opt_done,
+                   COUNT(*) FILTER (WHERE is_optional AND status = 'skipped')     AS opt_skip,
                    -- 总用时: 只算真正做完的项, 跳过的没投入时间不能计。
                    -- 实耗为空时按预估计, 与 build_board_for 的 COALESCE 口径一致。
                    SUM(CASE WHEN status = 'done'
                             THEN COALESCE(actual_minutes, est_minutes)
                             ELSE 0 END)                                    AS act_total
             FROM assignments
-            WHERE due_date >= ? AND due_date < ?
+            WHERE family_id = %s AND due_date >= %s AND due_date < %s
             GROUP BY due_date
             """,
-            (first.isoformat(), last.isoformat()),
+            (family_id, first, last),
         ).fetchall()
 
     days: dict[str, Any] = {}
     for r in rows:
         d = r["due_date"]
+        if isinstance(d, (date, datetime)):
+            d = d.isoformat()
         optional = r["optional"] or 0
         req_done = r["req_done"] or 0
         req_skip = r["req_skip"] or 0
@@ -350,15 +361,17 @@ def calendar_summary(year: int, month: int) -> dict[str, Any]:
 def list_upcoming_deadlines(today: date, days: int = 7) -> list[AssignmentDTO]:
     """本周内非今日到期 (deadline_time 在 [today+1, today+days])."""
     end = today + timedelta(days=days)
+    family_id = default_family_id()
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT * FROM assignments
-            WHERE deadline_time IS NOT NULL
-              AND date(deadline_time) > ?
-              AND date(deadline_time) <= ?
-              AND status != 'done'
-            ORDER BY deadline_time, id
+            _ASSIGNMENT_WITH_PROJECT
+            + """
+            WHERE a.family_id = %s
+              AND a.deadline_time IS NOT NULL
+              AND a.deadline_time::date > %s
+              AND a.deadline_time::date <= %s
+              AND a.status != 'done'
+            ORDER BY a.deadline_time, a.id
             """,
             (today.isoformat(), end.isoformat()),
         ).fetchall()
@@ -370,14 +383,18 @@ def list_upcoming_deadlines(today: date, days: int = 7) -> list[AssignmentDTO]:
 def update_status(assignment_id: int, new_status: str) -> dict:
     if new_status not in config.STATUSES:
         raise BadStatusError(f"status 必须是 {config.STATUSES}")
+    family_id = default_family_id()
     with get_conn() as conn:
-        row = conn.execute("SELECT status FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+        row = conn.execute(
+            "SELECT status FROM assignments WHERE id = %s AND family_id = %s",
+            (assignment_id, family_id),
+        ).fetchone()
         if not row:
             raise AssignmentNotFoundError()
         old_status = row["status"]
         if old_status == new_status:
             return {"id": assignment_id, "status": new_status}
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
         conn.execute("BEGIN")
         try:
             # 从 done 退回未完成状态时, 必须清掉 actual_minutes。
@@ -385,13 +402,13 @@ def update_status(assignment_id: int, new_status: str) -> dict:
             # 且这 30 分会混进周复盘统计, 污染估时偏差分析。
             if old_status == "done" and new_status != "done":
                 conn.execute(
-                    "UPDATE assignments SET status = ?, actual_minutes = NULL, updated_at = ? WHERE id = ?",
+                    "UPDATE assignments SET status = %s, actual_minutes = NULL, updated_at = %s WHERE id = %s",
                     (new_status, now, assignment_id),
                 )
                 _log(conn, assignment_id, "edited", "actual_minutes", "null")
             else:
                 conn.execute(
-                    "UPDATE assignments SET status = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE assignments SET status = %s, updated_at = %s WHERE id = %s",
                     (new_status, now, assignment_id),
                 )
             _log(conn, assignment_id, "status_changed", old_status, new_status)
@@ -405,18 +422,20 @@ def update_status(assignment_id: int, new_status: str) -> dict:
 def update_completion(assignment_id: int, actual_minutes: int) -> dict:
     if not (0 <= actual_minutes <= 240):
         raise MinutesOutOfRangeError("actual_minutes 必须在 0~240 之间")
+    family_id = default_family_id()
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT status, actual_minutes FROM assignments WHERE id = ?", (assignment_id,)
+            "SELECT status, actual_minutes FROM assignments WHERE id = %s AND family_id = %s",
+            (assignment_id, family_id),
         ).fetchone()
         if not row:
             raise AssignmentNotFoundError()
         old_val = str(row["actual_minutes"]) if row["actual_minutes"] is not None else None
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
         conn.execute("BEGIN")
         try:
             conn.execute(
-                "UPDATE assignments SET actual_minutes = ?, updated_at = ? WHERE id = ?",
+                "UPDATE assignments SET actual_minutes = %s, updated_at = %s WHERE id = %s",
                 (actual_minutes, now, assignment_id),
             )
             _log(conn, assignment_id, "actual_logged", old_val, str(actual_minutes))
@@ -428,17 +447,21 @@ def update_completion(assignment_id: int, actual_minutes: int) -> dict:
 
 
 def update_optional(assignment_id: int, is_optional: bool) -> dict:
+    family_id = default_family_id()
     with get_conn() as conn:
-        row = conn.execute("SELECT is_optional FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+        row = conn.execute(
+            "SELECT is_optional FROM assignments WHERE id = %s AND family_id = %s",
+            (assignment_id, family_id),
+        ).fetchone()
         if not row:
             raise AssignmentNotFoundError()
         old_val = "true" if row["is_optional"] else "false"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
         conn.execute("BEGIN")
         try:
             conn.execute(
-                "UPDATE assignments SET is_optional = ?, updated_at = ? WHERE id = ?",
-                (1 if is_optional else 0, now, assignment_id),
+                "UPDATE assignments SET is_optional = %s, updated_at = %s WHERE id = %s",
+                (bool(is_optional), now, assignment_id),
             )
             _log(conn, assignment_id, "edited", f"is_optional={old_val}", f"is_optional={is_optional}")
             conn.execute("COMMIT")
@@ -460,8 +483,12 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
     反过来, due_date / est_minutes / task_name / subject 是 NOT NULL 列,
     传 null 属于非法输入, 直接拒掉而不是让 SQLite 抛 IntegrityError。
     """
+    family_id = default_family_id()
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM assignments WHERE id = %s AND family_id = %s",
+            (assignment_id, family_id),
+        ).fetchone()
         if not row:
             raise AssignmentNotFoundError()
 
@@ -480,7 +507,6 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
             ("task_name", edit.task_name),
             ("est_minutes", edit.est_minutes),
             ("due_date", edit.due_date),
-            ("subject", edit.subject),
         ):
             if key in provided and val is None:
                 raise MissingFieldError(f"{key} 不能为空")
@@ -489,8 +515,6 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
             _put("task_name", edit.task_name, row["task_name"])
         if edit.est_minutes is not None:
             _put("est_minutes", edit.est_minutes, row["est_minutes"])
-        if edit.subject is not None:
-            _put("subject", edit.subject, row["subject"])
         if edit.due_date is not None:
             _put("due_date", edit.due_date.isoformat(), row["due_date"])
 
@@ -503,15 +527,15 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
         if "deadline_time" in provided:
             _put(
                 "deadline_time",
-                edit.deadline_time.isoformat() if edit.deadline_time else None,
+                edit.deadline_time,
                 row["deadline_time"],
             )
         # is_optional 同理是"出现即写入", 但它不会为 null —— 表单里只有
         # 勾选/不勾选两种, 前端传的是 true/false。判定用 is not None 而不是
         # if edit.is_optional: 后者会把「取消选做」(False) 当成没传, 勾选
-        # 永远取消不掉。SQLite 用 0/1 存布尔。
+        # 永远取消不掉。
         if edit.is_optional is not None:
-            _put("is_optional", 1 if edit.is_optional else 0, row["is_optional"])
+            _put("is_optional", bool(edit.is_optional), row["is_optional"])
 
         if not fields:
             return {"id": assignment_id, "noop": True}
@@ -523,15 +547,17 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
         # 口径与 insert_assignments 保持一致。
         new_due = fields.get("due_date", row["due_date"])
         new_dl = fields.get("deadline_time", row["deadline_time"])
-        if new_dl and date.fromisoformat(new_dl[:10]) < date.fromisoformat(new_due):
+        due_val = _as_date(new_due)
+        dl_val = _as_datetime(new_dl)
+        if dl_val and due_val and dl_val.date() < due_val:
             raise FieldOutOfRangeError("deadline_time 早于 due_date")
 
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        fields["updated_at"] = datetime.now(timezone.utc)
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
         conn.execute("BEGIN")
         try:
             conn.execute(
-                f"UPDATE assignments SET {set_clause} WHERE id = ?",
+                f"UPDATE assignments SET {set_clause} WHERE id = %s",
                 (*fields.values(), assignment_id),
             )
             _log(conn, assignment_id, "edited", str(old_summary), str(new_summary))
@@ -543,8 +569,12 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
 
 
 def delete_assignment(assignment_id: int) -> dict:
+    family_id = default_family_id()
     with get_conn() as conn:
-        row = conn.execute("SELECT status FROM assignments WHERE id = ?", (assignment_id,)).fetchone()
+        row = conn.execute(
+            "SELECT status FROM assignments WHERE id = %s AND family_id = %s",
+            (assignment_id, family_id),
+        ).fetchone()
         if not row:
             raise AssignmentNotFoundError()
         if row["status"] == "done":
@@ -552,7 +582,7 @@ def delete_assignment(assignment_id: int) -> dict:
         conn.execute("BEGIN")
         try:
             _log(conn, assignment_id, "deleted", row["status"], None)
-            conn.execute("DELETE FROM assignments WHERE id = ?", (assignment_id,))
+            conn.execute("DELETE FROM assignments WHERE id = %s", (assignment_id,))
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -582,27 +612,30 @@ def list_recent_dates(limit: int = 3, today: date | None = None) -> list[dict]:
     if limit < 1:
         return []
     today = today or datetime.now().astimezone().date()
+    family_id = default_family_id()
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT due_date,
-                   COUNT(*)          AS total,
-                   SUM(status = 'done')    AS done,
-                   SUM(status = 'skipped') AS skipped,
-                   SUM(is_optional = 1)    AS optional
+                   COUNT(*)                                            AS total,
+                   COUNT(*) FILTER (WHERE status = 'done')             AS done,
+                   COUNT(*) FILTER (WHERE status = 'skipped')          AS skipped,
+                   COUNT(*) FILTER (WHERE is_optional)                 AS optional
             FROM assignments
-            WHERE due_date <= ?
+            WHERE family_id = %s AND due_date <= %s
             GROUP BY due_date
             ORDER BY due_date DESC
-            LIMIT ?
+            LIMIT %s
             """,
-            (today.isoformat(), limit),
+            (family_id, today, limit),
         ).fetchall()
     out: list[dict] = []
     for r in rows:
-        d = date.fromisoformat(r["due_date"])
+        raw_d = r["due_date"]
+        d = raw_d if isinstance(raw_d, date) and not isinstance(raw_d, datetime) else _as_date(raw_d)
+        ds = d.isoformat()
         out.append({
-            "date": r["due_date"],
+            "date": ds,
             "label": _date_label(d, today),
             "total": r["total"] or 0,
             "done": r["done"] or 0,

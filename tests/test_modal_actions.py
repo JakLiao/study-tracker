@@ -13,6 +13,8 @@
 这些用例锁住两件事:
   1. 只读弹窗只显示一个「返回」
   2. 状态不互相污染, 且「确定」仍能真正提交
+  3. .hidden 这个类真的能藏住东西 (之前只有 .modal.hidden / .toast.hidden,
+     通用类没定义, 于是只读弹窗里「取消」照样显示, 两颗键并排出现)
 """
 from __future__ import annotations
 
@@ -45,6 +47,11 @@ def app_js() -> str:
 @pytest.fixture(scope="module")
 def styles() -> str:
     return (ROOT / "app/static/styles.css").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def index_html() -> str:
+    return (ROOT / "app/static/index.html").read_text(encoding="utf-8")
 
 
 def _code(src: str) -> str:
@@ -97,6 +104,19 @@ def test_close_mode_renames_to_return(app_js):
     code = _code(app_js)
     block = code.split("function setModalActions(")[1].split("\n}")[0]
     assert "ok.textContent = '返回'" in block
+
+
+def test_close_mode_button_looks_like_a_button(app_js):
+    """「返回」要用 secondary 而不是 ghost。
+
+    ghost 是透明底 + 透明边框, 渲染出来是一行浅灰文字, 家长看不出那里
+    有一颗可按的键 (2026-10-30 用户截图反馈)。
+    """
+    code = _code(app_js)
+    block = code.split("function setModalActions(")[1].split("\n}")[0]
+    close_branch = block.split("mode === 'close'")[1].split("} else {")[0]
+    assert "secondary" in close_branch, "「返回」应带 secondary, 才有边框和底色"
+    assert "'ghost'" not in close_branch, "「返回」不该再用 ghost (透明底透明边)"
 
 
 def test_confirm_mode_restores_everything(app_js):
@@ -171,6 +191,7 @@ const state = () => ({
   okText: okBtn.textContent.trim(),
   cancelHidden: cancelBtn.classList.contains('hidden'),
   okGhost: okBtn.classList.contains('ghost'),
+  okSecondary: okBtn.classList.contains('secondary'),
   okPrimary: okBtn.classList.contains('primary'),
   okSolo: okBtn.classList.contains('modal-solo-btn'),
   visible: [okBtn, cancelBtn].filter(b => !b.classList.contains('hidden')).length,
@@ -272,8 +293,9 @@ def test_source_modal_shows_single_return(live):
     assert s["visible"] == 1, "只读弹窗应只有一个按钮"
     assert s["cancelHidden"] is True
     assert s["okText"] == "返回"
-    assert s["okGhost"] is True, "关闭类操作不该用 primary 强调"
-    assert s["okPrimary"] is False
+    assert s["okPrimary"] is False, "关闭类操作不该用 primary 强调"
+    assert s["okSecondary"] is True, "「返回」要像个按键: 有边框有底色"
+    assert s["okGhost"] is False, "「返回」不该用 ghost (透明底透明边, 看着像一行字)"
     assert s["okSolo"] is True
 
 
@@ -305,6 +327,7 @@ def test_manual_modal_restores_buttons(live):
     assert m["okText"] == "确定"
     assert m["okPrimary"] is True
     assert m["okGhost"] is False
+    assert m["okSecondary"] is False, "「确定」是主操作, 不该再带 secondary 的边框底色"
     assert m["okSolo"] is False
 
 

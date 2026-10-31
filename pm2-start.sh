@@ -18,6 +18,20 @@ cd "$(dirname "$0")"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8876}"
 
+# PostgreSQL 连接串. PM2 不读 .env, 所以这里自己 source 一次;
+# 真实密码只在 .env 里 (已 gitignore), 不在版本库中留兜底值。
+if [ -f ".env" ]; then
+  set +u
+  set +e
+  set -a
+  # shellcheck disable=SC1091
+  . ".env" >/dev/null 2>&1
+  set +a
+  set -e
+  set -u
+fi
+export DATABASE_URL="${DATABASE_URL:-}"
+
 # 本机直连, 绕过 OpenClaw / WSL2 代理 (代理会把 127.0.0.1 请求打成 502)
 # ⚠️ 2026-09-29 15:38 新增 api.minimaxi.com:
 #   PM2 daemon 是从 OpenClaw exec 会话继承的, 带着 OpenClaw 出站代理

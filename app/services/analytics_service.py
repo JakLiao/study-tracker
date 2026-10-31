@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from .. import config
 from ..db import get_conn
 from ..errors import SampleTooSmallError
+from .tenant import default_family_id
 
 # 周一=0 ... 周日=6, 与 date.weekday() 对齐
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -69,18 +70,20 @@ def build_period_analytics(period: str, today: date) -> dict:
     # 这条彻底不参与统计, 否则样本量被系统性削小, 复盘长期显示"样本不足"。
     # 代价是这类样本的偏差恒为 0, 会把该科目的均值往 0 拉; 这是有意的,
     # "没填"表示"确实按预估做的", 而不是"数据缺失"。
+    family_id = default_family_id()
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT subject, task_type, est_minutes,
                    COALESCE(actual_minutes, est_minutes) AS effective_minutes
             FROM assignments
-            WHERE due_date BETWEEN ? AND ?
+            WHERE family_id = %s
+              AND due_date BETWEEN %s AND %s
               AND status = 'done'
-              AND is_optional = 0
+              AND NOT is_optional
               AND (task_type IS NULL OR task_type != 'observation')
             """,
-            (start.isoformat(), end.isoformat()),
+            (family_id, start, end),
         ).fetchall()
 
     sample_size = len(rows)
@@ -241,17 +244,19 @@ def build_daily_time_stats(period: str, today: date) -> dict:
     holidays = _calendar_holidays()
     makeup = _calendar_makeup()
 
+    family_id = default_family_id()
     with get_conn() as conn:
         rows = conn.execute(
             """
             SELECT due_date, subject, est_minutes,
                    COALESCE(actual_minutes, est_minutes) AS minutes
             FROM assignments
-            WHERE due_date BETWEEN ? AND ?
+            WHERE family_id = %s
+              AND due_date BETWEEN %s AND %s
               AND status = 'done'
               AND (task_type IS NULL OR task_type != 'observation')
             """,
-            (start.isoformat(), end.isoformat()),
+            (family_id, start, end),
         ).fetchall()
 
     # 先按 (日期, 科目) 累加 —— 一次查询, 不按天循环查库
@@ -263,7 +268,10 @@ def build_daily_time_stats(period: str, today: date) -> dict:
     share_actual: dict[str, int] = defaultdict(int)
     for r in rows:
         subj = r["subject"] or "其他"
-        per_day[r["due_date"]][subj] += int(r["minutes"] or 0)
+        due = r["due_date"]
+        if not isinstance(due, str):
+            due = due.isoformat()
+        per_day[due][subj] += int(r["minutes"] or 0)
         share_est[subj] += int(r["est_minutes"] or 0)
         share_actual[subj] += int(r["minutes"] or 0)
 

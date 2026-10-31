@@ -28,7 +28,7 @@ def list_settings() -> list[dict]:
 
 def get_setting(key: str) -> str | None:
     with get_conn() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM settings WHERE key = %s", (key,)).fetchone()
     return row["value"] if row else None
 
 
@@ -64,12 +64,12 @@ def update_setting(key: str, raw_value: str) -> dict:
             datetime.strptime(value, "%H:%M")
         except ValueError as e:
             raise BadSettingValueError(f"{key} 必须为 HH:MM 格式") from None
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     with get_conn() as conn:
         conn.execute("BEGIN")
         try:
             conn.execute(
-                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) "
+                "INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, %s) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
                 (key, value, now),
             )

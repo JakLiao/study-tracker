@@ -106,6 +106,31 @@ class BadSettingValueError(AppError):
     default_message = "设置项 value 格式错误"
 
 
+class ProjectNotFoundError(AppError):
+    code = "4014"
+    default_message = "项目不存在"
+
+
+class BadTaskKindError(AppError):
+    code = "4015"
+    default_message = "任务类型非法"
+
+
+class ScheduleConflictError(AppError):
+    code = "4016"
+    default_message = "课表时段冲突"
+
+
+class ScheduleSlotNotFoundError(AppError):
+    code = "4017"
+    default_message = "课表时段不存在"
+
+
+class PlanItemNotFoundError(AppError):
+    code = "4018"
+    default_message = "周计划项不存在"
+
+
 # ====== 5xxx 服务端异常 ======
 class AITimeoutError(AppError):
     code = "5001"

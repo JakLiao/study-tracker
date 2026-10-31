@@ -122,13 +122,15 @@ def test_list_tab_renamed_to_calendar(index_html):
 
 
 def test_tab_labels_all_chinese(index_html):
-    """五个 Tab 都不该出现英文代号或版本号。"""
+    """六个 Tab 都不该出现英文代号或版本号。"""
     labels = [_tab_label(x) for x in
               re.findall(r'<button[^>]*data-tab="[^"]+"[^>]*>(.*?)</button>', index_html)]
     # 「解析」(entry) 于 2026-09-28 改名为「登记」: Tab 是给家长看的,
     # "解析" 描述的是内部机制(AI 解析原文), 不是这一步要做的事 ——
     # 家长做的事是"把今天的作业登记进来"。
-    assert labels == ["看板", "登记", "日历", "复盘", "设置"], labels
+    # 「周计划」(week, 2026-10-30 新增): 课表与周负荷是独立的一页,
+    # 混进看板会把"今天做什么"和"这周排得下吗"两个问题挤在一屏。
+    assert labels == ["看板", "登记", "日历", "周计划", "复盘", "设置"], labels
     for l in labels:
         assert not re.search(r"[A-Za-z]", l), l
 
@@ -136,7 +138,7 @@ def test_tab_labels_all_chinese(index_html):
 # ====== 1c. Tab 图标 (2026-10-12) ======
 
 def test_every_tab_has_an_icon(index_html):
-    """五个 Tab 各配一个图形: 低龄用户先认形再认字。"""
+    """六个 Tab 各配一个图形: 低龄用户先认形再认字。"""
     for tab, sym in [("board", "i-tab-board"), ("entry", "i-tab-entry"),
                      ("list", "i-tab-calendar"), ("review", "i-tab-review"),
                      ("settings", "i-tab-settings")]:
@@ -150,7 +152,7 @@ def test_tab_icons_inherit_current_color(index_html):
     """图标描边必须是 currentColor: 选中态只改 button 的 color,
     图标才能跟着变色, 不必为每个 Tab 各画一份彩色版。"""
     syms = re.findall(r'<symbol id="i-tab-[^"]+".*?</symbol>', index_html, re.S)
-    assert len(syms) == 5, len(syms)
+    assert len(syms) == 6, len(syms)
     for s in syms:
         assert "currentColor" in s, s[:60]
         assert "#4A3728" not in s and "stroke=\"#" not in s, "图标不应写死颜色"
@@ -158,9 +160,9 @@ def test_tab_icons_inherit_current_color(index_html):
 
 def test_tab_icons_hidden_from_a11y_tree(index_html):
     """图标纯装饰, 读屏只该念出文字, 不能念两遍。"""
-    assert len(re.findall(r'<svg class="tab-ico" aria-hidden="true">', index_html)) == 5
+    assert len(re.findall(r'<svg class="tab-ico" aria-hidden="true">', index_html)) == 6
     # 文字必须包在 span 里, 否则图标与汉字会挤在一行
-    assert len(re.findall(r'<span>[^<]+</span>', index_html)) >= 5
+    assert len(re.findall(r'<span>[^<]+</span>', index_html)) >= 6
 
 
 def test_view_id_unchanged(index_html):

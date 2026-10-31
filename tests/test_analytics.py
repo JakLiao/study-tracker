@@ -21,7 +21,11 @@ def _seed_done_record(subject, task_type, est, actual, due_date_str, is_optional
 def _seed_record(subject, task_type, est, actual, due_date_str,
                  is_optional=False, ttype_override=None, status="done"):
     """插一条任意状态的作业。actual 传 None 即"未填实际用时"。"""
-    import sqlite3
+    from datetime import date as _date
+
+    import psycopg
+    from psycopg.rows import dict_row
+
     from app import config
     conn = sqlite3.connect(config.DB_PATH)
     now = datetime.utcnow().isoformat()

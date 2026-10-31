@@ -2,8 +2,8 @@
 
 本地部署、单用户的小学生作业跟踪工具。家长把老师发的家长群通知**原文粘贴**进来，AI 自动拆成「科目 / 任务 / 归属日 / 截止时间 / 预计用时」清单，逐条确认后入库。看板按日看完成情况，日历回看历史，复盘页按本周 / 上周 / 本月做用时统计与预估偏差分析。
 
-- **架构**：FastAPI + SQLite + 原生 HTML/CSS/JS。不引入前端框架 / ORM / Docker。
-- **数据**：全部留在本机 `data/study.db`，不上传任何服务器。
+- **架构**：FastAPI + PostgreSQL + 原生 HTML/CSS/JS。不引入前端框架 / ORM（迁移用手写版本化迁移器）。
+- **数据**：存在本机 PostgreSQL 实例（默认 docker 容器 `study-pg`），不上传任何服务器。
 - **AI**：MiniMax 国内站，Key 走环境变量。**Key 缺失时 AI 解析不可用，其余功能全部正常。**
 
 ---
@@ -60,7 +60,8 @@
 |---|---|
 | OS | WSL2 / Linux / macOS |
 | Python | 3.12+ |
-| 依赖 | `fastapi` `pydantic` `requests` `uvicorn`（见 `requirements.txt`） |
+| 依赖 | `fastapi` `pydantic` `requests` `uvicorn` `psycopg[binary]`（见 `requirements.txt`） |
+| 数据库 | PostgreSQL 16。默认用 docker 容器 `study-pg`（`127.0.0.1:5434`），也可用已有实例并改 `DATABASE_URL` |
 | Node | 运行服务不需要。只有跑前端集成测试（jsdom）时才需要，见 §6 |
 
 > WSL2 用户的 pip 可能报 `externally-managed-environment`，加 `--break-system-packages`，或用虚拟环境（见下）。
@@ -70,6 +71,14 @@
 ## 3. 部署
 
 ```bash
+#   docker run -d --name study-pg --restart unless-stopped \
+#     -e POSTGRES_USER=study -e POSTGRES_PASSWORD=你自己的密码 \
+#     -e POSTGRES_DB=study_tracker -p 127.0.0.1:5434:5432 \
+#     -v study-pg-data:/var/lib/postgresql/data postgres:16-alpine
+#
+#   ⚠️ 密码自己定, 别用示例值。定好后把同一个密码填进 .env 的 DATABASE_URL
+#      (见下面第 2 步) —— 真实密码只写在 .env, 不进版本库。
+
 # 1. 装依赖
 pip install --break-system-packages -r requirements.txt
 
@@ -79,15 +88,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 # 之后所有命令都在这个环境里跑，或用 .venv/bin/python 代替 python3
 
-# 2. 准备配置（不配也能跑，只是 AI 不可用）
+# 2. 准备配置
 cp .env.example .env
-$EDITOR .env          # 填 MINIMAX_API_KEY，见第 4 节
+$EDITOR .env          # 填 DATABASE_URL（数据库连接串，含你自定的密码）与 MINIMAX_API_KEY，见第 4 节
 
 # 3. 启动
 bash service.sh start
 ```
 
-首次启动会自动建库、建表并写入默认设置，数据落在 `data/study.db`。
+首次启动会自动建表（版本化迁移）并写入默认设置，数据落在 PostgreSQL 的 `study_tracker` 库。
 
 ---
 
@@ -105,7 +114,8 @@ bash service.sh start
 | `MINIMAX_TIMEOUT` | `120` | 单次调用超时（秒）。内部还有 1 次退避重试，最坏约 `120 + 2 + 120 = 242s` |
 | `HOST` | `127.0.0.1` | 监听地址。**改成 `0.0.0.0` 才能被局域网其他设备访问** |
 | `PORT` | `8876` | 监听端口。与 `run.sh` / `service.sh` / `app/config.py` 一致。**8765 已被 serve_gallery.py 占用，不要改回** |
-| `STUDY_DB_PATH` | `./data/study.db` | 数据库位置。相对路径相对项目根解析，也可填绝对路径 |
+| `DATABASE_URL` | 无默认，**必填** | 数据库连接串（`postgresql://用户:密码@主机:端口/库名`）。**密码只写在 `.env`，代码与本文档都不留明文**；`.env.example` 里是占位符 `CHANGE_ME`。生产 / 远端换这一行即可 |
+| `TEST_DATABASE_URL` | 由 `DATABASE_URL` 派生的 `study_tracker_test` | 测试专用库，避免清表影响真实数据 |
 
 `.env` 解析规则：按 `KEY=VALUE` 逐行，跳过空行与 `#` 注释，不支持引号嵌套；**已存在的系统环境变量不会被 `.env` 覆盖**。
 
@@ -224,7 +234,8 @@ study-tracker/
 ├── app/
 │   ├── main.py           # FastAPI 入口 + 静态资源 + 前端路径兜底
 │   ├── config.py         # 环境变量与默认配置
-│   ├── db.py             # SQLite 连接与建表
+│   ├── db.py             # PostgreSQL 连接与版本化迁移入口
+│   ├── migrations/       # 版本化迁移（schema_meta / dry-run / 事务回滚）
 │   ├── models.py         # pydantic DTO
 │   ├── prompts.py        # AI Prompt 模板
 │   ├── ai_client.py      # MiniMax 调用 + JSON 健壮解析
@@ -238,7 +249,8 @@ study-tracker/
 │       ├── styles.css
 │       └── vendor/       # flatpickr 4.6.13（本地，不走 CDN）
 ├── tests/                # pytest
-├── data/study.db         # 运行时生成，不入库
+├── scripts/              # 一次性数据导入（sqlite → PG）等运维脚本
+├── data/study.db         # 历史 SQLite 归档，仅导入用，运行时不再读写
 ├── run/                  # PID / 日志，不入库
 ├── docs/                 # 功能设计、页面设计、交接说明
 ├── .env.example
@@ -255,11 +267,11 @@ study-tracker/
 - `MINIMAX_API_KEY` 只从环境变量 / `.env` 读，**不入代码、不打印、不出现在日志或错误响应里**
 - `.env`、`data/study.db`、`run/`、`tmp/`、`artifacts/` 均已 gitignore
 - 健康检查只返回 `ai_reachable: bool`
-- 数据全在本机，除 AI 解析请求外无任何外发
+- 数据在本机 PostgreSQL 实例中，除 AI 解析请求外无任何外发
 
-**备份**：直接复制 `data/study.db`。或访问 `/api/export` 导出 JSON。
+**备份**：`pg_dump "$DATABASE_URL" -Fc -f study_tracker.dump`。或访问 `/api/export` 导出 JSON。
 
-**恢复**：把备份文件放回 `data/study.db`（先停服务），或用 sqlite3 导入。
+**恢复**：`pg_restore -d "$DATABASE_URL" --clean --if-exists study_tracker.dump`（先停服务）。
 
 ---
 

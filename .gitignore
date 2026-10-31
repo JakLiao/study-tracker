@@ -70,3 +70,9 @@ st-t.txt
 # 备份文件 (*.bak-YYYYMMDD-HHMMSS 轮转产物, 不入库)
 *.bak-*
 !.env.example
+
+# 验证截图 (浏览器实测的留档, 只给本地方看, 不入库)
+.screenshots/
+
+# IDE 自己的工作目录 (.trae/documents 是 Trae 的草稿区, 同 .superpowers/)
+.trae/

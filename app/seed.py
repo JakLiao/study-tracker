@@ -1,6 +1,6 @@
 """启动时种子: 写入默认设置 (若 key 不存在).
 
-幂等: 用 INSERT OR IGNORE.
+幂等: INSERT ... ON CONFLICT DO NOTHING.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .db import get_conn
 
 
 def seed_settings() -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     # ensure_ascii=False: 让中文字符以原样落库, 避免 \uXXXX 转义形式 (P1: 设置页面可读性 + DB 体积 + 导出友好)
     defaults = {
         "grade": json.dumps(config.DEFAULT_GRADE, ensure_ascii=False),
@@ -27,7 +27,8 @@ def seed_settings() -> None:
         try:
             for key, value in defaults.items():
                 conn.execute(
-                    "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    "INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (key) DO NOTHING",
                     (key, value, now),
                 )
             conn.execute("COMMIT")
