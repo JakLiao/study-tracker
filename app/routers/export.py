@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Query, Response
 
 from ..services import export_service
+from ..services.assignment_service import parse_date_param
 
 router = APIRouter(prefix="/api", tags=["export"])
 

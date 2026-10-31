@@ -27,20 +27,22 @@ def _seed_record(subject, task_type, est, actual, due_date_str,
     from psycopg.rows import dict_row
 
     from app import config
-    conn = sqlite3.connect(config.DB_PATH)
-    now = datetime.utcnow().isoformat()
-    conn.execute(
-        """INSERT INTO assignments
-           (subject, task_name, due_date, deadline_time, is_optional,
-            est_minutes, actual_minutes, status, task_type, source_span,
-            confidence, batch_id, created_at, updated_at)
-           VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, '', 'high', NULL, ?, ?)""",
-        (subject, f"test {task_type} {now}", due_date_str,
-         1 if is_optional else 0, est, actual, status,
-         ttype_override or task_type, now, now),
-    )
-    conn.commit()
-    conn.close()
+    from app.services.tenant import default_child_id, default_family_id
+
+    now = datetime.utcnow()
+    with psycopg.connect(config.DATABASE_URL, row_factory=dict_row) as conn:
+        conn.execute(
+            """INSERT INTO assignments
+               (subject, task_name, due_date, deadline_time, is_optional,
+                est_minutes, actual_minutes, status, task_type, source_span,
+                confidence, batch_id, created_at, updated_at,
+                family_id, child_id, project_id, task_kind)
+               VALUES (%s, %s, %s, NULL, %s, %s, %s, %s, %s, '', 'high', NULL, %s, %s, %s, %s, NULL, 'subject')""",
+            (subject, f"test {task_type} {now.isoformat()}", _date.fromisoformat(due_date_str),
+             bool(is_optional), est, actual, status,
+             ttype_override or task_type, now, now,
+             default_family_id(), default_child_id()),
+        )
 
 
 def test_analytics_sample_too_small_rejected(app_client):

@@ -724,6 +724,15 @@ tr.is-optional .muted {
 .subj-time.英语 .st-name,
 .subj-time.英语 .st-num strong { color: var(--c-英); }
 
+/* 培训/习惯的剩余时间 chip (M1): 没有科目, 按任务来源着色。
+   必须排在下面的 is-done 组之前 —— 两者特异度相同, 后写的会覆盖白字。 */
+.subj-time.training { background: var(--c-training-soft); }
+.subj-time.training .st-name,
+.subj-time.training .st-num strong { color: var(--c-training); }
+.subj-time.habit { background: var(--c-habit-soft); }
+.subj-time.habit .st-name,
+.subj-time.habit .st-num strong { color: var(--c-habit); }
+
 /* 整科收尾: 翻成科目实底色 + 白字, 与 .subject-tag 的实底语言一致,
    "这科做完了"在一眼扫过时就被认出来。沿用科目色而不用绿色
    --status-done, 是因为绿色在这个界面里已经专属表示"完成状态",
@@ -1226,6 +1235,29 @@ tr.is-optional .muted {
   color: var(--text-1);
 }
 .deadline-warn strong { color: var(--status-overdue); margin-right: var(--space-2); }
+
+   往期逾期区与"未来到期"同一块版式, 但更强调: 深一级的红边 + 任务名带
+   删除线的视觉重量, 让家长一眼分清"还没到点"和"已经错过"。
+  border-color: rgba(220, 38, 38, 0.45);
+  border-left-width: 4px;
+}
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+  font-size: var(--fs-caption-sm);
+  margin-left: var(--space-1);
+}
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  flex: none;
+}
 
 /* ===== 15. Spinner (AI 解析加载态 · P1 返工 2026-09-28) ===== */
 .spinner {
@@ -1965,6 +1997,107 @@ button.primary.modal-danger:hover:not(:disabled) {
   .setting-label { min-width: 100%; }
   .setting-row { flex: 1 1 100%; }
 }
+
+/* ===== 18c. 快速添加 / 项目管理 (M1 统一任务池) =====
+   录入页顶部的「快速添加」块: 常做的培训/习惯任务不该每次都走 AI 解析。
+   视觉沿用卡片体系, 只是把来源切换做成胶囊按钮组 —— 三选一是互斥的,
+   胶囊(而非普通按钮)能让"当前选中哪个"一眼看出。 */
+.quick-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.quick-add .card-title { margin: 0; }
+
+.quick-kinds {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.qa-kind {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  min-height: 32px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.qa-kind:hover { background: var(--surface-2); }
+.qa-kind.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+
+/* 一行一个输入组: 输入框可伸缩, 数字框与按钮固定宽度。
+   窄屏时允许换行, 但输入框保持 min-width:0 以免把行撑破。 */
+.quick-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.quick-row > input,
+.quick-row > select { flex: 1 1 140px; min-width: 0; }
+.quick-row > input[type="number"] { flex: 0 0 88px; }
+.quick-row > button { flex: 0 0 auto; }
+/* 项目选择器: 触发键铺满剩余宽度, 「＋新建项目」贴着右侧。 */
+.quick-row > .picker { flex: 1 1 140px; min-width: 0; }
+/* 同 .cal-legend: 作者样式里的 display:flex 会盖掉浏览器对 [hidden] 的
+   display:none —— 切到「学科作业」时, 项目那行必须真的消失。 */
+.quick-row[hidden] { display: none; }
+
+/* 模板按钮: 虚线框表达"整套添加", 与普通操作按钮区分 */
+.quick-templates {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+.qa-tpl {
+  border: 1px dashed var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  min-height: 30px;
+  cursor: pointer;
+}
+.qa-tpl:hover { border-color: var(--accent); color: var(--warn-ink); }
+
+/* 设置页的项目管理卡 */
+.project-manage .proj-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+.proj-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.proj-name { font-weight: 600; color: var(--text-1); }
+.proj-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj-row .proj-archive { flex: none; }
+.project-manage .proj-new { margin-top: var(--space-1); }
+.project-manage .proj-new input { flex: 1 1 140px; min-width: 0; }
 
 /* ===== 19. 底部 Tab Bar (移动端, 设计文档 §6) =====
    main 与 .toast 早就为"固定底栏"留了 56px 底部空间, 但 nav 一直只是
@@ -2927,6 +3060,419 @@ footer {
     padding: 0 var(--space-2);
   }
   .settings-kv-table .kv-del { min-height: 44px; width: 100%; padding: 0; }
+}
+
+/* --- 27. 晚间小结 (M3 日结) ---
+   这张卡是每晚的"收尾动作", 信息顺序固定:
+   一句话结论 -> 三个数字 -> 建议 -> 三问 -> 备注。
+   三问用 pill 按钮而不是滑杆: 家长晚上已经很累, 点一下就行;
+   选中态用主色浅底(accent-soft), 不抢"进度条"的主角地位。 */
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.dw-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  color: var(--text-2);
+  font-size: var(--fs-body-s);
+}
+.dw-stats strong { color: var(--text-1); font-size: var(--fs-body); }
+.dw-suggest {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2em;
+  color: var(--text-2);
+  font-size: var(--fs-body-s);
+  line-height: 1.6;
+}
+.dw-suggest li + li { margin-top: 2px; }
+.dw-questions {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.dw-q { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dw-q-label { flex: 0 0 4.2em; color: var(--text-2); font-size: var(--fs-caption); }
+.dw-choices { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.dw-choice {
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.dw-choice.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.dw-note { width: 100%; margin-top: var(--space-2); }
+.dw-save-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
+}
+/* 触屏上把档位按钮抬到 44px: 三个 pill 挤在一行时, 38px 容易点到隔壁。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .dw-choice { min-height: 44px; }
+}
+
+/* --- 28. 训练打卡 (M4) ---
+   培训任务行里「打卡」取代「完成」, 用训练色 (紫) 而不是完成的粉红:
+   孩子扫一眼能分辨"这项是练琴/篮球, 要走打卡", 不必先读项目名。
+   打卡摘要放在 meta 行, 与"实际用时"并排 —— 两者是同一件事的
+   两种口径(时长), 不该分到两行让人以为有两个数字。 */
+.status-btn.training {
+  background: linear-gradient(180deg, #F6F1FB 0%, #E4D9F4 100%);
+  border-color: #B79BDA;
+  color: #4B3272;
+  min-height: 34px;
+  padding: 3px var(--space-4);
+  font-size: var(--fs-body-s, 14px);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(107, 76, 154, .22);
+}
+.status-btn.training:hover {
+  background: linear-gradient(180deg, #EFE7F8 0%, #D8C9EF 100%);
+  border-color: #A183CC;
+  filter: none;
+}
+.status-btn.training:active { transform: translateY(1px); box-shadow: none; }
+.training-tag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--c-training-soft);
+  color: #4B3272;
+  font-size: var(--fs-caption-sm);
+  font-weight: 600;
+}
+/* 触屏上「打卡」是这条任务的主操作, 抬到 44px 才不至于误触。 */
+@media (max-width: 767px), (max-height: 500px) {
+  .status-btn.training { min-height: 44px; }
+}
+
+/* --- 29. 周计划 (M5) ---
+   这一页回答三个问题: 这周哪天最满 / 有没有时段撞车 / 固定节奏有没有
+   真落到任务池。日卡内部按"越靠上越不可改"排序: 课表是外部事实, 计划项
+   是家长设的模板, 作业统计是当天状态, 冲突是结果。 */
+.week-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.week-range {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+.week-range strong { font-size: var(--fs-h2); }
+.week-nav { flex: 0 0 auto; min-height: 40px; }
+
+/* 汇总卡: 四个数字等宽排一行。超载/冲突一旦非 0 就转警示色 ——
+   "这周有两天排不下"是家长最需要立刻知道的结论, 不该藏在正文里。 */
+.week-summary { margin-bottom: var(--space-3); }
+.week-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.week-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.week-stat strong { font-size: var(--fs-h2); }
+.week-stat span { font-size: var(--fs-caption-sm); color: var(--text-2); }
+.week-stat.warn { background: var(--warn-soft); }
+.week-stat.warn strong { color: var(--warn-ink); }
+
+.week-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+/* 7 天卡: 桌面 4 列 (7 格排成两行), 窄屏 1 列。
+   不用 7 列是因为每格要塞课表 chips + 计划项 + 统计, 7 列时每格
+   只剩 130px, 中文任务名会折成竖排。 */
+.week-days {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.week-day { display: flex; flex-direction: column; gap: var(--space-2); }
+/* 今天用粉框标出; 超载用琥珀边, 两者同时出现时今天先赢 (粉框还在,
+   超载靠角标表达), 所以 overloaded 只改 border-color 不改阴影。 */
+.week-day.is-today {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-card);
+}
+.week-day.overloaded { border-color: var(--status-doing); }
+
+.week-day-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.week-day-name { font-weight: 700; font-size: var(--fs-body); color: var(--text-1); }
+.week-day-date { font-size: var(--fs-caption); color: var(--text-3); }
+.week-today-tag {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--warn-ink);
+  font-size: var(--fs-caption-sm);
+  font-weight: 600;
+}
+.week-day-load {
+  margin-left: auto;
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.week-badge {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption-sm);
+  font-weight: 600;
+}
+.week-badge.warn { background: #FDF0DC; color: #8A5A0B; }
+
+/* 课表 / 计划项 chips: 一行能放几条就放几条, 放不下换行。
+   两者用不同底色区分来源 —— 课表是紫色(培训色), 计划项是中性浅底;
+   已生成到任务池的计划项再压暗并打 ✓, 免得家长以为还得再点一次。 */
+.week-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.week-slot,
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.week-slot { background: var(--c-training-soft); color: #4B3272; }
+
+.week-day-stats {
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--border);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+}
+/* 冲突行: 红字 + 浅红底。它是"排课排错了"的证据, 必须比统计数据更响。 */
+.week-conflict {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption-sm);
+}
+
+/* ---- 课表 / 计划项管理弹窗 ---- */
+/* 列表给一个上限再滚动: 课表可能十几条, 弹窗不能长到把"新增"按钮
+   顶出屏幕。 */
+.manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.manage-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.manage-main strong { font-size: var(--fs-body-s, 14px); overflow-wrap: anywhere; }
+.manage-meta { font-size: var(--fs-caption-sm); color: var(--text-2); }
+.manage-ops { flex: 0 0 auto; display: flex; gap: var(--space-1); }
+.manage-ops button { min-height: 32px; padding: 2px var(--space-2); font-size: var(--fs-caption); }
+/* 「删」是破坏性操作, 但和旁边的「改」一样是次要操作 —— 不该整颗实心红,
+   那会让列表里每一行都跳出一块红, 反而看不出哪一行真要删。
+   红描边 + 同样的白底已经足够说清"这颗键后果不一样"。 */
+.manage-ops .danger { background: var(--surface); }
+
+/* 星期多选: 七个勾选框铺成一行, 点区域整块可点 (不只是小方块)。
+   用 label 包 input, 所以点文字也能勾。 */
+.weekday-checks { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.weekday-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  cursor: pointer;
+}
+/* 选中态交给原生勾选框 (accent-color), 不用 :has() —— 老浏览器上
+   :has() 会让整条规则失效, 反而看不出勾没勾。 */
+.weekday-check input { margin: 0; accent-color: var(--accent); }
+
+@media (max-width: 1100px) {
+  .week-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px), (max-height: 500px) {
+  .week-days { grid-template-columns: minmax(0, 1fr); }
+  .week-nav { min-height: 44px; }
+  .manage-ops button { min-height: 44px; }
+  .weekday-check { min-height: 44px; }
+}
+
+/* --- 30. 本周课后周报 (M6) ---
+   复盘页最上方的一张"结论卡": 完成率 → 时间结构 → 卡点 → 训练 → 负荷
+   → 建议。顺序按家长关心的强弱排, 数字在上、解释在下; 报告只跟孩子
+   自己的上周比, 所以趋势行写"和上周比"而不是"排名/超过 X% 同学"。 */
+.report-card { margin-bottom: var(--space-3); }
+.report-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.report-head-main { flex: 1 1 auto; min-width: 0; }
+.report-kicker {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--accent-ink, var(--warn-ink));
+  letter-spacing: 0.04em;
+}
+.report-range { margin-top: 2px; font-size: var(--fs-h2); font-weight: 700; }
+.report-export { flex: 0 0 auto; }
+
+.report-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.report-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.report-stat strong { font-size: var(--fs-h2); }
+.report-stat span { font-size: var(--fs-caption-sm); color: var(--text-2); }
+
+.report-block { margin-top: var(--space-3); }
+.report-block-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  font-weight: 600;
+  font-size: var(--fs-body-s, 14px);
+  color: var(--text-1);
+}
+.report-block-title .muted { font-weight: 400; font-size: var(--fs-caption-sm); }
+
+.report-list { margin: 0; padding-left: 1.2em; color: var(--text-2); font-size: var(--fs-caption); }
+.report-list li { margin: 2px 0; line-height: 1.5; }
+.report-suggest li { color: var(--text-1); }
+.report-foot { margin-top: var(--space-1); font-size: var(--fs-caption-sm); }
+
+.report-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 3px 0;
+}
+.report-bar-label { flex: 0 0 3em; font-size: var(--fs-caption); color: var(--text-2); }
+.report-bar-track {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.report-bar-track i { display: block; height: 100%; border-radius: inherit; }
+.report-bar-val { flex: 0 0 auto; font-size: var(--fs-caption-sm); color: var(--text-2); }
+
+.report-dev-row { font-size: var(--fs-caption); color: var(--text-2); margin: 2px 0; }
+.report-dev-row.warn { color: var(--warn-ink); }
+
+.report-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.report-chip {
+  display: inline-block;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption-sm);
+}
+.report-slow {
+  margin-top: var(--space-1);
+  font-size: var(--fs-caption);
+  color: var(--warn-ink);
+}
+
+.report-train {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 2px 0;
+  font-size: var(--fs-caption);
+}
+.report-train strong { font-size: var(--fs-body-s, 14px); }
+.report-train-seg { color: var(--c-training, #6B4C9A); }
+.report-load { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* 给孩子的表扬与给教练的话: 用浅绿/浅紫区分"结论"与"对外沟通",
+   两者都不是任务, 不该长得像待办项。 */
+.report-praise,
+.report-note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+.report-praise { background: var(--c-英-soft); color: var(--text-1); }
+.report-note { background: var(--c-training-soft); color: #4B3272; }
+.report-praise span,
+.report-note span {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: var(--fs-caption-sm);
+}
+
+@media (max-width: 767px), (max-height: 500px) {
+  .report-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-export { min-height: 44px; }
 }
 
 /* --- 26d. 触屏手感与安全区 ---

@@ -142,6 +142,31 @@ def test_solo_button_width(styles):
     assert re.search(r"\.modal-solo-btn \{ min-width: \d+px", styles)
 
 
+def test_hidden_class_actually_hides(styles):
+    """.hidden 必须真的藏住东西。
+
+    之前只有 .modal.hidden / .toast.hidden 两条具体规则, 通用类没定义 ——
+    JS 侧 cancel.classList.add('hidden') 算出来的 display 仍是 block,
+    于是只读弹窗里「取消」和「返回」并排出现 (2026-10-30 用户截图)。
+    """
+    m = re.search(r"^\.hidden \{([^}]*)\}", styles, re.M)
+    assert m, "缺少通用 .hidden 规则"
+    assert "display: none" in m.group(1)
+
+
+def test_modal_actions_row_is_right_aligned(styles):
+    """弹窗底部按钮靠右: 主操作在右下角, 家长一眼能找到。"""
+    assert "justify-content: flex-end" in m.group(1)
+
+
+def test_footer_cancel_is_a_visible_button(index_html):
+    """取消键在 index.html 里就该是 secondary, 不是 ghost。"""
+    m = re.search(r'<button id="modal-cancel" class="([^"]*)"', index_html)
+    assert m, "找不到 modal-cancel"
+    assert "ghost" not in m.group(1), "取消键不该用 ghost (透明底透明边, 看着不像按键)"
+    assert "secondary" in m.group(1)
+
+
 # ====== 运行时 (jsdom) ======
 
 HARNESS = r"""

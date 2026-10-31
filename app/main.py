@@ -18,6 +18,7 @@ from .routers import board as board_router
 from .routers import export as export_router
 from .routers import health as health_router
 from .routers import parse as parse_router
+from .routers import projects as projects_router
 from .routers import settings as settings_router
 from .seed import seed_settings
 
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router.router)
     app.include_router(parse_router.router)
     app.include_router(assignments_router.router)
+    app.include_router(projects_router.router)
     app.include_router(board_router.router)
     app.include_router(analytics_router.router)
     app.include_router(settings_router.router)

@@ -9,6 +9,11 @@
 const API = '/api';
 const MAX_TEXT_LEN = 10000;
 
+// 已挂载的项目选择器 (自绘下拉)。refreshProjectPickers() 靠它把"项目列表
+// 变了"这件事同步给所有还开着的选择器 —— 声明放在文件顶部, 保证模块里
+// 任何一处 init 调用它时这个数组已经建好。
+const _projectPickers = [];
+
 // ====== 工具 ======
 async function api(method, path, body) {
   const opts = { method, headers: {} };
@@ -181,11 +186,37 @@ function hintBlock(hint) {
 // 三处(config / models.Subject / styles.css 类名)都得同步。
 const SUBJECT_ORDER = ['语文', '数学', '英语'];
 
+// M1 统一任务池: 培训/习惯任务没有科目, 用任务来源做标签。
+const TASK_KIND_LABELS = { subject: '学科', training: '培训', habit: '习惯' };
+
+// 行首标签: 学科作业仍是科目色块; 培训/习惯显示项目名 (没有项目时退回类型名)。
+function taskTagHtml(item) {
+  if (item.subject) {
+    return `<span class="subject-tag ${item.subject}">${item.subject}</span>`;
+  }
+  const kind = item.task_kind || 'subject';
+  const label = item.project_name || TASK_KIND_LABELS[kind] || '任务';
+  return `<span class="subject-tag ${kind}" title="${escapeAttr(label)}">${escapeAttr(label)}</span>`;
+}
+
 // done 与 skipped 都算"已收尾"。抽成模块级函数而不是留在 loadBoard
 // 里, 是为了让 subjectTimeStats 与提示条共用同一个判定 —— 这两处
 // 显示的是同一份剩余时间, 一旦各自写一份, 迟早会算出两个数。
 function isSettledItem(i) {
   return i.status === 'done' || i.status === 'skipped';
+}
+
+// 培训/习惯的剩余时间统计, 与 subjectTimeStats 同口径 (只算必做、只算未收尾)。
+function kindTimeStats(byKind) {
+  return ['training', 'habit'].flatMap(kind => {
+    const items = (byKind && byKind[kind]) || [];
+    const total = items.reduce((s, i) => s + (i.est_minutes || 0), 0);
+    if (!total) return [];
+    const remaining = items
+      .filter(i => !isSettledItem(i))
+      .reduce((s, i) => s + (i.est_minutes || 0), 0);
+    return [{ label: TASK_KIND_LABELS[kind], className: kind, remaining, total }];
+  });
 }
 
 // 各科剩余估时。口径与提示条的 estRemaining 严格同源, 两者能对上账:
@@ -274,6 +305,7 @@ function switchTab(name, opts) {
     loadCalendar();
     if (_calSelected) loadList(_calSelected);
   }
+  // 周计划保留上次翻到的那一周 (与日历保留月份同理), 不强行弹回本周。
   // 复盘页保留上次选的周期 (与日历页保留上次翻到的月份同理), 别把家长
   // 刚选好的「本月」又弹回「本周」。
   if (tab === 'review') setReviewPeriod(_reviewPeriod);
@@ -405,6 +437,11 @@ async function loadBoard() {
     // 必须在渲染 Tab 之前定下来: Tab 的高亮跟着 _boardDate 走, 先画 Tab
     // 再赋值会让深色底停在"第一张"而不是正文真正展示的那一天。
     if (!_boardDate) _boardDate = b.date;
+    // M4 训练打卡: 看板一次带回当天每条任务的打卡记录 (键为 assignment_id),
+    // 挂到 item 上让行内直接渲染"练了多久 / 几组 × 几次", 不必逐行请求。
+    attachLogs((b.by_kind || {}).training);
+    attachLogs((b.by_kind || {}).habit);
+    attachLogs(b.optional_items);
     await loadBoardDateTabs();
     root.innerHTML = '';
     if (b.is_late_night) {
@@ -425,6 +462,8 @@ async function loadBoard() {
       `));
       const go = root.querySelector('[data-action="goto-entry"]');
       if (go) go.addEventListener('click', () => switchTab('entry'));
+      // 没作业的日子也能记心情: 孩子今天状态如何, 与做没做作业无关。
+      // 只限今天 —— 翻历史日期时不该出现"今晚小结"。
       return;
     }
     // 进度条 (2026-09-28 口径: 跳过算已收尾, 分母排除选做)
@@ -441,6 +480,8 @@ async function loadBoard() {
     // 口径说明: done 与 skipped 都算"已收尾", 但只有 done 算"完成"
     const all = [];
     for (const subj of SUBJECT_ORDER) all.push(...(b.by_subject[subj] || []));
+    // 培训/习惯任务同样计入"待完成/已收尾"与进度提示, 不能只渲染学科。
+    for (const kind of ['training', 'habit']) all.push(...((b.by_kind || {})[kind] || []));
     const pending = all.filter(i => !isSettledItem(i));
     const settled = all.filter(i => isSettledItem(i));
 
@@ -460,7 +501,9 @@ async function loadBoard() {
     // 各科剩余时间 (2026-10-09): 把提示语那个总数按科目拆开。
     // 全部收尾后仍要显示 (语文 0 / 40): 家长确认"确实做完了"需要
     // 看到这个 0, 空条只会让人怀疑是不是加载坏了。
-    const subjStats = subjectTimeStats(b.by_subject);
+    const subjStats = subjectTimeStats(b.by_subject).map(s => ({
+      label: s.subject, className: s.subject, remaining: s.remaining, total: s.total,
+    })).concat(kindTimeStats(b.by_kind));
 
     // ====== 概览卡 (2026-10-12 密度优化) ======
     // 原先是四块独立内容纵向堆叠: 进度卡 / 截止提醒 / 鼓励横幅 /
@@ -470,8 +513,8 @@ async function loadBoard() {
     // 进度数字仍是全卡最大 —— 家长扫一眼要的就是"今天做到哪了"。
     const subjChips = subjStats.map(s => {
       const done = s.remaining === 0;
-      return `<span class="subj-time ${s.subject}${done ? ' is-done' : ''}">` +
-        `<span class="st-name">${s.subject}</span>` +
+      return `<span class="subj-time ${s.className}${done ? ' is-done' : ''}">` +
+        `<span class="st-name">${s.label}</span>` +
         `<span class="st-num"><strong>${s.remaining}</strong><span class="st-sep">/</span>${s.total}</span>` +
         `</span>`;
     }).join('');
@@ -500,10 +543,28 @@ async function loadBoard() {
     // 出现, 混进卡片里会让家长误以为每天都有内容。
     if (b.upcoming_deadlines && b.upcoming_deadlines.length) {
       const items = b.upcoming_deadlines.map(d =>
-        `<span class="subject-tag ${d.subject}">${d.subject}</span>
+        `${taskTagHtml(d)}
          ${d.task_name} · 截止 ${fmtDateTime(d.deadline_time)}`
       ).join('<br/>');
       root.appendChild(el(`<div class="deadline-warn"><strong>⚠ 未来 7 天到期</strong>${items}</div>`));
+    }
+
+    // 已逾期 (M2 执行台): 前几天的任务错过截止后原本会从提醒区彻底消失,
+    // 家长不翻回那一天就永远看不到。放在截止提醒之后、科目卡片之前 ——
+    // 它比"未来要做"更紧急, 但今天卡片里的行内标记已经覆盖当日逾期,
+    // 所以这里只列往期, 不重复。
+      // 任务名可点: 提醒只说"有一条逾期了", 若不给出处理入口, 家长还
+      // 得自己去日历上翻是哪一天。点一下直接切到那天的看板, 在那里
+      // 完成 / 顺延 / 跳过, 闭环才算走完。
+        `${taskTagHtml(d)}
+      ).join('<br/>');
+        const goto = () => { _boardDate = link.dataset.date; loadBoard(); };
+        link.addEventListener('click', goto);
+        link.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goto(); }
+        });
+      });
+      root.appendChild(box);
     }
 
     const section = (title, items, cls, open) => {
@@ -533,10 +594,206 @@ async function loadBoard() {
     if (b.optional_items && b.optional_items.length) {
       root.appendChild(optionalGroupCard(b.optional_items, null));
     }
+    // 晚间小结 (M3 日结): 只放在"今天", 是每晚的固定收尾动作。
   } catch (e) {
     root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
   }
   if (scroller) scroller.scrollTop = _boardScroll;
+}
+
+// 三问用固定档位按钮而不是滑杆/原生 select:
+//   - 家长晚上已经累了, 三个表情点一下完事;
+//   - 固定档位才能被周报按"难度=难 / 专注=差 / 情绪=烦"聚合, 滑杆还要分桶。
+// 1–2 年级由后端 mode=lite 少问一题(专注), 前端只按返回的 mode 渲染。
+const DW_FOCUS = [['good', '很专心'], ['ok', '一般'], ['bad', '容易分心']];
+const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
+
+  root.appendChild(box);
+}
+
+  try {
+  } catch (e) {
+    // 小结失败不该把整张看板拖垮: 它只是收尾卡片, 静默隐藏即可。
+    box.innerHTML = '';
+  }
+}
+
+  const btns = options.map(([v, text]) =>
+    `<button type="button" class="dw-choice${selected === v ? ' active' : ''}" ` +
+    `data-q="${q}" data-v="${v}" aria-pressed="${selected === v}">${text}</button>`
+  ).join('');
+  return `<div class="dw-q"><span class="dw-q-label">${label}</span>` +
+    `<div class="dw-choices">${btns}</div></div>`;
+}
+
+  const s = w.summary || {};
+  const r = w.reflection || {};
+  const lite = w.mode === 'lite';
+  // 选中态放在闭包里而不是读 DOM: 重绘整卡后 DOM 会换掉,
+  // 保存时必须以"用户最后点的"为准, 而不是重绘前的旧节点。
+  const selected = {
+    difficulty: r.difficulty || null,
+    focus: r.focus || null,
+    mood: r.mood || null,
+  };
+  const suggestions = (w.suggestions || [])
+    .map(t => `<li>${escapeAttr(t)}</li>`).join('');
+  const card = el(`
+      <div class="card-title">今晚小结<span class="count">1 分钟知道今天</span></div>
+      <div class="dw-headline">${escapeAttr(w.headline || '')}</div>
+      <div class="dw-stats">
+        <span>完成 <strong>${s.done || 0}</strong>/<strong>${s.required || 0}</strong></span>
+        <span>用时 <strong>${s.actual_total || 0}</strong> 分</span>
+      </div>
+      <ul class="dw-suggest">${suggestions}</ul>
+      <div class="dw-questions">
+      </div>
+      <input class="dw-note" maxlength="200" aria-label="今晚备注"
+             placeholder="想记一句？比如：数学卡在应用题"
+             value="${escapeAttr(r.note || '')}" />
+      <div class="dw-save-row">
+        <button type="button" class="primary dw-save">${w.reflection ? '更新小结' : '保存小结'}</button>
+        <span class="dw-saved muted">${w.reflection ? '今晚已记录' : '难度和情绪选一下就能保存'}</span>
+      </div>
+    </div>
+  `);
+
+  card.querySelectorAll('.dw-choice').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.q;
+      selected[q] = btn.dataset.v;
+      card.querySelectorAll(`.dw-choice[data-q="${q}"]`).forEach(b => {
+        const on = b.dataset.v === selected[q];
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    });
+  });
+
+  card.querySelector('.dw-save').addEventListener('click', async () => {
+    if (!selected.difficulty || !selected.mood) {
+      toast('先选一下今天的难度和情绪');
+      return;
+    }
+    const payload = {
+      date: w.date,
+      difficulty: selected.difficulty,
+      mood: selected.mood,
+      note: card.querySelector('.dw-note').value.trim() || null,
+    };
+    // 低年级两问版没有专注一题; 用户在普通模式没点专注时也不强制。
+    if (!lite && selected.focus) payload.focus = selected.focus;
+    try {
+      toast('已记录今晚小结');
+    } catch (e) {
+      toast('保存失败: ' + e.message);
+    }
+  });
+
+  box.innerHTML = '';
+  box.appendChild(card);
+}
+
+// F18: 练琴/体育的 30 秒打卡 —— 时长 + 组数/次数 + 曲目段落。
+// 只对 task_kind=training 开放: 学科作业的"完成"走状态接口, 习惯打卡
+// 是另一条范围, 混进来会让打卡数据失去"训练"这个限定。
+//
+// 打卡即完成 (后端同一事务写记录 + 置 done + 填实耗), 所以界面上训练
+// 任务不出现普通「完成」按钮 —— 两种情况都不该并存, 否则家长会以为
+// "不打卡也能收尾", 训练周报就没数据了。
+function trainingLogSummary(log) {
+  const parts = [];
+  if (log.duration_minutes != null) parts.push(`${log.duration_minutes} 分钟`);
+  if (log.sets != null && log.reps != null) parts.push(`${log.sets} 组 × ${log.reps} 次`);
+  else if (log.sets != null) parts.push(`${log.sets} 组`);
+  else if (log.reps != null) parts.push(`${log.reps} 次`);
+  if (log.segment) parts.push(log.segment);
+  return parts.join(' · ');
+}
+
+  if (_modalCloser) return;                 // 已有弹窗在等确认, 别覆盖它
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent =
+    `训练打卡 · ${item.project_name || '训练'}`;
+  // 时长默认取预估: 家长点开弹窗最可能就是想确认"今天练了 30 分钟",
+  // 预填好只需确认一下, 比每次从零输入快得多。
+  const dur = log ? log.duration_minutes : (item.est_minutes != null ? item.est_minutes : 15);
+  document.getElementById('modal-content').innerHTML = `
+    <div class="form-grid">
+      <label>
+        <span class="form-label">练习时长</span>
+        <span class="form-field">
+          <span class="form-hint">分钟; 打卡后任务自动记为完成</span>
+        </span>
+      </label>
+      <label>
+        <span class="form-label">曲目 / 段落</span>
+        <span class="form-field">
+          <input id="tl-segment" maxlength="60" placeholder="如 第 2 段 / 音阶 C 大调"
+                 value="${log && log.segment ? escapeAttr(log.segment) : ''}" />
+          <span class="form-hint">练琴记曲目段落, 体育可留空</span>
+        </span>
+      </label>
+      <label>
+        <span class="form-label">组数</span>
+        <input id="tl-sets" type="number" min="0" max="100" inputmode="numeric" placeholder="选填"
+               value="${log && log.sets != null ? log.sets : ''}" />
+      </label>
+      <label>
+        <span class="form-label">每组次数</span>
+        <input id="tl-reps" type="number" min="0" max="1000" inputmode="numeric" placeholder="选填"
+               value="${log && log.reps != null ? log.reps : ''}" />
+      </label>
+      <label>
+        <span class="form-label">备注</span>
+        <input id="tl-note" maxlength="200" placeholder="选填, 如 今天有点抗拒"
+               value="${log && log.note ? escapeAttr(log.note) : ''}" />
+      </label>
+    </div>`;
+  m.classList.remove('hidden');
+  // 选填数字框的读取: 空 -> null, 越界 -> 留在弹窗报错 (与后端 CHECK 同口径)。
+  const readOptional = (id, min, max, label) => {
+    const raw = document.getElementById(id).value.trim();
+    if (!raw) return { ok: true, value: null };
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < min || n > max) {
+      toast(`${label}需在 ${min}~${max} 之间`);
+      return { ok: false };
+    }
+    return { ok: true, value: n };
+  };
+  setModalActions({
+    mode: 'confirm',
+    okText: log ? '更新打卡' : '打卡',
+    onOk: async () => {
+      if (!Number.isFinite(duration) || duration < 0 || duration > 240) {
+        toast('练习时长需在 0~240 分钟');
+        return;
+      }
+      const sets = readOptional('tl-sets', 0, 100, '组数');
+      if (!sets.ok) return;
+      const reps = readOptional('tl-reps', 0, 1000, '每组次数');
+      if (!reps.ok) return;
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.disabled = true;                 // 请求锁: 防连点提交两次
+      try {
+        await api('POST', '/training-logs', {
+          assignment_id: item.id,
+          duration_minutes: duration,
+          sets: sets.value,
+          reps: reps.value,
+          segment: document.getElementById('tl-segment').value.trim() || null,
+          note: document.getElementById('tl-note').value.trim() || null,
+        });
+        closeModal();
+        toast(log ? '打卡已更新' : '已打卡, 任务记为完成');
+        await refresh();
+      } catch (e) {
+        okBtn.disabled = false;
+        toast('打卡失败: ' + e.message);
+      }
+    },
+  });
 }
 
 // 渲染任务行 (设计文档 §5.1 + §9 4 个坑)
@@ -556,7 +813,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   const row = el(`
     <div class="assignment-row ${item.status} ${confClass} ${optClass} ${isPendingActual ? 'pending-actual' : ''}" data-id="${item.id}">
       <div class="row-main">
-        <span class="subject-tag ${item.subject}">${item.subject}</span>
+        ${taskTagHtml(item)}
         <div style="flex:1;">
           <div class="task-name">${escapeAttr(item.task_name)}${item.is_optional ? '<span class="optional-tag">选做</span>' : ''}</div>
         </div>
@@ -614,12 +871,26 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
   // 奖励隐喻, 比抽象的绿色按钮更能传达"做对了"。但纯图标会丢掉可点击
   // 的文字线索, 故图标在前、文字在后: 小孩认花形, 家长扫文字。
   if (item.status === 'todo' || item.status === 'doing') {
+    if (item.task_kind === 'training') {
+      // 训练任务 (M4): 打卡取代「完成」。打卡会一并记录时长/组数/段落,
+      // 再留一个纯「完成」按钮会让人以为不打卡也能收尾 —— 那样训练线
+      // 周报就没有数据可写, 打卡率也无从统计。
+      const b = el('<button class="status-btn training" aria-label="训练打卡">打卡</button>');
+      actions.appendChild(b);
+    } else {
     const b = el(`<button class="status-btn done" aria-label="标记为已完成">` +
       `<svg class="flower" viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
       `<use href="#i-flower"></use></svg><span>完成</span></button>`);
     b.addEventListener('click', () => patchStatus('done', b));
     actions.appendChild(b);
+    }
   } else if (item.status === 'done') {
+    // 已打卡的训练: 最常做的是修正记录, 给「改打卡」; 撤回仍走下面的「重做」
+    // (后端在 done->todo 时会连打卡记录一起删, 两者语义一致)。
+    if (item.task_kind === 'training') {
+      const b = el('<button class="status-btn training" aria-label="修改打卡记录">改打卡</button>');
+      actions.appendChild(b);
+    }
     // 重做: done -> todo。
     // 点错一次就必须能改, 否则家长只能去数据库里手改。
     // 注意后端在 done -> 非 done 时会清空 actual_minutes,
@@ -853,6 +1124,10 @@ function openEditAssignmentModal(item, onSaved) {
   // YYYY-MM-DDTHH:mm。截到 16 位正好去掉 ":ss", 直接塞进去会显示空白。
   // 秒本来就是补齐用的(见 openManualAddModal 的 dl + ':00'), 丢掉无损。
   const dlVal = item.deadline_time ? String(item.deadline_time).slice(0, 16) : '';
+  // 培训/习惯任务要选项目, 复用快速添加已缓存的项目列表。
+  if (!_qaProjects.length) refreshQuickAddData();
+  const edKind = item.task_kind || 'subject';
+  const isSubject = edKind === 'subject';
   document.getElementById('modal-content').innerHTML = `
     <div class="form-grid">
       <label>
@@ -860,11 +1135,22 @@ function openEditAssignmentModal(item, onSaved) {
         <input id="ed-due" type="date" class="js-datepicker" value="${escapeAttr(item.due_date)}" />
       </label>
       <label>
+        <span class="form-label">任务来源</span>
+        <select id="ed-kind">
+          ${[['subject', '学科作业'], ['training', '培训'], ['habit', '习惯']]
+            .map(([k, label]) => `<option value="${k}" ${k === edKind ? 'selected' : ''}>${label}</option>`).join('')}
+        </select>
+      </label>
+      <label id="ed-subject-wrap" ${isSubject ? '' : 'hidden'}>
         <span class="form-label">科目</span>
         <select id="ed-subject">
           ${['语文', '数学', '英语']
             .map(s => `<option ${s === item.subject ? 'selected' : ''}>${s}</option>`).join('')}
         </select>
+      </label>
+      <label id="ed-project-wrap" ${isSubject ? 'hidden' : ''}>
+        <span class="form-label">项目</span>
+        ${projectPickerHtml('ed-project', item.project_id, item.project_name)}
       </label>
       <label>
         <span class="form-label">作业项</span>
@@ -902,9 +1188,19 @@ function openEditAssignmentModal(item, onSaved) {
   `;
   m.classList.remove('hidden');
   // 刻意不加 confirm-modal: 那是确认/单输入框的窄版布局(见 styles.css §16),
-  // 六个字段的表单需要整幅宽度, 与「手动添加」保持一致。
+  // 整幅表单需要全宽, 与「手动添加」保持一致。
+  const edKindSel = document.getElementById('ed-kind');
+  edKindSel.addEventListener('change', () => {
+    const toSubject = edKindSel.value === 'subject';
+    document.getElementById('ed-subject-wrap').hidden = !toSubject;
+    document.getElementById('ed-project-wrap').hidden = toSubject;
+  });
   initDatePickersIn(document.getElementById('modal-content'));
   initCombos(document.getElementById('modal-content'));
+  // 项目下拉: 自绘控件。当前项目可能已归档 (不在 GET /projects 的默认列表里),
+  // 兜底项由 projectOptionList 补上, 否则下拉会默认选中第一个项目, 保存时
+  // 把这条任务悄悄挪到别的项目上。
+  initProjectPickers(document.getElementById('modal-content'));
   setModalActions({
     mode: 'confirm',
     okText: '保存',
@@ -935,7 +1231,20 @@ function openEditAssignmentModal(item, onSaved) {
         const setIfChanged = (k, v) => { if (v !== item[k]) patch[k] = v; };
         setIfChanged('task_name', name);
         setIfChanged('est_minutes', est);
-        setIfChanged('subject', document.getElementById('ed-subject').value);
+        // 任务来源联动: 学科作业带科目、清空项目; 培训/习惯反之。
+        // subject 与 project_id 必须成对发送, 否则后端会看到
+        // "training 却挂着科目"这种自相矛盾的组合 (4015)。
+        // 比较基准取"库里的有效值": 老数据可能没有 task_kind (视为
+        // subject)、project_id 可能是 undefined —— 直接和 null 比会让
+        // 一次原样保存也发出 PATCH (后端记为 edited)。
+        const kind = document.getElementById('ed-kind').value;
+        const subjectKind = kind === 'subject';
+        const pidRaw = document.getElementById('ed-project').value;
+        const newSubject = subjectKind ? document.getElementById('ed-subject').value : null;
+        const newProject = subjectKind || !pidRaw ? null : parseInt(pidRaw, 10);
+        if (kind !== (item.task_kind || 'subject')) patch.task_kind = kind;
+        if (newSubject !== (item.subject ?? null)) patch.subject = newSubject;
+        if (newProject !== (item.project_id ?? null)) patch.project_id = newProject;
         setIfChanged('due_date', due);
         // 截到分钟再补秒, 与手动添加的写法对齐(见 openManualAddModal)
         setIfChanged('deadline_time', dl ? `${dl}:00` : null);
@@ -984,11 +1293,20 @@ function openSourceModal(item) {
   setModalActions({ mode: 'close' });
 }
 
+// 弹窗底部那颗次要键的实际动作。默认关窗; 嵌套弹窗 (从「固定课表」进到
+// 取消键 / Esc / 点遮罩三条路径都走这里 —— 按键上写着「返回」, 按 Esc 却把
+// 整个弹窗关掉, 一样会让人以为按错了。
+
+  fn();
+}
+
 // 弹窗底部按钮按语义切换 (2026-09-28)。
 //   close  —— 只读弹窗: 隐藏取消, 「确定」改文案为「返回」
 //   confirm —— 输入弹窗: 保留「取消」+「确定」, 由调用方接确定按钮的 onclick
 // 不能简单地删掉取消按钮: 手动添加弹窗里"取消"(放弃)与"确定"(提交)
 // 是两种不同操作, 合并会丢掉"放弃这次编辑"的语义。
+// (回到上一层的列表), 不是"取消"(放弃这次编辑) —— 上一层的列表还在, 按一下
+// 回去比把整个弹窗关掉更顺手。
 // okText / danger 是 2026-09-29 为确认弹窗加的: 危险操作的确认键要写
 // 「删除」而不是「确定」, 且要用实心红 —— 让家长在按下之前再看一眼
 // 自己要做什么, 而不是靠"确定"两个字去猜。
@@ -1002,7 +1320,10 @@ function setModalActions({ mode, onOk = null, okText = null, danger = false }) {
   // 会看到弹窗正常打开、但确定键点不动, 表现为"功能坏了"。
   // 收回放在这个统一出口, 而不是各弹窗自己记着, 才不会漏。
   ok.disabled = false;
+  // 次要键的行为同样要重设: 弹窗是共用节点, 上一个弹窗留下的"返回上一层"
+  // 不能带到下一个弹窗去。
   if (mode === 'close') {
+    // 只读弹窗: 「取消」与「返回」做的是同一件事 (都只是关窗), 摆两颗
     cancel.classList.add('hidden');
     ok.textContent = '返回';
     ok.classList.remove('primary');
@@ -1153,6 +1474,7 @@ function promptNumber({ title, label, value, min = 0, max = 240, hint = '', okTe
   });
 }
 
+// 否则嵌套弹窗里按 Esc 会把整个弹窗关掉, 而按「返回」却只退一层。
 document.getElementById('modal-cancel').addEventListener('click', () => {
   closeModal();
 });
@@ -1172,6 +1494,125 @@ document.getElementById('modal').addEventListener('click', (e) => {
 // ====== 录入 / 解析 ======
 document.getElementById('btn-parse').addEventListener('click', parseRaw);
 document.getElementById('btn-add-manual').addEventListener('click', () => openManualAddModal());
+
+// ====== 快速添加 (M1 统一任务池) ======
+// 钢琴/篮球/阅读这类任务每天重复, 让家长每次粘贴通知纯属浪费。
+// 这里把"项目 + 模板任务"做成一次点击; 后端复用批量入库的去重与项目
+// 归属校验, 所以连点两下不会变成两条, 也不会把任务挂到别人家项目上。
+let _qaKind = 'subject';
+let _qaProjects = [];
+let _qaTemplates = [];
+
+async function refreshQuickAddData() {
+  try {
+    const [pr, tp] = await Promise.all([
+      api('GET', '/projects'),
+      api('GET', '/project-templates'),
+    ]);
+    _qaProjects = pr.items || [];
+    _qaTemplates = tp.items || [];
+  } catch (e) {
+    // 辅助入口拉取失败不该阻断主流程 (粘贴解析 / 手动添加仍可用)
+  }
+  // 项目列表变了, 所有已挂载的项目选择器都要重画 (否则新建的项目在别处看不到)。
+  refreshProjectPickers();
+  renderQuickTemplates();
+}
+
+function renderQuickTemplates() {
+  const box = document.getElementById('qa-templates');
+  if (!box) return;
+  box.innerHTML = '';
+  _qaTemplates.forEach(t => {
+    const b = el(`<button type="button" class="qa-tpl ${t.task_kind}" data-kind="${t.task_kind}">${escapeAttr(t.label)}</button>`);
+    b.title = t.tasks.map(x => `${x.task_name} ${x.est_minutes}分`).join(' / ');
+    b.addEventListener('click', () => applyTemplate(t));
+    box.appendChild(b);
+  });
+}
+
+function setQuickKind(kind) {
+  _qaKind = ['subject', 'training', 'habit'].includes(kind) ? kind : 'subject';
+  document.querySelectorAll('#qa-kinds .qa-kind').forEach(b =>
+    b.classList.toggle('active', b.dataset.kind === _qaKind));
+  const isSubject = _qaKind === 'subject';
+  document.getElementById('qa-subject-row').hidden = !isSubject;
+  document.getElementById('qa-project-row').hidden = isSubject;
+}
+
+async function quickAddTask(payload) {
+  return api('POST', '/assignments/quick', Object.assign(
+    { due_date: entryDate.value || todayStr(), est_minutes: 15 }, payload));
+}
+
+async function applyTemplate(t) {
+  try {
+    // 项目创建是幂等的: 同名同类型返回已有项目, 重复点模板不会建出一堆"钢琴"。
+    const project = await api('POST', '/projects', {
+      name: t.default_name, project_type: t.project_type,
+    });
+    let added = 0, skipped = 0;
+    for (const task of t.tasks) {
+      const r = await quickAddTask({
+        task_name: task.task_name,
+        task_kind: t.task_kind,
+        project_id: project.id,
+        est_minutes: task.est_minutes,
+        task_type: task.task_type || null,
+      });
+      if (r.skipped) skipped += 1; else added += 1;
+    }
+    await refreshQuickAddData();
+    toast(skipped
+      ? `「${t.label}」已添加 ${added} 项, ${skipped} 项今天已有`
+      : `「${t.label}」已添加 ${added} 项`);
+  } catch (e) { toast('添加失败: ' + e.message); }
+}
+
+async function quickAddFromForm() {
+  const name = document.getElementById('qa-name').value.trim();
+  if (!name) { toast('先填任务名'); return; }
+  const est = parseInt(document.getElementById('qa-est').value, 10);
+  if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
+  const payload = { task_name: name, est_minutes: est };
+  if (_qaKind === 'subject') {
+    payload.task_kind = 'subject';
+    payload.subject = document.getElementById('qa-subject').value;
+  } else {
+    payload.task_kind = _qaKind;
+    const pid = parseInt(document.getElementById('qa-project').value, 10);
+    payload.project_id = Number.isFinite(pid) ? pid : null;
+  }
+  try {
+    const r = await quickAddTask(payload);
+    if (r.skipped) {
+      toast(`「${name}」今天已经加过了`);
+    } else {
+      toast(`已添加「${name}」`);
+      document.getElementById('qa-name').value = '';
+    }
+  } catch (e) { toast('添加失败: ' + e.message); }
+}
+
+function initQuickAdd() {
+  document.querySelectorAll('#qa-kinds .qa-kind').forEach(b => {
+    b.addEventListener('click', () => setQuickKind(b.dataset.kind));
+  });
+  document.getElementById('qa-add').addEventListener('click', quickAddFromForm);
+  document.getElementById('qa-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') quickAddFromForm();
+  });
+  // 培训/习惯任务的项目选择: 与各弹窗共用同一个自绘下拉 (含「＋新建项目」)。
+  // 候选随项目列表异步到达, 所以先挂好控件, 列表由 refreshProjectPickers 补上。
+  const host = document.getElementById('qa-project-row');
+  if (host) {
+    host.innerHTML = projectPickerHtml('qa-project');
+    initProjectPickers(host);
+  }
+  setQuickKind('subject');
+  refreshQuickAddData();
+}
+initQuickAdd();
 
 // 字符计数 (设计文档 §7.2 第 1 块)
 const rawTextarea = document.getElementById('raw-text');
@@ -1511,6 +1952,240 @@ function initCombos(scope) {
   });
 }
 
+// ====== 项目选择器 (自绘下拉 + 就地新建 · 2026-10-30) ======
+//
+// 为什么不用原生 <select>: 展开后的候选面板由操作系统绘制, CSS 一处也
+// 改不动 —— Windows Chrome 上是蓝底白字的系统面板, 落在奶油糖果配色里
+// 像贴错了别的应用。与本文件替换原生 prompt() / <input type="date"> /
+// datalist 同一类原因, 所以项目下拉也自绘。
+//
+// 结构与 .combo 一致: 一个触发键 + 一个候选浮层, 只是把"可自由输入"
+// 换成"从已有项目里选"。选中值放在一个 hidden input 里 —— id 与原来的
+// <select> 相同, 于是各弹窗里 getElementById('xx-project').value 的
+// 读取代码一行都不用改。
+//
+// 触发键右边常驻一个「＋新建项目」: 项目一个都没有时, 家长原本只能跳去
+// 设置页或录入页绕一圈, 弹窗里等于死路 (2026-10-30 用户反馈)。
+function projectOptionList(selectedId, selectedName) {
+  const list = (_qaProjects || []).map(p => ({ value: String(p.id), label: p.name }));
+  const sid = selectedId == null ? '' : String(selectedId);
+  if (sid && !list.some(o => o.value === sid)) {
+    list.unshift({ value: sid, label: selectedName || '当前项目' });
+  }
+  return list;
+}
+
+// 项目选择器的 HTML。selectedId 为空时默认落在第一个项目上 —— 原生
+// <select> 也是这个默认 (第一个 option 自动选中), 保持一致: 家长只改了
+// 时间, 不该因为"没碰项目"而被拦下。
+function projectPickerHtml(id, selectedId, selectedName) {
+  const opts = projectOptionList(selectedId, selectedName);
+  const sid = selectedId == null ? '' : String(selectedId);
+  let value = sid;
+  let label = '';
+  if (value) {
+    const hit = opts.find(o => o.value === value);
+    label = hit ? hit.label : (selectedName || '当前项目');
+  } else if (opts.length) {
+    value = opts[0].value;
+    label = opts[0].label;
+  }
+  const empty = !value;
+  return `<span class="picker" data-picker data-selected="${escapeAttr(value)}" data-name="${escapeAttr(label)}">
+    <input type="hidden" id="${id}" value="${escapeAttr(value)}" />
+    <span class="picker-row">
+      <span class="picker-slot">
+        <button type="button" class="picker-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="picker-value${empty ? ' is-empty' : ''}">${escapeAttr(empty ? '还没有项目' : label)}</span>
+          <span class="picker-caret" aria-hidden="true"></span>
+        </button>
+        <span class="picker-panel" hidden>
+          <span class="picker-list" role="listbox" aria-label="项目"></span>
+          <span class="picker-create" hidden>
+            <input class="picker-create-input" type="text" maxlength="40" placeholder="新项目名, 如 钢琴" aria-label="新项目名" />
+            <button type="button" class="secondary picker-create-ok">建好</button>
+          </span>
+        </span>
+      </span>
+      <button type="button" class="picker-new">＋新建项目</button>
+    </span>
+  </span>`;
+}
+
+// 绑定一个项目选择器。调用前 innerHTML 必须已经写好。
+function bindProjectPicker(root) {
+  if (!root || root.dataset.bound === '1') return;
+  root.dataset.bound = '1';
+  const hidden = root.querySelector('input[type="hidden"]');
+  const trigger = root.querySelector('.picker-trigger');
+  const valueEl = root.querySelector('.picker-value');
+  const panel = root.querySelector('.picker-panel');
+  const listEl = root.querySelector('.picker-list');
+  const newBtn = root.querySelector('.picker-new');
+  const createBox = root.querySelector('.picker-create');
+  const createInput = root.querySelector('.picker-create-input');
+  const createOk = root.querySelector('.picker-create-ok');
+  if (!hidden || !trigger || !valueEl || !panel || !listEl) return;
+
+  const origId = root.dataset.selected || '';
+  const origName = root.dataset.name || '';
+  let current = hidden.value;
+
+  // 候选 = 现存项目 + (当前项目已归档时的兜底项)。兜底项只在"当前值
+  // 仍是那个已归档项目"时才有意义, 换成别的项目后它就该消失。
+  const options = () => projectOptionList(current, current === origId ? origName : '');
+
+  const renderList = () => {
+    const opts = options();
+    listEl.innerHTML = opts.length
+      ? opts.map(o => `<button type="button" class="picker-option${o.value === current ? ' is-selected' : ''}" role="option" aria-selected="${o.value === current}" data-value="${escapeAttr(o.value)}">${escapeAttr(o.label)}</button>`).join('')
+      : '<span class="picker-empty">还没有项目 —— 在下面建一个</span>';
+  };
+
+  const renderLabel = () => {
+    if (current) {
+      const o = options().find(x => x.value === current);
+      valueEl.textContent = o ? o.label : (origName || '当前项目');
+      valueEl.classList.remove('is-empty');
+    } else {
+      valueEl.textContent = '还没有项目';
+      valueEl.classList.add('is-empty');
+    }
+  };
+
+  // 值与候选的同步: 项目列表变了 (新建/归档/首次加载) 后重新对一遍。
+  // 与原生 <select> 一致: 只要还有候选, 就一定有一个选中项 —— 少了这条,
+  // 家长明明看到下拉里有项目, 提交时却被当成"没选项目"。
+  const sync = () => {
+    const opts = options();
+    if (!current && opts.length) {
+      current = opts[0].value;
+      hidden.value = current;
+    }
+    renderLabel();
+    renderList();
+  };
+
+  const close = () => {
+    panel.hidden = true;
+    root.classList.remove('is-open');
+    trigger.setAttribute('aria-expanded', 'false');
+    showList();
+  };
+  const open = () => {
+    renderList();
+    panel.hidden = false;
+    root.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    // 一个项目都没有时直接进新建态 —— 让家长先看一个空列表再点"新建",
+    // 是白白多一次点击。
+    if (!listEl.querySelector('.picker-option')) startCreate();
+  };
+  // 新建态: 浮层里换成输入框, 候选列表让位。
+  const showList = () => {
+    listEl.hidden = false;
+    createBox.hidden = true;
+  };
+  const startCreate = () => {
+    listEl.hidden = true;
+    createBox.hidden = false;
+    createInput.value = '';
+    createInput.focus();
+  };
+  const pick = (value, label) => {
+    current = value;
+    hidden.value = value;
+    valueEl.textContent = label;
+    valueEl.classList.remove('is-empty');
+    close();
+    trigger.focus();
+  };
+
+  const create = async () => {
+    const name = createInput.value.trim();
+    if (!name) { toast('先填项目名'); return; }
+    createOk.disabled = true;
+    try {
+      const p = await api('POST', '/projects', { name });
+      current = String(p.id);
+      hidden.value = current;
+      valueEl.textContent = p.name;
+      valueEl.classList.remove('is-empty');
+      createInput.value = '';
+      // 刷新项目列表: 新项目要出现在候选里, 别的选择器也要跟着更新。
+      await refreshQuickAddData();
+      renderList();
+      close();
+      toast(`已创建项目「${p.name}」`);
+    } catch (e) {
+      toast('创建失败: ' + e.message);
+    } finally {
+      createOk.disabled = false;
+    }
+  };
+
+  trigger.addEventListener('click', () => { panel.hidden ? open() : close(); });
+  newBtn.addEventListener('click', () => {
+    if (panel.hidden) {
+      renderList();
+      panel.hidden = false;
+      root.classList.add('is-open');
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+    startCreate();
+  });
+  listEl.addEventListener('click', (e) => {
+    const opt = e.target.closest('.picker-option');
+    if (opt) pick(opt.dataset.value, opt.textContent);
+  });
+  createOk.addEventListener('click', create);
+  createInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); create(); }
+  });
+  root.addEventListener('keydown', (e) => {
+    // Esc 只收起浮层, 不能连带把整个弹窗关掉 (弹窗的 Esc 监听在 document 上)。
+    if (e.key === 'Escape' && !panel.hidden) { e.stopPropagation(); close(); trigger.focus(); return; }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    if (panel.hidden) {
+      open();
+      const first = listEl.querySelector('.picker-option');
+      if (first) first.focus();
+      return;
+    }
+    const opts = [...listEl.querySelectorAll('.picker-option')];
+    const i = opts.indexOf(document.activeElement);
+    const next = opts[Math.min(Math.max(i + (e.key === 'ArrowDown' ? 1 : -1), 0), opts.length - 1)];
+    if (next) next.focus();
+  });
+
+  sync();
+  _projectPickers.push({ root, sync, close });
+}
+
+// 一次性把弹窗里的项目选择器都接上。必须在 innerHTML 写入之后调用。
+function initProjectPickers(scope) {
+  (scope || document).querySelectorAll('[data-picker]').forEach(bindProjectPicker);
+}
+
+// 项目列表变了 (新建/归档/首次加载), 让所有已挂载的选择器重画一遍。
+function refreshProjectPickers() {
+  for (let i = _projectPickers.length - 1; i >= 0; i--) {
+    const p = _projectPickers[i];
+    // 弹窗内容每次打开都是新 DOM, 旧的 root 已经脱离文档, 顺手清掉。
+    if (!p.root.isConnected) { _projectPickers.splice(i, 1); continue; }
+    p.sync();
+  }
+}
+
+// 点浮层外面收起。只注册一次 document 级监听, 遍历所有打开的选择器 ——
+// 每个选择器各挂一个监听的话, 弹窗开合几次就会攒下一堆闭包。
+document.addEventListener('pointerdown', (e) => {
+  _projectPickers.forEach((p) => {
+    if (p.root.isConnected && !p.root.contains(e.target)) p.close();
+  });
+}, true);
+
 // 「预计用时」随作业类型自动预填 (2026-10-02 用户需求)。
 //
 // 口径: **只在输入框为空时**才填, 家长已经敲进去的数字绝不覆盖。
@@ -1720,7 +2395,8 @@ async function confirmBatch(batchId, result) {
     const skipped = r.skipped || [];
     if (skipped.length) {
       // 去重是静默的, 但必须告诉家长跳过了什么 —— 否则"少了几条"会让人以为丢数据
-      const names = skipped.slice(0, 3).map(s => `${s.subject}·${s.task_name}`).join('、');
+      const names = skipped.slice(0, 3).map(s =>
+        `${s.subject || TASK_KIND_LABELS[s.task_kind] || ''}·${s.task_name}`).join('、');
       const more = skipped.length > 3 ? ` 等 ${skipped.length} 条` : '';
       toast(`已入库 ${r.created_ids.length} 条, 跳过重复 ${skipped.length} 条: ${names}${more}`, 6000);
     } else {
@@ -1735,6 +2411,9 @@ async function confirmBatch(batchId, result) {
 
 // 手动添加 modal
 function openManualAddModal() {
+  // 培训/习惯任务要选项目, 这里直接用快速添加已缓存的 _qaProjects;
+  // 缓存为空时异步补一轮, 不阻塞弹窗打开。
+  if (!_qaProjects.length) refreshQuickAddData();
   const m = document.getElementById('modal');
   m.classList.remove('hidden');
   document.getElementById('modal-title').textContent = '手动添加作业';
@@ -1745,8 +2424,23 @@ function openManualAddModal() {
         <input id="m-due" type="date" class="js-datepicker" value="${todayStr()}" />
       </label>
       <label>
+        <span class="form-label">任务来源</span>
+        <select id="m-kind">
+          <option value="subject">学科作业</option>
+          <option value="training">培训</option>
+          <option value="habit">习惯</option>
+        </select>
+      </label>
+      <label id="m-subject-wrap">
         <span class="form-label">科目</span>
         <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
+      </label>
+      <label id="m-project-wrap" hidden>
+        <span class="form-label">项目</span>
+        <span class="form-field">
+          ${projectPickerHtml('m-project')}
+          <span class="form-hint">没有项目？点「＋新建项目」当场建一个</span>
+        </span>
       </label>
       <label>
         <span class="form-label">作业项</span>
@@ -1784,11 +2478,19 @@ function openManualAddModal() {
       </label>
     </div>
   `;
+  const kindSel = document.getElementById('m-kind');
+  kindSel.addEventListener('change', () => {
+    const isSubject = kindSel.value === 'subject';
+    document.getElementById('m-subject-wrap').hidden = !isSubject;
+    document.getElementById('m-project-wrap').hidden = isSubject;
+  });
   // modal-content 每次打开都是新 DOM, 所以在这里绑定而不是页面启动时
   initDatePickersIn(document.getElementById('modal-content'));
   // 作业类型下拉要在 DOM 建好之后接上, 并排在 bindEstAutofill 之前 ——
   // initCombos 只挂交互, 但顺序上让"先有候选、再有预填"读起来更顺。
   initCombos(document.getElementById('modal-content'));
+  // 项目下拉: 自绘控件, 候选与「新建项目」都在浮层里。
+  initProjectPickers(document.getElementById('modal-content'));
   // 预计用时留空, 由作业类型自动预填 (2026-10-02 用户需求)。
   // 刻意不给初值: 一旦写死 15, 下面 bindEstAutofill 的"空才填"就永远
   // 不成立, 类型基线配置就永远不生效 —— 那正是 2026-09-29 报障的形态。
@@ -1805,7 +2507,11 @@ function openManualAddModal() {
     onOk: async () => {
       const dl = document.getElementById('m-dl').value;
       const type = document.getElementById('m-type').value.trim();
-      const subject = document.getElementById('m-subject').value;
+      const kind = document.getElementById('m-kind').value;
+      const isSubject = kind === 'subject';
+      const subject = isSubject ? document.getElementById('m-subject').value : null;
+      const pidRaw = document.getElementById('m-project').value;
+      const projectId = isSubject || !pidRaw ? null : parseInt(pidRaw, 10);
       // 预计用时改成"可留空"后, 提交时必须兜住空值: 后端 est_minutes 是
       // 必填 (ge=1), 直接把 parseInt('') 的 NaN 发过去会得到 4003, 而
       // 家长看到的只是"入库失败", 完全不知道是哪个框的问题。
@@ -1814,6 +2520,8 @@ function openManualAddModal() {
       const est = estRaw === '' ? estDefault({ task_type: type, subject }) : parseInt(estRaw, 10);
       const items = [{
         subject,
+        task_kind: kind,
+        project_id: projectId,
         task_name: document.getElementById('m-name').value.trim(),
         due_date: document.getElementById('m-due').value,
         // 修正: 原写法 (v || '') + ':00' || null 因 + 优先级高于 ||,
@@ -2290,6 +2998,8 @@ async function loadReview(period) {
   // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上
   // 留着一行永远不消失的"加载中…"。
   root.innerHTML = '';
+  // 周报固定是本周, 不随上面的周期按钮变 —— 它回答"这周过得怎么样",
+  // 是整体结论; 下面两块才是可以来回切换的统计区间。
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
   // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
@@ -2299,6 +3009,166 @@ async function loadReview(period) {
   root.appendChild(await timeP);
   root.appendChild(await devP);
 }
+
+//
+// 周报单独 fetch, 且自己吞掉异常: 它失败不该让下面的用时/偏差也白屏。
+// 文案原则 (商业计划 §5.7): 只跟孩子自己的历史比, 不评价天赋、不排名;
+// 建议最多 3 条 (1–2 年级 2 条), 先当下有事再下次能改。
+  try {
+    const r = await api('GET', '/weekly-report');
+    return renderWeeklyReport(r);
+  } catch (e) {
+    return el(`<div class="error-banner">周报加载失败: ${e.message}</div>`);
+  }
+}
+
+function renderWeeklyReport(r) {
+  const c = r.completion;
+  const t = r.time;
+  const b = r.blockers;
+  const tr = r.training;
+  const ld = r.load;
+  const tn = r.trend;
+
+  const card = el(`
+    <div class="card report-card">
+      <div class="report-head">
+        <div class="report-head-main">
+          <div class="report-kicker">本周课后周报${r.mode === 'lite' ? ' · 低年级版' : ''}</div>
+          <div class="report-range">${r.week_start.slice(5)} ~ ${r.week_end.slice(5)}</div>
+        </div>
+        <button class="ghost report-export">导出本周清单</button>
+      </div>
+      <div class="report-stats">
+        <div class="report-stat"><strong>${c.rate}%</strong><span>完成率</span></div>
+        <div class="report-stat"><strong>${c.settled}/${c.required}</strong><span>必做收尾</span></div>
+        <div class="report-stat"><strong>${t.total_minutes}</strong><span>作业分钟</span></div>
+        <div class="report-stat"><strong>${t.avg_daily_minutes}</strong><span>上学日日均</span></div>
+      </div>
+    </div>
+  `);
+
+  // 完成情况: 只列没收尾的必做项, 最多 6 条 (再多就不是"清单"而是账本)。
+  if (c.unfinished.length) {
+    const block = el(`<div class="report-block">
+      <div class="report-block-title">还没收尾 <span class="muted">${c.pending} 项</span></div>
+    </div>`);
+    const ul = el('<ul class="report-list"></ul>');
+    c.unfinished.slice(0, 6).forEach(u => {
+      const who = u.subject || u.project_name || '';
+      ul.appendChild(el(`<li>${escapeAttr(u.weekday)}${who ? ' · ' + escapeAttr(who) : ''} · ${escapeAttr(u.task_name)}</li>`));
+    });
+    block.appendChild(ul);
+    card.appendChild(block);
+  }
+
+  // 时间结构: 分科条只画学科任务; 训练线单独一块, 两者不混在一起。
+  const subjects = orderedSubjects(t.by_subject);
+  if (subjects.length) {
+    const block = el(`<div class="report-block">
+      <div class="report-block-title">时间花在哪 <span class="muted">共 ${t.total_minutes} 分钟</span></div>
+    </div>`);
+    subjects.forEach(s => {
+      const pct = t.subject_share[s] || 0;
+      block.appendChild(el(`<div class="report-bar-row">
+        <span class="report-bar-label">${escapeAttr(s)}</span>
+        <span class="report-bar-track"><i style="width:${pct}%;background:${subjectColor(s)}"></i></span>
+        <span class="report-bar-val">${t.by_subject[s]} 分</span>
+      </div>`));
+    });
+    block.appendChild(el(`<div class="muted report-foot">政策 60 分钟只是参考线, 周报只看孩子自己的变化</div>`));
+    card.appendChild(block);
+  }
+
+  // 估时偏差: 样本不足是正常状态, 不让它挡住整页。
+  if (r.deviation.note) {
+    card.appendChild(el(`<div class="report-block"><div class="report-block-title">估时偏差</div>
+      <div class="muted">${escapeAttr(r.deviation.note)}</div></div>`));
+  } else if (r.deviation.top_underestimate.length || r.deviation.top_overestimate.length) {
+    const block = el(`<div class="report-block">
+      <div class="report-block-title">估时偏差 <span class="muted">样本 ${r.deviation.sample_size} 条</span></div>
+    </div>`);
+    r.deviation.top_underestimate.slice(0, 2).forEach(x => {
+      block.appendChild(el(`<div class="report-dev-row warn">${escapeAttr(x.subject)}${escapeAttr(x.task_type)} 平均超 ${x.diff_minutes} 分钟</div>`));
+    });
+    r.deviation.top_overestimate.slice(0, 2).forEach(x => {
+      block.appendChild(el(`<div class="report-dev-row">${escapeAttr(x.subject)}${escapeAttr(x.task_type)} 平均少 ${Math.abs(x.diff_minutes)} 分钟</div>`));
+    });
+    card.appendChild(block);
+  }
+
+  // 卡点: 三问里的难/烦/不专注, 加上实际远超预估的任务。
+  const chips = [];
+  if (b.hard_days.length) chips.push(`偏难 ${b.hard_days.length} 天`);
+  if (b.bad_focus_days.length) chips.push(`不专注 ${b.bad_focus_days.length} 天`);
+  if (b.bad_mood_days.length) chips.push(`情绪差 ${b.bad_mood_days.length} 天`);
+  if (chips.length || b.slow_tasks.length) {
+    const block = el('<div class="report-block"><div class="report-block-title">卡点</div></div>');
+    if (chips.length) {
+      const row = el('<div class="report-chips"></div>');
+      chips.forEach(txt => row.appendChild(el(`<span class="report-chip">${txt}</span>`)));
+      block.appendChild(row);
+    }
+    b.slow_tasks.forEach(x => {
+      block.appendChild(el(`<div class="report-slow">${escapeAttr(x.task_name)} 实际 ${x.actual_minutes} 分 / 预估 ${x.est_minutes} 分 (${x.ratio} 倍)</div>`));
+    });
+    card.appendChild(block);
+  }
+
+  // 训练线: 家长最想知道"练了几次、练到哪"。
+  if (tr.logs > 0) {
+    const block = el(`<div class="report-block">
+      <div class="report-block-title">训练线 <span class="muted">${tr.logs} 次 · ${tr.total_minutes} 分钟</span></div>
+    </div>`);
+    tr.by_project.forEach(p => {
+      block.appendChild(el(`<div class="report-train">
+        <strong>${escapeAttr(p.project_name || '训练')}</strong>
+        <span class="muted">${p.logs} 次 · ${p.total_minutes} 分钟</span>
+        ${p.last_segment ? `<span class="report-train-seg">最近: ${escapeAttr(p.last_segment)}</span>` : ''}
+      </div>`));
+    });
+    card.appendChild(block);
+  }
+
+  // 负荷: 只在本周真排过课/计划时才有意义。
+  const loadBits = [];
+  if (ld.fullest_day) loadBits.push(`最满 ${ld.fullest_day.weekday} ${ld.fullest_day.load_minutes} 分钟`);
+  if (ld.overloaded_days) loadBits.push(`超载 ${ld.overloaded_days} 天`);
+  if (ld.conflict_days) loadBits.push(`课表冲突 ${ld.conflict_days} 天`);
+  if (loadBits.length) {
+    card.appendChild(el(`<div class="report-block"><div class="report-block-title">本周负荷</div>
+      <div class="report-load">${loadBits.map(x => `<span class="report-chip">${x}</span>`).join('')}</div></div>`));
+  }
+
+  // 趋势: 只跟上周比, 不跟别人比。
+  if (tn.prev_done > 0 || c.done > 0) {
+    const bits = [];
+    if (tn.done_delta) bits.push(`完成项 ${tn.done_delta > 0 ? '+' : ''}${tn.done_delta}`);
+    if (tn.minutes_delta) bits.push(`用时 ${tn.minutes_delta > 0 ? '+' : ''}${tn.minutes_delta} 分钟`);
+    if (bits.length) {
+      card.appendChild(el(`<div class="report-block"><div class="report-block-title">和上周比</div>
+        <div class="muted">${bits.join(' · ')}</div></div>`));
+    }
+  }
+
+  if (r.praise.length) {
+    card.appendChild(el(`<div class="report-praise"><span>给孩子</span>${escapeAttr(r.praise.join('；'))}</div>`));
+  }
+  }
+  if (r.suggestions.length) {
+    const block = el('<div class="report-block"><div class="report-block-title">今晚可以试</div></div>');
+    const ul = el('<ul class="report-list report-suggest"></ul>');
+    r.suggestions.forEach(s => ul.appendChild(el(`<li>${escapeAttr(s)}</li>`)));
+    block.appendChild(ul);
+    card.appendChild(block);
+  }
+
+  card.querySelector('.report-export').addEventListener('click', () => {
+    window.location.href = `${API}/export/assignments.csv?date=${r.week_start}`;
+  });
+  return card;
+}
+
 
 // 偏差表单独包一层: 它有"样本不足"这个正常分支, 不该把异常抛到调用方,
 // 否则上面已经渲染好的用时统计会被一起清掉。
@@ -2855,6 +3725,368 @@ function renderDeviationTable(box, r) {
   }
 }
 
+// 一页回答三个问题: 这周哪天最满、有没有时间段撞车、固定节奏有没有
+// 落到任务池里。它不是"再看一遍作业" —— 作业在「看板」, 这里只合成。
+
+// 显示中的那一周以哪个日期为锚。null = 本周 (由后端按今天算)。
+let _weekData = null;
+
+function addDays(iso, n) {
+  // 用本地时间构造, 不用 toISOString(): 后者是 UTC, 在东八区会退一天。
+  const d = new Date(iso + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  const p = x => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function md(iso) {
+  return `${parseInt(iso.slice(5, 7), 10)}/${parseInt(iso.slice(8, 10), 10)}`;
+}
+
+  const root = document.getElementById('week-content');
+  if (!root) return;
+  root.innerHTML = '<p class="muted">加载中…</p>';
+  try {
+    _weekData = w;
+  } catch (e) {
+    root.innerHTML = `<div class="error-banner">加载失败: ${escapeAttr(e.message)}</div>`;
+  }
+}
+
+  root.innerHTML = '';
+
+  const bar = el(`<div class="week-bar">
+    <button type="button" class="ghost week-nav" data-step="-7">‹ 上周</button>
+    <div class="week-range">
+      <strong>${md(w.week_start)} – ${md(w.week_end)}</strong>
+      <span class="muted">每天上限 ${w.daily_load_limit} 分钟</span>
+    </div>
+    <button type="button" class="ghost week-nav" data-step="7">下周 ›</button>
+  </div>`);
+  bar.querySelectorAll('.week-nav').forEach(b => b.addEventListener('click', () => {
+  }));
+  root.appendChild(bar);
+
+  const t = w.totals;
+  root.appendChild(el(`<div class="card week-summary">
+    <div class="card-title">本周负荷<span class="count">${md(w.week_start)} ~ ${md(w.week_end)}</span></div>
+    <div class="week-stats">
+      <div class="week-stat"><strong>${t.load_minutes}</strong><span>总负荷(分)</span></div>
+      <div class="week-stat ${t.overloaded_days ? 'warn' : ''}"><strong>${t.overloaded_days}</strong><span>超载天数</span></div>
+      <div class="week-stat ${t.conflict_days ? 'warn' : ''}"><strong>${t.conflict_days}</strong><span>冲突天数</span></div>
+    </div>
+  </div>`));
+
+  const actions = el(`<div class="week-actions">
+    <button type="button" class="primary" id="week-generate">生成本周任务</button>
+    <button type="button" class="secondary" id="week-manage-slots">管理课表</button>
+    <button type="button" class="secondary" id="week-manage-plans">周计划项</button>
+  </div>`);
+  root.appendChild(actions);
+
+  const days = el('<div class="week-days"></div>');
+  root.appendChild(days);
+}
+
+  const card = el(`<div class="card week-day ${d.is_today ? 'is-today' : ''} ${d.overloaded ? 'overloaded' : ''}">
+    <div class="week-day-head">
+      <span class="week-day-name">${d.label}</span>
+      <span class="week-day-date">${md(d.date)}</span>
+      ${d.is_today ? '<span class="week-today-tag">今天</span>' : ''}
+      <span class="week-day-load">${d.load_minutes} 分</span>
+      ${d.overloaded ? '<span class="week-badge warn">超载</span>' : ''}
+      ${d.conflicts.length ? '<span class="week-badge danger">冲突</span>' : ''}
+    </div>`);
+
+  if (d.slots.length) {
+    const chips = el('<div class="week-chips"></div>');
+    d.slots.forEach(s => chips.appendChild(el(
+      `<span class="week-slot"><strong>${escapeAttr(s.project_name)}</strong> ${s.start_time}-${s.end_time}${s.note ? ' · ' + escapeAttr(s.note) : ''}</span>`
+    )));
+    card.appendChild(chips);
+  }
+  if (d.plans.length) {
+    const chips = el('<div class="week-chips"></div>');
+    d.plans.forEach(p => chips.appendChild(el(
+    )));
+    card.appendChild(chips);
+  }
+  const a = d.assignments;
+  const stats = a.total
+    ? `作业 ${a.total} 项 · 完成 ${a.done} · 剩 ${a.remaining_minutes} 分`
+    : '当天还没有任务';
+  d.conflicts.forEach(c => card.appendChild(el(`<div class="week-conflict">⚠ ${escapeAttr(c.message)}</div>`)));
+  return card;
+}
+
+  const btn = document.getElementById('week-generate');
+  if (btn) btn.disabled = true;
+  try {
+    if (r.created_count) {
+      toast(`已生成 ${r.created_count} 项任务${r.skipped_count ? `, 跳过 ${r.skipped_count} 项重复` : ''}`);
+    } else if (r.skipped_count) {
+      toast('这些任务都已经在任务池里了');
+    } else {
+      toast('还没有周计划项, 先点「周计划项」添加');
+    }
+  } catch (e) {
+    toast('生成失败: ' + e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---- 课表时段管理 ----
+  const w = _weekData;
+  if (!w) return;
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = '固定课表';
+  const content = document.getElementById('modal-content');
+  content.innerHTML = '<div class="manage-list"></div>' +
+    '<div class="row"><button type="button" class="secondary" id="slot-add">+ 新增上课时段</button></div>';
+  m.classList.remove('hidden');
+  m.classList.remove('confirm-modal');
+  setModalActions({ mode: 'close' });
+
+  const list = content.querySelector('.manage-list');
+  if (!w.slots.length) {
+    list.appendChild(el('<p class="muted">还没有固定课表。加上「钢琴周三 16:30-18:00」后, 周计划会把它算进当天负荷。</p>'));
+  }
+  w.slots.forEach(s => {
+    const row = el(`<div class="manage-row">
+      <div class="manage-main">
+        <strong>${escapeAttr(s.project_name)}</strong>
+      </div>
+      <div class="manage-ops">
+        <button type="button" class="secondary" data-op="edit">改</button>
+        <button type="button" class="danger" data-op="del">删</button>
+      </div>
+    </div>`);
+    row.querySelector('[data-op="del"]').addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: '删除课表时段',
+        lead: `删除「${s.project_name} ${WEEKDAY_LABELS[s.weekday]} ${s.start_time}-${s.end_time}」?`,
+        okText: '删除',
+        danger: true,
+      });
+      try {
+        await api('DELETE', `/schedule-slots/${s.id}`);
+        toast('已删除课表时段');
+      } catch (e) {
+        toast('删除失败: ' + e.message);
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+  if (!_qaProjects.length) await refreshQuickAddData();
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = slot ? '改上课时段' : '新增上课时段';
+  const content = document.getElementById('modal-content');
+  const weekday = slot ? slot.weekday : 2;
+  content.innerHTML = `<div class="form-grid">
+    <label>
+      <span class="form-label">项目</span>
+      ${projectPickerHtml('slot-project', slot && slot.project_id, slot && slot.project_name)}
+    </label>
+    <label>
+      <span class="form-label">星期</span>
+      <select id="slot-weekday">
+      </select>
+    </label>
+    <label>
+      <span class="form-label">开始</span>
+      <input id="slot-start" type="time" value="${slot ? slot.start_time : '16:30'}" />
+    </label>
+    <label>
+      <span class="form-label">结束</span>
+      <input id="slot-end" type="time" value="${slot ? slot.end_time : '18:00'}" />
+    </label>
+    <label>
+      <span class="form-label">备注</span>
+      <span class="form-field">
+        <input id="slot-note" maxlength="60" value="${slot && slot.note ? escapeAttr(slot.note) : ''}" />
+        <span class="form-hint">如"琴房 3 号", 可不填</span>
+      </span>
+    </label>
+  </div>`;
+  initProjectPickers(content);
+  m.classList.remove('hidden');
+  m.classList.remove('confirm-modal');
+  setModalActions({
+    mode: 'confirm',
+    okText: slot ? '保存' : '新增',
+    // 这个弹窗是「固定课表」的下层 (从列表点「＋新增上课时段」进来的),
+    // 次要键是"返回上一层" —— 回到课表列表, 而不是把整个弹窗关掉。
+    // 上一层还在, 按一下回去比一键退出更顺手; 列表层自己的「返回」才是
+    // 退出到周计划页。
+    onOk: async () => {
+      const pid = parseInt(document.getElementById('slot-project').value, 10);
+      if (!Number.isFinite(pid)) { toast('先选一个项目'); return; }
+      const start = document.getElementById('slot-start').value;
+      const end = document.getElementById('slot-end').value;
+      if (!start || !end) { toast('开始与结束时间都要填'); return; }
+      if (end <= start) { toast('结束时间必须晚于开始时间'); return; }
+      const body = {
+        project_id: pid,
+        weekday: parseInt(document.getElementById('slot-weekday').value, 10),
+        start_time: start,
+        end_time: end,
+        note: document.getElementById('slot-note').value.trim() || null,
+      };
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.disabled = true;
+      try {
+        if (slot) await api('PATCH', `/schedule-slots/${slot.id}`, body);
+        else await api('POST', '/schedule-slots', body);
+        toast(slot ? '已保存课表时段' : '已新增课表时段');
+        // 存完回到课表列表这一层: 新增的那条要看得见, 而不是把人扔回
+        // 周计划页再让他重新点一遍「管理课表」。
+      } catch (e) {
+        okBtn.disabled = false;
+        toast('保存失败: ' + e.message);   // 留在弹窗里, 冲突提示要能看到
+      }
+    },
+  });
+}
+
+// ---- 周计划项管理 ----
+  const w = _weekData;
+  if (!w) return;
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = '周计划项';
+  const content = document.getElementById('modal-content');
+  content.innerHTML = '<div class="manage-list"></div>' +
+    '<div class="row"><button type="button" class="secondary" id="plan-add">+ 新增计划项</button></div>' +
+    '<p class="muted">计划项是每周固定的任务模板; 点「生成本周任务」后才会变成看板上的作业。</p>';
+  m.classList.remove('hidden');
+  m.classList.remove('confirm-modal');
+  setModalActions({ mode: 'close' });
+
+  const list = content.querySelector('.manage-list');
+    list.appendChild(el('<p class="muted">还没有周计划项。例如「每日阅读 20 分钟」勾周一至周五。</p>'));
+  }
+    const label = p.project_name || p.subject || TASK_KIND_LABELS[p.task_kind] || '任务';
+    const row = el(`<div class="manage-row">
+      <div class="manage-main">
+        <strong>${escapeAttr(p.task_name)}</strong>
+        <span class="manage-meta">${escapeAttr(label)} · 周${days} · ${p.est_minutes} 分</span>
+      </div>
+      <div class="manage-ops">
+        <button type="button" class="secondary" data-op="edit">改</button>
+        <button type="button" class="danger" data-op="del">删</button>
+      </div>
+    </div>`);
+    row.querySelector('[data-op="del"]').addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: '删除周计划项',
+        lead: `删除「${p.task_name}」?`,
+        note: '已经生成到看板的作业不受影响。',
+        okText: '删除',
+        danger: true,
+      });
+      try {
+        await api('DELETE', `/plan-items/${p.id}`);
+        toast('已删除计划项');
+      } catch (e) {
+        toast('删除失败: ' + e.message);
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+  if (!_qaProjects.length) await refreshQuickAddData();
+  const kind = item ? item.task_kind : 'subject';
+  const isSubject = kind === 'subject';
+  const days = item ? item.weekdays : [0, 1, 2, 3, 4];
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = item ? '改周计划项' : '新增周计划项';
+  const content = document.getElementById('modal-content');
+  content.innerHTML = `<div class="form-grid">
+    <label>
+      <span class="form-label">任务来源</span>
+      <select id="pi-kind">
+        ${[['subject', '学科作业'], ['training', '培训'], ['habit', '习惯']]
+          .map(([k, label]) => `<option value="${k}" ${k === kind ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </label>
+    <label id="pi-subject-wrap" ${isSubject ? '' : 'hidden'}>
+      <span class="form-label">科目</span>
+      <select id="pi-subject">
+        ${['语文', '数学', '英语'].map(s => `<option ${item && s === item.subject ? 'selected' : ''}>${s}</option>`).join('')}
+      </select>
+    </label>
+    <label id="pi-project-wrap" ${isSubject ? 'hidden' : ''}>
+      <span class="form-label">项目</span>
+      ${projectPickerHtml('pi-project', item && item.project_id, item && item.project_name)}
+    </label>
+    <label>
+      <span class="form-label">任务名</span>
+      <input id="pi-name" maxlength="200" value="${item ? escapeAttr(item.task_name) : ''}" placeholder="如 每日阅读" />
+    </label>
+    <label>
+      <span class="form-label">预计用时</span>
+      <input id="pi-est" type="number" min="1" max="180" inputmode="numeric" value="${item ? item.est_minutes : 15}" />
+    </label>
+    <label>
+      <span class="form-label">星期</span>
+      <span class="form-field">
+        <span class="weekday-checks">
+            `<label class="weekday-check"><input type="checkbox" value="${i}" ${days.includes(i) ? 'checked' : ''}/>${label.slice(1)}</label>`).join('')}
+        </span>
+        <span class="form-hint">勾选每周固定做的日子</span>
+      </span>
+    </label>
+  </div>`;
+  initProjectPickers(content);
+  m.classList.remove('hidden');
+  m.classList.remove('confirm-modal');
+  document.getElementById('pi-kind').addEventListener('change', () => {
+    const toSubject = document.getElementById('pi-kind').value === 'subject';
+    document.getElementById('pi-subject-wrap').hidden = !toSubject;
+    document.getElementById('pi-project-wrap').hidden = toSubject;
+  });
+  setModalActions({
+    mode: 'confirm',
+    okText: item ? '保存' : '新增',
+    // 与上课时段同一个层级关系: 这个弹窗是「周计划项」列表的下层,
+    // 次要键退回上一层 (列表), 列表层的「返回」才退出到周计划页。
+    onOk: async () => {
+      const name = document.getElementById('pi-name').value.trim();
+      if (!name) { toast('任务名不能为空'); return; }
+      const est = parseInt(document.getElementById('pi-est').value, 10);
+      if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
+      const checkedDays = [...content.querySelectorAll('.weekday-checks input:checked')]
+        .map(i => parseInt(i.value, 10));
+      if (!checkedDays.length) { toast('至少选择一天'); return; }
+      const kindVal = document.getElementById('pi-kind').value;
+      const isSubj = kindVal === 'subject';
+      const pid = parseInt(document.getElementById('pi-project').value, 10);
+      const body = {
+        task_kind: kindVal,
+        subject: isSubj ? document.getElementById('pi-subject').value : null,
+        project_id: isSubj || !Number.isFinite(pid) ? null : pid,
+        task_name: name,
+        est_minutes: est,
+        weekdays: checkedDays.sort((a, b) => a - b),
+      };
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.disabled = true;
+      try {
+        if (item) await api('PATCH', `/plan-items/${item.id}`, body);
+        else await api('POST', '/plan-items', body);
+        toast(item ? '已保存计划项' : '已新增计划项');
+        // 存完回到周计划项列表这一层, 与课表时段同构: 新加的那条要看得见,
+        // 而不是把人直接扔回周计划页再让他重新点一遍「周计划项」。
+      } catch (e) {
+        okBtn.disabled = false;
+        toast('保存失败: ' + e.message);
+      }
+    },
+  });
+}
+
 // ====== 设置 ======
 // 配置键名对家长毫无意义 (school_dismiss_time 读不出是"放学时间"),
 // 这里给常见项配中文名。原始键仍以小字 code 显示在下方, 便于对照与排错。
@@ -2981,9 +4213,75 @@ async function loadSettings() {
     });
     root.innerHTML = '';
     root.appendChild(wrap);
+    await renderProjectsBlock(root);
   } catch (e) {
     root.innerHTML = `<div class="error-banner">加载失败: ${e.message}</div>`;
   }
+}
+
+// ====== 设置页: 项目管理 (M1) ======
+// 培训/习惯任务的归类靠项目。这里只做三件事: 看列表 / 新建 / 归档。
+// 归档而非删除: 历史作业仍引用 project_id, 删掉会让"这周练了几次琴"
+// 的统计凭空消失。归档后只是不再出现在录入候选里。
+async function renderProjectsBlock(root) {
+  let items = [];
+  try {
+    items = (await api('GET', '/projects', undefined)).items || [];
+  } catch (e) {
+    return;   // 项目接口失败不该让整页设置跟着报错
+  }
+  const card = el(`<div class="card project-manage">
+    <div class="card-title">项目 / 培训班<span class="count">${items.length}</span></div>
+    <div class="proj-list"></div>
+    <div class="row proj-new">
+      <input id="proj-new-name" placeholder="项目名, 如 钢琴" aria-label="项目名" />
+      <button id="proj-add" class="ghost" type="button">新建项目</button>
+    </div>
+    <p class="muted">项目用于归类培训与习惯任务, 归档后历史记录仍保留</p>
+  </div>`);
+  const list = card.querySelector('.proj-list');
+  if (!items.length) {
+    list.appendChild(el('<p class="muted">还没有项目。可以在录入页用快捷模板一键创建。</p>'));
+  }
+  items.forEach(p => {
+    const row = el(`<div class="proj-row">
+      <span class="proj-name">${escapeAttr(p.name)}</span>
+      <span class="proj-meta">${escapeAttr(p.project_type)}${p.coach_name ? ' · ' + escapeAttr(p.coach_name) : ''}${p.schedule_note ? ' · ' + escapeAttr(p.schedule_note) : ''}</span>
+      <button class="ghost proj-archive" type="button">归档</button>
+    </div>`);
+    row.querySelector('.proj-archive').addEventListener('click', async () => {
+      // 归档是"可恢复但会改变候选列表"的操作, 走自绘确认弹窗,
+      // 与删除作业同一套语言 (项目规则: 不用浏览器原生 confirm)。
+      const ok = await confirmDialog({
+        title: '归档项目',
+        lead: `归档「${p.name}」?`,
+        note: '历史记录会保留, 之后录入时不再出现在候选里。',
+        okText: '归档',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api('DELETE', `/projects/${p.id}`);
+        await refreshQuickAddData();
+        loadSettings();
+        toast(`已归档「${p.name}」`);
+      } catch (e) { toast('归档失败: ' + e.message); }
+    });
+    list.appendChild(row);
+  });
+  card.querySelector('#proj-add').addEventListener('click', async () => {
+    const input = card.querySelector('#proj-new-name');
+    const name = input.value.trim();
+    if (!name) { toast('先填项目名'); return; }
+    try {
+      const p = await api('POST', '/projects', { name });
+      input.value = '';
+      await refreshQuickAddData();
+      loadSettings();
+      toast(`已创建项目「${p.name}」`);
+    } catch (e) { toast('创建失败: ' + e.message); }
+  });
+  root.appendChild(card);
 }
 
 document.getElementById('btn-export').addEventListener('click', () => {

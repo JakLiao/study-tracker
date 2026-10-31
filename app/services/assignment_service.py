@@ -19,8 +19,20 @@ from ..errors import (
     FieldOutOfRangeError,
     MinutesOutOfRangeError,
     MissingFieldError,
+    ProjectNotFoundError,
+)
+from ..models import (
+    AssignmentCreate,
+    AssignmentDTO,
+    AssignmentEdit,
+    QuickAddRequest,
+    _as_date,
+    _as_datetime,
+    row_to_assignment_dto,
 )
 from .normalize import dedup_fingerprint, normalize_task_name
+from .project_service import project_exists
+from .tenant import default_family_id, ensure_default_family_child
 
 
 # ====== 解析批次 ======
@@ -94,14 +106,27 @@ def _log(conn, assignment_id: int, action: str, from_v: str | None, to_v: str | 
     )
 
 
+def dedup_scope(subject: str | None, task_kind: str, project_id: int | None) -> str:
+    """去重分组键.
+
+    学科作业按科目分组; 培训/习惯按项目分组 (没有项目时按任务类型分组)。
+    否则"篮球·运球"和"钢琴·音阶"会被当成同一天的同名任务误判重复。
+    """
+    if task_kind == "subject":
+        return f"subject:{subject}"
+    return f"{task_kind}:{project_id or 0}"
+
+
 def insert_assignments(
     batch_id: int | None, items: list[AssignmentCreate]
 ) -> tuple[list[int], list[dict]]:
     """批量入库, 自动跳过重复作业.
 
-    去重口径 (2026-09-28 用户确认): 同一科目 + 同一归属日 + 归一化后任务名相同
-    即视为重复, 静默跳过不新建。跨天同名不算重复 —— 小学生背课文常常要背好几遍,
-    跨天重复是常态。task_name 归一化能吸收全半角、大小写、空格、连字符、选做后缀的差异。
+    去重口径 (2026-09-28 用户确认, M1 扩展): 同一去重范围 + 同一归属日 + 归一化后
+    任务名相同即视为重复, 静默跳过不新建。去重范围 (scope) 见 dedup_scope:
+    学科作业按科目, 培训/习惯按项目 (无项目时按任务类型)。跨天同名不算重复 ——
+    小学生背课文常常要背好几遍, 跨天重复是常态。task_name 归一化能吸收全半角、
+    大小写、空格、连字符、选做后缀的差异。
 
     Returns:
         (created_ids, skipped) —— created_ids 顺序与 items 中未被跳过的部分一致;
@@ -140,32 +165,44 @@ def insert_assignments(
                 #   库中已有的 —— 按归属日一次捞全量, 再按 scope 分组, 避免逐条查询
                 seen: set[str] = set()
 
-                # 先把涉及的 (subject, due_date) 组合捞出来, 一次查完而不是 N 次 SELECT
-                combos: set[tuple[str, str]] = {
-                    (item.subject, item.due_date.isoformat()) for item in items
-                }
-                existing_by_combo: dict[tuple[str, str], set[str]] = {}
-                for subj, ddate in combos:
-                    rows = conn.execute(
-                        """
-                        SELECT task_name FROM assignments
-                        WHERE subject = ? AND due_date = ?
-                        """,
-                        (subj, ddate),
-                    ).fetchall()
-                    existing_by_combo[(subj, ddate)] = {
-                        normalize_task_name(r["task_name"]) for r in rows
-                    }
+                # 项目归属预校验: 越权或不存在直接拒绝, 不能把任务挂到别人家项目上
+                for item in items:
+                    if item.project_id is not None and not project_exists(
+                        conn, item.project_id, family_id
+                    ):
+                        raise ProjectNotFoundError()
+
+                # 一次捞出涉及归属日的全部任务, 按 (scope, due_date) 分组
+                due_dates = sorted({item.due_date for item in items})
+                rows = conn.execute(
+                    """
+                    SELECT task_name, subject, task_kind, project_id, due_date
+                    FROM assignments
+                    WHERE family_id = %s AND due_date = ANY(%s)
+                    """,
+                    (family_id, due_dates),
+                ).fetchall()
+                existing_by_combo: dict[tuple[str, date], set[str]] = {}
+                for r in rows:
+                    combo = (dedup_scope(r["subject"], r["task_kind"], r["project_id"]),
+                             r["due_date"])
+                    existing_by_combo.setdefault(combo, set()).add(
+                        normalize_task_name(r["task_name"])
+                    )
 
                 for item in items:
                     due_iso = item.due_date.isoformat()
                     norm = normalize_task_name(item.task_name)
-                    fp = dedup_fingerprint(item.subject, item.task_name, due_iso)
+                    scope = dedup_scope(item.subject, item.task_kind, item.project_id)
+                    fp = dedup_fingerprint(scope, item.task_name, due_iso)
+                    combo = (scope, item.due_date)
 
                     if fp in seen:
                         skipped.append({
                             "task_name": item.task_name,
                             "subject": item.subject,
+                            "task_kind": item.task_kind,
+                            "project_id": item.project_id,
                             "due_date": due_iso,
                             "reason": "本次提交内重复",
                         })
@@ -174,6 +211,8 @@ def insert_assignments(
                         skipped.append({
                             "task_name": item.task_name,
                             "subject": item.subject,
+                            "task_kind": item.task_kind,
+                            "project_id": item.project_id,
                             "due_date": due_iso,
                             "reason": "已存在相同作业",
                         })
@@ -184,8 +223,10 @@ def insert_assignments(
                         INSERT INTO assignments
                             (subject, task_name, due_date, deadline_time, is_optional,
                              est_minutes, actual_minutes, status, task_type, source_span,
-                             confidence, batch_id, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, NULL, 'todo', ?, ?, ?, ?, ?, ?)
+                             confidence, batch_id, created_at, updated_at,
+                             family_id, child_id, project_id, task_kind)
+                        VALUES (%s, %s, %s, %s, %s, %s, NULL, 'todo', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
                         """,
                         (
                             item.subject,
@@ -200,6 +241,10 @@ def insert_assignments(
                             batch_id,
                             now,
                             now,
+                            family_id,
+                            child_id,
+                            item.project_id,
+                            item.task_kind,
                         ),
                     )
                     new_id = cur.fetchone()["id"]
@@ -226,7 +271,38 @@ def insert_assignments(
     return created_ids, skipped
 
 
+def quick_add(req: QuickAddRequest) -> dict:
+    """一键添加一条常做任务 / 模板任务.
+
+    复用 insert_assignments, 因此去重、项目归属校验、完成日志都与批量入库
+    同源 —— 家长连点两下不会产生两条重复任务, 而是返回 skipped=True。
+    """
+    item = AssignmentCreate(
+        subject=req.subject,
+        task_kind=req.task_kind,
+        project_id=req.project_id,
+        task_name=req.task_name,
+        due_date=req.due_date,
+        est_minutes=req.est_minutes,
+        task_type=req.task_type,
+        source_span=req.task_name,
+        is_optional=req.is_optional,
+    )
+    created_ids, skipped = insert_assignments(None, [item])
+    if created_ids:
+        return {"created_id": created_ids[0], "skipped": False}
+    return {"created_id": None, "skipped": True, "skipped_item": skipped[0]}
+
+
 # ====== 查询 ======
+
+# 项目名随作业一起返回, 前端才能显示"钢琴 · 曲目练习"而不必再查一次项目表。
+# LEFT JOIN 而不是 INNER JOIN: 学科作业没有项目, 用 INNER 会把它们整批漏掉。
+_ASSIGNMENT_WITH_PROJECT = (
+    "SELECT a.*, p.name AS project_name "
+    "FROM assignments a LEFT JOIN projects p ON p.id = a.project_id "
+)
+
 
 def get_assignment(assignment_id: int) -> AssignmentDTO:
     family_id = default_family_id()
@@ -240,7 +316,23 @@ def get_assignment(assignment_id: int) -> AssignmentDTO:
     return row_to_assignment_dto(row)
 
 
-def list_by_date(d: date) -> list[AssignmentDTO]:
+def list_by_date(
+    d: date,
+    task_kind: str | None = None,
+    project_id: int | None = None,
+) -> list[AssignmentDTO]:
+    """某天的作业. 可选按任务类型 / 项目过滤 (任务池筛选用)."""
+    family_id = default_family_id()
+    sql = _ASSIGNMENT_WITH_PROJECT + "WHERE a.family_id = %s AND a.due_date = %s"
+    params: list[Any] = [family_id, d]
+    if task_kind is not None:
+        sql += " AND a.task_kind = %s"
+        params.append(task_kind)
+    if project_id is not None:
+        sql += " AND a.project_id = %s"
+        params.append(project_id)
+    # 排序: 学科按科目在前, 培训/习惯按项目, 同组内按 id 保持录入顺序
+    sql += " ORDER BY a.task_kind, a.subject NULLS LAST, a.project_id NULLS LAST, a.id"
     with get_conn() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
     return [row_to_assignment_dto(r) for r in rows]
@@ -405,6 +497,11 @@ def update_status(assignment_id: int, new_status: str) -> dict:
                     "UPDATE assignments SET status = %s, actual_minutes = NULL, updated_at = %s WHERE id = %s",
                     (new_status, now, assignment_id),
                 )
+                # M4: 撤销完成 = 撤销打卡。训练记录若留着, 看板会变成
+                # "待完成但已打卡 30 分"的自相矛盾状态; 与清空实耗同一个
+                # 语义 —— 这一天的完成事实被撤回了, 依附于它的记录一起撤。
+                conn.execute(
+                )
                 _log(conn, assignment_id, "edited", "actual_minutes", "null")
             else:
                 conn.execute(
@@ -480,8 +577,10 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
     若按 `is not None` 判断, 这次清空会被当成"没传"而静默忽略, 家长
     看到弹窗关了以为改成功, 刷新后截止时间又回来了。
 
-    反过来, due_date / est_minutes / task_name / subject 是 NOT NULL 列,
-    传 null 属于非法输入, 直接拒掉而不是让 SQLite 抛 IntegrityError。
+    反过来, due_date / est_minutes / task_name 是 NOT NULL 列,
+    传 null 属于非法输入, 直接拒掉而不是让 PG 抛 IntegrityError。
+    subject 自 M1 起可空: 培训/习惯任务本来就没有科目, 因此它的
+    "能不能为空"跟 task_kind 联动, 见下方归属校验。
     """
     family_id = default_family_id()
     with get_conn() as conn:
@@ -516,7 +615,31 @@ def edit_assignment(assignment_id: int, edit: AssignmentEdit) -> dict:
         if edit.est_minutes is not None:
             _put("est_minutes", edit.est_minutes, row["est_minutes"])
         if edit.due_date is not None:
-            _put("due_date", edit.due_date.isoformat(), row["due_date"])
+            _put("due_date", edit.due_date, row["due_date"])
+
+        # --- 任务归属 (M1): task_kind / subject / project_id 三者联动 ---
+        # 只看"改后的有效状态"校验, 而不是逐字段: 用户可能只改 task_kind,
+        # 此时 subject/project 沿用的是库里的值, 必须一起参与判断,
+        # 否则会出现"改成培训了但科目还挂着"的半截数据。
+        eff_kind = edit.task_kind if "task_kind" in provided else row["task_kind"]
+        eff_subject = edit.subject if "subject" in provided else row["subject"]
+        eff_project = edit.project_id if "project_id" in provided else row["project_id"]
+        if eff_kind == "subject":
+            if eff_subject is None:
+                raise MissingFieldError("学科作业必须选择科目")
+            if eff_project is not None:
+                raise BadTaskKindError("学科作业不能挂项目")
+        else:
+            if eff_subject is not None:
+                raise BadTaskKindError("培训/习惯任务不能挂科目")
+            if eff_project is not None and not project_exists(conn, eff_project, family_id):
+                raise ProjectNotFoundError()
+        if "task_kind" in provided:
+            _put("task_kind", eff_kind, row["task_kind"])
+        if "subject" in provided:
+            _put("subject", eff_subject, row["subject"])
+        if "project_id" in provided:
+            _put("project_id", eff_project, row["project_id"])
 
         # --- 可空列: 出现即写入, null 即清空 ---
         # task_type 用空串兜成 null: 表单里清空输入框传出的是 "",
@@ -682,6 +805,8 @@ def build_board_for(d: date, today: date | None = None) -> dict:
     is_late_night = datetime.now().hour < 5
     rows = list_by_date(d)
     by_subject: dict[str, list[AssignmentDTO]] = {s: [] for s in config.SUBJECTS}
+    # 培训/习惯没有科目, 单独分组; 键固定为 training/habit, 前端无需判空。
+    by_kind: dict[str, list[AssignmentDTO]] = {"training": [], "habit": []}
     optional_items: list[AssignmentDTO] = []
     done = 0
     skipped = 0
@@ -706,7 +831,12 @@ def build_board_for(d: date, today: date | None = None) -> dict:
             elif r.status == "skipped":
                 opt_skipped += 1
         else:
-            by_subject[r.subject].append(r)
+            # 学科作业进科目桶, 培训/习惯进 by_kind。subject 已可空,
+            # 不能再直接 by_subject[r.subject] —— None 会直接抛 KeyError。
+            if r.task_kind == "subject" and r.subject is not None:
+                by_subject[r.subject].append(r)
+            else:
+                by_kind.setdefault(r.task_kind, []).append(r)
             # 进度分子只数必做。原实现在这里统计全部 rows, 而下方分母
             # required 却减掉了选做 —— 分子分母不同源, 于是选做一旦完成
             # 就会把进度凭空抬高: 必做还剩 1 项没做时显示 7/7 = 100%。
@@ -735,6 +865,7 @@ def build_board_for(d: date, today: date | None = None) -> dict:
     today = today or datetime.now().astimezone().date()
     # 截止时间提醒只对"今天/未来"有意义, 看历史日期时不显示
     upcoming = list_upcoming_deadlines(today, days=7) if d >= today else []
+    # 往期逾期 (只覆盖"今天之前"的日期): 今天到点未做的条目已经在
     return {
         "date": d,
         "label": _date_label(d, today),
@@ -756,6 +887,7 @@ def build_board_for(d: date, today: date | None = None) -> dict:
             "actual_total": actual_total,
         },
         "by_subject": by_subject,
+        "by_kind": by_kind,
         "optional_items": optional_items,
         "upcoming_deadlines": upcoming,
         "has_data": len(rows) > 0,

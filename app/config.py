@@ -83,6 +83,72 @@ STATUSES = ("todo", "doing", "done", "skipped")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 TASK_TYPES = ("订正", "背诵", "预习", "阅读", "计算", "抄写", "observation", "other")
 
+# ====== 统一任务池 (M1) ======
+# 学科作业 / 培训打卡 / 习惯, 同一个 assignments 表 + 同一个看板。
+# subject 只有 task_kind=subject 时必填; 培训/习惯用 project_id 归类。
+TASK_KINDS = ("subject", "training", "habit")
+TASK_KIND_LABELS = {"subject": "学科", "training": "培训", "habit": "习惯"}
+
+# 项目模板: 建项目 + 一键生成默认任务用的预设 (不是固定枚举, 家长可自建 custom 项目)。
+# 每个模板的 tasks 就是"低摩擦录入"的默认清单 —— 点一下直接入库, 不用再手打。
+PROJECT_TEMPLATES: tuple[dict, ...] = (
+    {
+        "key": "piano",
+        "label": "钢琴",
+        "task_kind": "training",
+        "project_type": "piano",
+        "default_name": "钢琴",
+        "tasks": (
+            {"task_name": "基本功（音阶/哈农）", "est_minutes": 10, "task_type": "练习"},
+            {"task_name": "曲目练习", "est_minutes": 20, "task_type": "练习"},
+        ),
+    },
+    {
+        "key": "basketball",
+        "label": "篮球",
+        "task_kind": "training",
+        "project_type": "basketball",
+        "default_name": "篮球",
+        "tasks": (
+            {"task_name": "运球练习", "est_minutes": 15, "task_type": "练习"},
+            {"task_name": "投篮练习", "est_minutes": 15, "task_type": "练习"},
+        ),
+    },
+    {
+        "key": "badminton",
+        "label": "羽毛球",
+        "task_kind": "training",
+        "project_type": "badminton",
+        "default_name": "羽毛球",
+        "tasks": (
+            {"task_name": "挥拍练习", "est_minutes": 10, "task_type": "练习"},
+            {"task_name": "步法练习", "est_minutes": 10, "task_type": "练习"},
+        ),
+    },
+    {
+        "key": "reading",
+        "label": "阅读",
+        "task_kind": "habit",
+        "project_type": "reading",
+        "default_name": "每日阅读",
+        "tasks": (
+            {"task_name": "课外阅读", "est_minutes": 20, "task_type": "阅读"},
+        ),
+    },
+    {
+        "key": "habit",
+        "label": "每日习惯",
+        "task_kind": "habit",
+        "project_type": "habit",
+        "default_name": "每日习惯",
+        "tasks": (
+            {"task_name": "整理书包", "est_minutes": 5, "task_type": "other"},
+            {"task_name": "练字", "est_minutes": 10, "task_type": "抄写"},
+            {"task_name": "跳绳", "est_minutes": 10, "task_type": "other"},
+        ),
+    },
+)
+
 # task_type 关键词兜底表 (功能设计 §7.2 规划项, 此前未实现).
 # AI 没给 task_type (或给 other) 时, 按这个顺序在 task_name / source_span 里找第一个命中词.
 # 顺序有讲究: 具体动作词排前面, "阅读" 这种泛词排最后 ——

@@ -119,6 +119,14 @@
         <rect x="10.25" y="9" width="3.5" height="8.8" rx="1.4" fill="currentColor" opacity=".8" />
         <rect x="14.9" y="5.4" width="3.5" height="12.4" rx="1.4" fill="currentColor" />
       </symbol>
+      <!-- 周计划: 七日格子 + 两天有安排的点 -->
+        <rect x="3" y="5" width="18" height="15" rx="3" fill="none"
+              stroke="currentColor" stroke-width="1.8" />
+        <path d="M3 9.5h18M7.5 9.5v10.5M12 9.5v10.5M16.5 9.5v10.5" fill="none"
+              stroke="currentColor" stroke-width="1.4" opacity=".7" />
+        <circle cx="7.5" cy="13.2" r="1.15" fill="currentColor" />
+        <circle cx="12" cy="16.4" r="1.15" fill="currentColor" opacity=".55" />
+      </symbol>
       <!-- 设置: 推子 (调节 = 配置。比齿轮少一圈锯齿, 20px 下更清楚) -->
       <symbol id="i-tab-settings" viewBox="0 0 24 24">
         <path d="M3.6 8.2h9.2M18.4 8.2h2M3.6 15.8h3.2M12.4 15.8h8" fill="none"
@@ -178,6 +186,30 @@
         </label>
         <span class="muted">AI 识别出日期的行会自动填写, 识别不出的需你确认</span>
       </div>
+
+      <!-- 快速添加 (M1 统一任务池): 常做的培训/习惯任务不该每次都走 AI 解析.
+           模板点一下就把整套默认任务加进当天清单, 重复点击会被后端去重。 -->
+      <div class="card quick-add">
+        <div class="card-title">快速添加<span class="count">常做任务</span></div>
+        <div class="quick-kinds" id="qa-kinds" role="group" aria-label="任务来源">
+          <button type="button" class="qa-kind active" data-kind="subject">学科作业</button>
+          <button type="button" class="qa-kind" data-kind="training">培训</button>
+          <button type="button" class="qa-kind" data-kind="habit">习惯</button>
+        </div>
+        <div class="quick-row" id="qa-subject-row">
+          <select id="qa-subject" aria-label="科目">
+            <option>语文</option><option>数学</option><option>英语</option>
+          </select>
+        </div>
+        <div class="quick-row" id="qa-project-row" hidden></div>
+        <div class="quick-row">
+          <input id="qa-name" placeholder="任务名, 如 曲目练习" aria-label="任务名" />
+          <input id="qa-est" type="number" min="1" max="180" value="15" inputmode="numeric" aria-label="预计用时" />
+          <button id="qa-add" class="primary" type="button">添加</button>
+        </div>
+        <div id="qa-templates" class="quick-templates"></div>
+      </div>
+
       <textarea id="raw-text" rows="10" placeholder="把老师发的通知原文整段粘进来"></textarea>
       <div class="row entry-tools">
         <button id="btn-fill-sample" class="ghost" type="button">填入示例</button>
@@ -241,6 +273,12 @@
         </div>
       </div>
       <div id="list-content"></div>
+    </section>
+
+         一周 7 天: 固定课表 + 计划项 + 当天真实任务的负荷合成。
+         这一页回答的是"这周哪天最满、有没有时间段撞车",
+         而不是再列一遍作业 —— 作业在「看板」里。 -->
+      <div id="week-content"></div>
     </section>
 
     <!-- ====== 复盘 ====== -->

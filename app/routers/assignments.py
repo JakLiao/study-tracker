@@ -12,6 +12,7 @@ from ..models import (
     BatchCreateResponse,
     CompletionPatch,
     OptionalPatch,
+    QuickAddRequest,
     SkippedAssignment,
     StatusPatch,
 )
@@ -30,10 +31,20 @@ def batch_create(req: BatchCreateRequest) -> BatchCreateResponse:
     )
 
 
+@router.post("/assignments/quick")
+def quick_add(req: QuickAddRequest) -> dict:
+    """一键添加单条任务 (常做任务 / 项目模板). 重复添加返回 skipped=True."""
+    return assignment_service.quick_add(req)
+
+
 @router.get("/assignments")
-def list_assignments(date: str = Query(...)) -> dict:
+def list_assignments(
+    date: str = Query(...),
+    task_kind: str | None = Query(None, description="subject / training / habit"),
+    project_id: int | None = Query(None),
+) -> dict:
     d = assignment_service.parse_date_param(date)
-    items = assignment_service.list_by_date(d)
+    items = assignment_service.list_by_date(d, task_kind=task_kind, project_id=project_id)
     return {"date": d.isoformat(), "items": [i.model_dump(mode="json") for i in items]}
 
 
