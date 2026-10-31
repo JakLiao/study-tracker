@@ -1236,23 +1236,36 @@ tr.is-optional .muted {
 }
 .deadline-warn strong { color: var(--status-overdue); margin-right: var(--space-2); }
 
+/* ===== 14b. 已逾期 (M2 执行台) =====
    往期逾期区与"未来到期"同一块版式, 但更强调: 深一级的红边 + 任务名带
    删除线的视觉重量, 让家长一眼分清"还没到点"和"已经错过"。
+   行内的 .overdue-tag 是当日逾期 (今天到点还没做) 的标记。 */
+.overdue-warn {
   border-color: rgba(220, 38, 38, 0.45);
   border-left-width: 4px;
 }
+.overdue-warn .overdue-name { color: var(--text-2); }
+.overdue-warn .overdue-link {
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
 }
+.overdue-warn .overdue-link:hover,
+.overdue-warn .overdue-link:focus-visible { color: var(--status-overdue); }
+.overdue-warn .overdue-when {
+  color: var(--status-overdue);
   font-size: var(--fs-caption-sm);
   margin-left: var(--space-1);
 }
+.overdue-tag {
   display: inline-flex;
   align-items: center;
   padding: 0 5px;
   border-radius: var(--radius-sm);
+  border: 1px solid var(--status-overdue);
+  color: var(--status-overdue);
+  background: var(--status-overdue-soft);
   font-size: var(--fs-caption-sm);
   font-weight: 600;
   white-space: nowrap;
@@ -3080,6 +3093,7 @@ footer {
   font-size: var(--fs-body-s);
 }
 .dw-stats strong { color: var(--text-1); font-size: var(--fs-body); }
+.dw-overdue, .dw-overdue strong { color: var(--status-overdue); }
 .dw-suggest {
   margin: var(--space-2) 0 0;
   padding-left: 1.2em;
@@ -3258,6 +3272,7 @@ footer {
   font-weight: 600;
 }
 .week-badge.warn { background: #FDF0DC; color: #8A5A0B; }
+.week-badge.danger { background: var(--status-overdue-soft); color: var(--status-overdue); }
 
 /* 课表 / 计划项 chips: 一行能放几条就放几条, 放不下换行。
    两者用不同底色区分来源 —— 课表是紫色(培训色), 计划项是中性浅底;
@@ -3284,6 +3299,8 @@ footer {
 .week-conflict {
   padding: 2px var(--space-2);
   border-radius: var(--radius-sm);
+  background: var(--status-overdue-soft);
+  color: var(--status-overdue);
   font-size: var(--fs-caption-sm);
 }
 
@@ -3315,6 +3332,7 @@ footer {
    那会让列表里每一行都跳出一块红, 反而看不出哪一行真要删。
    红描边 + 同样的白底已经足够说清"这颗键后果不一样"。 */
 .manage-ops .danger { background: var(--surface); }
+.manage-ops .danger:hover:not(:disabled) { background: var(--status-overdue-soft); }
 
 /* 星期多选: 七个勾选框铺成一行, 点区域整块可点 (不只是小方块)。
    用 label 包 input, 所以点文字也能勾。 */

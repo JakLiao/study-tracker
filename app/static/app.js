@@ -553,11 +553,17 @@ async function loadBoard() {
     // 家长不翻回那一天就永远看不到。放在截止提醒之后、科目卡片之前 ——
     // 它比"未来要做"更紧急, 但今天卡片里的行内标记已经覆盖当日逾期,
     // 所以这里只列往期, 不重复。
+    if (b.overdue_items && b.overdue_items.length) {
       // 任务名可点: 提醒只说"有一条逾期了", 若不给出处理入口, 家长还
       // 得自己去日历上翻是哪一天。点一下直接切到那天的看板, 在那里
       // 完成 / 顺延 / 跳过, 闭环才算走完。
+      const items = b.overdue_items.map(d =>
         `${taskTagHtml(d)}
+         <span class="overdue-name overdue-link" data-date="${escapeAttr(d.due_date)}" role="button" tabindex="0" title="切到 ${escapeAttr(d.due_date)} 这天处理">${escapeAttr(d.task_name)}</span>
+         <span class="overdue-when">截止 ${fmtDateTime(d.deadline_time)}</span>`
       ).join('<br/>');
+      const box = el(`<div class="deadline-warn overdue-warn"><strong>⚠ 已逾期 ${b.overdue_items.length} 项</strong>${items}</div>`);
+      box.querySelectorAll('.overdue-link').forEach(link => {
         const goto = () => { _boardDate = link.dataset.date; loadBoard(); };
         link.addEventListener('click', goto);
         link.addEventListener('keydown', (e) => {
@@ -644,6 +650,7 @@ const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
       <div class="dw-stats">
         <span>完成 <strong>${s.done || 0}</strong>/<strong>${s.required || 0}</strong></span>
         <span>用时 <strong>${s.actual_total || 0}</strong> 分</span>
+        <span class="${s.overdue_count ? 'dw-overdue' : ''}">逾期 <strong>${s.overdue_count || 0}</strong></span>
       </div>
       <ul class="dw-suggest">${suggestions}</ul>
       <div class="dw-questions">
@@ -823,6 +830,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
       </div>
       <div class="row-foot">
         <div class="row-meta">
+          ${item.is_overdue ? '<span class="overdue-tag">已逾期</span>' : ''}
           ${item.deadline_time ? `<span>⏰ ${fmtDateTime(item.deadline_time)}</span>` : ''}
           ${item.task_type ? `<span>类型: ${item.task_type}</span>` : ''}
           ${confidencePill(item.confidence)}

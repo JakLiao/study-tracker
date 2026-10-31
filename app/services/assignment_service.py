@@ -465,7 +465,41 @@ def list_upcoming_deadlines(today: date, days: int = 7) -> list[AssignmentDTO]:
               AND a.status != 'done'
             ORDER BY a.deadline_time, a.id
             """,
-            (today.isoformat(), end.isoformat()),
+            (family_id, today, end),
+        ).fetchall()
+    return [row_to_assignment_dto(r) for r in rows]
+
+
+def list_overdue_items(today: date, limit: int = 20) -> list[AssignmentDTO]:
+    """已过截止时间但还没收尾的任务 (M2 执行台).
+
+    为什么要单独列出来: 截止提醒原先只查"未来 7 天", 一条作业一旦错过
+    截止就从提醒区消失了 —— 恰恰是最容易被家长漏掉、也最该被看见的那条。
+    这里补上"往期逾期", 与今日看板的行内标记共同覆盖:
+      - 今天的作业逾期了 -> 行内标红 (在 by_subject/by_kind 里, 不重复列)
+      - 前几天的作业逾期了 -> 本提醒区, 否则家长翻不到那天就永远忘了
+    口径:
+      - 只取 todo/doing: done 已完成, skipped 是家长主动"今天不做"。
+      - 只看最近 30 天, 再按截止时间倒序取 20 条。不设窗口的话, 历史
+        里所有没点完成的旧任务都会挤进来, 提醒区会变成一条无底洞。
+    """
+    family_id = default_family_id()
+    since = today - timedelta(days=30)
+    now = datetime.now()
+    with get_conn() as conn:
+        rows = conn.execute(
+            _ASSIGNMENT_WITH_PROJECT
+            + """
+            WHERE a.family_id = %s
+              AND a.deadline_time IS NOT NULL
+              AND a.deadline_time < %s
+              AND a.deadline_time::date < %s
+              AND a.deadline_time::date >= %s
+              AND a.status IN ('todo', 'doing')
+            ORDER BY a.deadline_time DESC, a.id DESC
+            LIMIT %s
+            """,
+            (family_id, now, today, since, limit),
         ).fetchall()
     return [row_to_assignment_dto(r) for r in rows]
 
@@ -866,6 +900,8 @@ def build_board_for(d: date, today: date | None = None) -> dict:
     # 截止时间提醒只对"今天/未来"有意义, 看历史日期时不显示
     upcoming = list_upcoming_deadlines(today, days=7) if d >= today else []
     # 往期逾期 (只覆盖"今天之前"的日期): 今天到点未做的条目已经在
+    # by_subject/by_kind 里, 由行内 is_overdue 标记, 不在这里重复列。
+    overdue = list_overdue_items(today) if d >= today else []
     return {
         "date": d,
         "label": _date_label(d, today),
@@ -890,6 +926,7 @@ def build_board_for(d: date, today: date | None = None) -> dict:
         "by_kind": by_kind,
         "optional_items": optional_items,
         "upcoming_deadlines": upcoming,
+        "overdue_items": overdue,
         "has_data": len(rows) > 0,
     }
 

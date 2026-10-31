@@ -127,6 +127,7 @@ class AssignmentDTO(BaseModel):
     updated_at: datetime
     # 已过截止时间且仍未收尾 (M2 执行台). 计算字段, 不落库: 判定依赖
     # "现在", 存进 DTO 才能让看板与列表用同一口径显示逾期标记。
+    is_overdue: bool = False
 
 
 # ====== 看板 ======
@@ -561,11 +562,13 @@ def row_to_assignment_dto(row) -> AssignmentDTO:
         source_span=row["source_span"] or "",
         confidence=row["confidence"],
         batch_id=row["batch_id"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-        updated_at=datetime.fromisoformat(row["updated_at"]),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+        is_overdue=_is_overdue(row["deadline_time"], row["status"]),
     )
 
 
+def _is_overdue(deadline_time, status) -> bool:
     """截止时间已过且任务尚未收尾.
 
     口径:
