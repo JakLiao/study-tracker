@@ -3837,25 +3837,47 @@ function renderWeekPlan(root, w) {
   root.appendChild(bar);
 
   const t = w.totals;
-  root.appendChild(el(`<div class="card week-summary">
+  const summary = el(`<div class="card week-summary">
     <div class="card-title">本周负荷<span class="count">${md(w.week_start)} ~ ${md(w.week_end)}</span></div>
     <div class="week-stats">
       <div class="week-stat"><strong>${t.load_minutes}</strong><span>总负荷(分)</span></div>
-      <div class="week-stat"><strong>${t.slot_minutes}</strong><span>课表(分)</span></div>
+      <button type="button" class="week-stat" id="week-manage-slots" title="管理固定课表">
+        <strong>${t.slot_minutes}</strong><span>课表(分) · <u>管理</u></span>
+      </button>
       <div class="week-stat ${t.overloaded_days ? 'warn' : ''}"><strong>${t.overloaded_days}</strong><span>超载天数</span></div>
       <div class="week-stat ${t.conflict_days ? 'warn' : ''}"><strong>${t.conflict_days}</strong><span>冲突天数</span></div>
     </div>
-  </div>`));
-
-  const actions = el(`<div class="week-actions">
-    <button type="button" class="primary" id="week-generate">生成本周任务</button>
-    <button type="button" class="secondary" id="week-manage-slots">管理课表</button>
-    <button type="button" class="secondary" id="week-manage-plans">周计划项</button>
   </div>`);
-  actions.querySelector('#week-generate').addEventListener('click', () => generateWeekTasks(w));
-  actions.querySelector('#week-manage-slots').addEventListener('click', () => openScheduleManager());
-  actions.querySelector('#week-manage-plans').addEventListener('click', () => openPlanItemManager());
-  root.appendChild(actions);
+  summary.querySelector('#week-manage-slots').addEventListener('click', () => openScheduleManager());
+  root.appendChild(summary);
+
+  // 业务流只有两步: 先定「周计划项」(每周重复的任务模板), 再「生成本周任务」
+  // (把它们展开成这周的作业)。原来的三颗平级按钮看不出先后, 课外课表还
+  // 夹在中间像是流程的一环 —— 它其实是另一件事(只影响负荷统计), 所以入口
+  // 挪到上面的「课表(分)」格子里, 这里只留这条流。
+  const planCount = w.plan_items.length;
+  // 「待生成」只算今天及以后: 生成动作不会回填过去的日期, 把过去的
+  // 待生成分钟数算进来会让按钮旁边的提示永远显示有活可干, 却点了没反应。
+  const pending = w.days
+    .filter(d => d.date >= w.today)
+    .reduce((s, d) => s + d.plan_pending_minutes, 0);
+  const flow = el(`<div class="week-flow">
+    <div class="week-flow-step">
+      <span class="week-flow-no">1</span>
+      <button type="button" class="secondary" id="week-manage-plans">周计划项</button>
+      <span class="week-flow-hint">${planCount ? `${planCount} 项模板` : '还没有模板'}</span>
+    </div>
+    <span class="week-flow-arrow" aria-hidden="true">→</span>
+    <div class="week-flow-step">
+      <span class="week-flow-no">2</span>
+      <button type="button" class="primary" id="week-generate">生成本周任务</button>
+      <span class="week-flow-hint">${pending ? `待生成 ${pending} 分` : '没有待生成'}</span>
+    </div>
+  </div>`);
+  flow.querySelector('#week-generate').addEventListener('click', () => generateWeekTasks(w));
+  flow.querySelector('#week-manage-plans').addEventListener('click', () => openPlanItemManager());
+  root.appendChild(flow);
+  root.appendChild(el('<p class="week-flow-note">课外课表在上面的「课表(分)」里单独维护, 只影响负荷统计, 不参与生成。</p>'));
 
   const days = el('<div class="week-days"></div>');
   w.days.forEach(d => days.appendChild(weekDayCard(d)));
@@ -3907,7 +3929,7 @@ async function generateWeekTasks(w) {
     } else if (r.skipped_count) {
       toast('这些任务都已经在任务池里了');
     } else {
-      toast('还没有周计划项, 先点「周计划项」添加');
+      toast('还没有周计划项, 先在第 1 步添加模板');
     }
     await loadWeekPlan();
   } catch (e) {

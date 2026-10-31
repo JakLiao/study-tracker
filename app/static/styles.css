@@ -3228,11 +3228,82 @@ footer {
 .week-stat.warn { background: var(--warn-soft); }
 .week-stat.warn strong { color: var(--warn-ink); }
 
-.week-actions {
+/* 「课表(分)」格子本身是课表管理的入口 —— 课外课表是另一件事
+   (只影响负荷统计), 不该挤在下面的生成流程里, 但放在它影响的那个
+   数字旁边, 家长看到 270 分钟自然知道去哪儿改。
+   虚线边框 + 指针表达"这一格可点": 另外三格是只读数字, 描边实线,
+   一眼能分出哪个是入口。 */
+button.week-stat {
+  border: 1px dashed var(--text-3);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+}
+button.week-stat:hover { border-color: var(--text-2); }
+button.week-stat span { color: var(--text-2); }
+
+/* ===== 周计划动作区: 一条两步业务流 =====
+   「周计划项 → 生成本周任务」是先后关系, 不是并列关系, 所以用序号 +
+   箭头把先后画出来。原来的三颗平级按钮看不出该先点哪个, 家长多半
+   先点了「生成本周任务」再发现没有计划项, 白跑一趟。 */
+.week-flow {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.week-flow-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+.week-flow-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption-sm);
+  font-weight: 700;
+}
+.week-flow-hint {
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+}
+.week-flow-arrow {
+  color: var(--text-2);
+  font-size: var(--fs-body-s);
+}
+.week-flow-note {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+}
+
+/* 窄屏 (375px 实测):
+   1. 负荷卡四宫格每格只剩 ~77px, 「课表(分) · 管理」被迫折成两行, 底边
+      比另外三格低一截, 四宫格参差不齐。改 2×2, 每格 ~162px, 题注单行
+      放得下, 四个底边重新对齐。
+   2. 两步流程在 375px 换行后, 箭头孤零零留在第一行行尾, 与第二行的
+      ② 接不上。改成竖排, 箭头转 90° 指向下方, 先后关系仍然连着。 */
+@media (max-width: 480px) {
+  .week-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .week-flow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .week-flow-arrow { transform: rotate(90deg); }
+  .week-flow-step { width: 100%; }
 }
 
 /* 7 天卡: 桌面 4 列 (7 格排成两行), 窄屏 1 列。
