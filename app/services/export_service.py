@@ -95,6 +95,7 @@ def export_all() -> bytes:
             # M3: 晚间三问是周报归因的唯一来源, 不导出的话换机后
             # "孩子为什么慢" 的那一半数据就丢了。
             reflections = [dict(r) for r in conn.execute(
+                "SELECT * FROM daily_reflections WHERE family_id = %s ORDER BY reflect_date, id",
                 (family_id,),
             ).fetchall()]
             # M4: 训练打卡是训练线周报的唯一数据源, 换机后丢了就接不上
@@ -122,6 +123,7 @@ def export_all() -> bytes:
             "parsed_batches": batches,
             "completion_logs": logs,
             "settings": settings,
+            "daily_reflections": reflections,
         }
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
     except Exception as e:

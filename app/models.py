@@ -469,6 +469,7 @@ class PlanItemPatch(BaseModel):
         return None if v is None else _norm_weekdays(v)
 
 
+# ====== 每日三问 (M3 日结) ======
 ReflectionDifficulty = Literal["easy", "ok", "hard"]
 ReflectionFocus = Literal["good", "ok", "bad"]
 ReflectionMood = Literal["good", "ok", "bad"]

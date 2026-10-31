@@ -15,6 +15,7 @@ from .errors import AppError, error_payload
 from .routers import analytics as analytics_router
 from .routers import assignments as assignments_router
 from .routers import board as board_router
+from .routers import daily_wrap as daily_wrap_router
 from .routers import export as export_router
 from .routers import health as health_router
 from .routers import parse as parse_router
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(assignments_router.router)
     app.include_router(projects_router.router)
     app.include_router(board_router.router)
+    app.include_router(daily_wrap_router.router)
     app.include_router(analytics_router.router)
     app.include_router(settings_router.router)
     app.include_router(export_router.router)

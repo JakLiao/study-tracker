@@ -464,6 +464,7 @@ async function loadBoard() {
       if (go) go.addEventListener('click', () => switchTab('entry'));
       // 没作业的日子也能记心情: 孩子今天状态如何, 与做没做作业无关。
       // 只限今天 —— 翻历史日期时不该出现"今晚小结"。
+      if (b.is_today) renderDailyWrap(root, b.date);
       return;
     }
     // 进度条 (2026-09-28 口径: 跳过算已收尾, 分母排除选做)
@@ -601,29 +602,39 @@ async function loadBoard() {
       root.appendChild(optionalGroupCard(b.optional_items, null));
     }
     // 晚间小结 (M3 日结): 只放在"今天", 是每晚的固定收尾动作。
+    if (b.is_today) renderDailyWrap(root, b.date);
   } catch (e) {
     root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
   }
   if (scroller) scroller.scrollTop = _boardScroll;
 }
 
+// ====== 晚间小结 (M3 日结) ======
 // 三问用固定档位按钮而不是滑杆/原生 select:
 //   - 家长晚上已经累了, 三个表情点一下完事;
 //   - 固定档位才能被周报按"难度=难 / 专注=差 / 情绪=烦"聚合, 滑杆还要分桶。
 // 1–2 年级由后端 mode=lite 少问一题(专注), 前端只按返回的 mode 渲染。
+const DW_DIFFICULTY = [['easy', '轻松'], ['ok', '刚好'], ['hard', '有点难']];
 const DW_FOCUS = [['good', '很专心'], ['ok', '一般'], ['bad', '容易分心']];
 const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
 
+function renderDailyWrap(root, date) {
+  const box = el('<div class="daily-wrap-slot"></div>');
   root.appendChild(box);
+  loadDailyWrap(box, date);
 }
 
+async function loadDailyWrap(box, date) {
   try {
+    const w = await api('GET', `/daily-wrap?date=${date}`);
+    paintDailyWrap(box, w);
   } catch (e) {
     // 小结失败不该把整张看板拖垮: 它只是收尾卡片, 静默隐藏即可。
     box.innerHTML = '';
   }
 }
 
+function dwChoicesHtml(q, label, options, selected) {
   const btns = options.map(([v, text]) =>
     `<button type="button" class="dw-choice${selected === v ? ' active' : ''}" ` +
     `data-q="${q}" data-v="${v}" aria-pressed="${selected === v}">${text}</button>`
@@ -632,6 +643,7 @@ const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
     `<div class="dw-choices">${btns}</div></div>`;
 }
 
+function paintDailyWrap(box, w) {
   const s = w.summary || {};
   const r = w.reflection || {};
   const lite = w.mode === 'lite';
@@ -645,6 +657,7 @@ const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
   const suggestions = (w.suggestions || [])
     .map(t => `<li>${escapeAttr(t)}</li>`).join('');
   const card = el(`
+    <div class="card daily-wrap">
       <div class="card-title">今晚小结<span class="count">1 分钟知道今天</span></div>
       <div class="dw-headline">${escapeAttr(w.headline || '')}</div>
       <div class="dw-stats">
@@ -654,6 +667,9 @@ const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
       </div>
       <ul class="dw-suggest">${suggestions}</ul>
       <div class="dw-questions">
+        ${dwChoicesHtml('difficulty', '今天难度', DW_DIFFICULTY, selected.difficulty)}
+        ${lite ? '' : dwChoicesHtml('focus', '今天专注', DW_FOCUS, selected.focus)}
+        ${dwChoicesHtml('mood', '今天情绪', DW_MOOD, selected.mood)}
       </div>
       <input class="dw-note" maxlength="200" aria-label="今晚备注"
              placeholder="想记一句？比如：数学卡在应用题"
@@ -691,6 +707,8 @@ const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
     // 低年级两问版没有专注一题; 用户在普通模式没点专注时也不强制。
     if (!lite && selected.focus) payload.focus = selected.focus;
     try {
+      const nw = await api('POST', '/daily-wrap', payload);
+      paintDailyWrap(box, nw);
       toast('已记录今晚小结');
     } catch (e) {
       toast('保存失败: ' + e.message);

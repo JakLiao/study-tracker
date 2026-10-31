@@ -3080,6 +3080,8 @@ footer {
    一句话结论 -> 三个数字 -> 建议 -> 三问 -> 备注。
    三问用 pill 按钮而不是滑杆: 家长晚上已经很累, 点一下就行;
    选中态用主色浅底(accent-soft), 不抢"进度条"的主角地位。 */
+.daily-wrap-slot { margin-top: var(--space-3); }
+.daily-wrap .dw-headline {
   margin: var(--space-2) 0 var(--space-1);
   font-size: var(--fs-h2);
   font-weight: 600;
