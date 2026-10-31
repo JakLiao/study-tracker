@@ -3047,16 +3047,19 @@ async function loadReview(period) {
   // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上
   // 留着一行永远不消失的"加载中…"。
   root.innerHTML = '';
-  // 周报固定是本周, 不随上面的周期按钮变 —— 它回答"这周过得怎么样",
-  // 是整体结论; 下面两块才是可以来回切换的统计区间。
-  const reportP = loadWeeklyReport();
+  // 周报只在本周出现: 它回答的是"这周过得怎么样", 而 /weekly-report 永远
+  // 算的是本周。切到「上周」「本月」时下面的统计区间已经换了, 再挂一份
+  // 本周周报会让人以为那些数字属于当前所选区间 —— 所以非本周一律不展示
+  // (连请求都不发, 免得白拉一次数据)。
+  const reportP = period === 'current' ? loadWeeklyReport() : Promise.resolve(null);
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
   // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
   const timeP = loadReviewTime(period).catch(
     e => el(`<div class="error-banner">用时统计加载失败: ${e.message}</div>`));
   const devP = loadReviewDeviation(period);
-  root.appendChild(await reportP);
+  const report = await reportP;
+  if (report) root.appendChild(report);
   root.appendChild(await timeP);
   root.appendChild(await devP);
 }
