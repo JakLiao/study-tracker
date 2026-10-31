@@ -535,6 +535,7 @@ def update_status(assignment_id: int, new_status: str) -> dict:
                 # "待完成但已打卡 30 分"的自相矛盾状态; 与清空实耗同一个
                 # 语义 —— 这一天的完成事实被撤回了, 依附于它的记录一起撤。
                 conn.execute(
+                    "DELETE FROM training_logs WHERE assignment_id = %s", (assignment_id,)
                 )
                 _log(conn, assignment_id, "edited", "actual_minutes", "null")
             else:

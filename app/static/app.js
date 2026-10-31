@@ -439,6 +439,8 @@ async function loadBoard() {
     if (!_boardDate) _boardDate = b.date;
     // M4 训练打卡: 看板一次带回当天每条任务的打卡记录 (键为 assignment_id),
     // 挂到 item 上让行内直接渲染"练了多久 / 几组 × 几次", 不必逐行请求。
+    const tlogs = b.training_logs || {};
+    const attachLogs = arr => (arr || []).forEach(i => { i.training_log = tlogs[i.id] || null; });
     attachLogs((b.by_kind || {}).training);
     attachLogs((b.by_kind || {}).habit);
     attachLogs(b.optional_items);
@@ -719,6 +721,7 @@ function paintDailyWrap(box, w) {
   box.appendChild(card);
 }
 
+// ====== 训练打卡 (M4) ======
 // F18: 练琴/体育的 30 秒打卡 —— 时长 + 组数/次数 + 曲目段落。
 // 只对 task_kind=training 开放: 学科作业的"完成"走状态接口, 习惯打卡
 // 是另一条范围, 混进来会让打卡数据失去"训练"这个限定。
@@ -736,7 +739,9 @@ function trainingLogSummary(log) {
   return parts.join(' · ');
 }
 
+function openTrainingLogModal(item, refresh) {
   if (_modalCloser) return;                 // 已有弹窗在等确认, 别覆盖它
+  const log = item.training_log || null;
   const m = document.getElementById('modal');
   document.getElementById('modal-title').textContent =
     `训练打卡 · ${item.project_name || '训练'}`;
@@ -748,6 +753,7 @@ function trainingLogSummary(log) {
       <label>
         <span class="form-label">练习时长</span>
         <span class="form-field">
+          <input id="tl-duration" type="number" min="0" max="240" inputmode="numeric" value="${dur}" />
           <span class="form-hint">分钟; 打卡后任务自动记为完成</span>
         </span>
       </label>
@@ -791,6 +797,7 @@ function trainingLogSummary(log) {
     mode: 'confirm',
     okText: log ? '更新打卡' : '打卡',
     onOk: async () => {
+      const duration = parseInt(document.getElementById('tl-duration').value, 10);
       if (!Number.isFinite(duration) || duration < 0 || duration > 240) {
         toast('练习时长需在 0~240 分钟');
         return;
@@ -819,6 +826,7 @@ function trainingLogSummary(log) {
       }
     },
   });
+  document.getElementById('tl-duration').focus();
 }
 
 // 渲染任务行 (设计文档 §5.1 + §9 4 个坑)
@@ -854,6 +862,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
           ${confidencePill(item.confidence)}
           ${item.source_span ? `<span class="source-link" data-action="show-source">原文</span>` : ''}
           ${item.actual_minutes != null ? `<span class="actual-tag">实际用时 <strong>${item.actual_minutes}</strong> 分</span>` : ''}
+          ${item.training_log ? `<span class="training-tag">打卡 ${escapeAttr(trainingLogSummary(item.training_log))}</span>` : ''}
         </div>
         ${withStatus ? '<div class="row-actions"></div>' : ''}
       </div>
@@ -902,6 +911,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
       // 再留一个纯「完成」按钮会让人以为不打卡也能收尾 —— 那样训练线
       // 周报就没有数据可写, 打卡率也无从统计。
       const b = el('<button class="status-btn training" aria-label="训练打卡">打卡</button>');
+      b.addEventListener('click', () => openTrainingLogModal(item, refresh));
       actions.appendChild(b);
     } else {
     const b = el(`<button class="status-btn done" aria-label="标记为已完成">` +
@@ -915,6 +925,7 @@ function renderAssignment(item, withStatus, onChange, focusActualFor) {
     // (后端在 done->todo 时会连打卡记录一起删, 两者语义一致)。
     if (item.task_kind === 'training') {
       const b = el('<button class="status-btn training" aria-label="修改打卡记录">改打卡</button>');
+      b.addEventListener('click', () => openTrainingLogModal(item, refresh));
       actions.appendChild(b);
     }
     // 重做: done -> todo。

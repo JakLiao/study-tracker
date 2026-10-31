@@ -294,6 +294,7 @@ class QuickAddRequest(BaseModel):
         return self
 
 
+# ====== 训练打卡 (M4) ======
 class TrainingLogSave(BaseModel):
     """训练打卡: 时长 + 组数/次数 + 曲目段落.
 

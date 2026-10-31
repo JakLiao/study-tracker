@@ -100,6 +100,8 @@ def export_all() -> bytes:
             ).fetchall()]
             # M4: 训练打卡是训练线周报的唯一数据源, 换机后丢了就接不上
             # "这周练了几次、曲子推进到哪一段"。
+            training_logs = [dict(r) for r in conn.execute(
+                "SELECT * FROM training_logs WHERE family_id = %s ORDER BY log_date, id",
                 (family_id,),
             ).fetchall()]
             # M5: 课表与周计划项是"每周节奏"的配置, 换机后不导出就得重排一遍。
@@ -117,6 +119,7 @@ def export_all() -> bytes:
                 "logs": len(logs),
                 "settings": len(settings),
                 "reflections": len(reflections),
+                "training_logs": len(training_logs),
             },
             "assignments": assignments,
             "projects": projects,
@@ -124,6 +127,7 @@ def export_all() -> bytes:
             "completion_logs": logs,
             "settings": settings,
             "daily_reflections": reflections,
+            "training_logs": training_logs,
         }
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
     except Exception as e:

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query
 
-from ..services import assignment_service
+from ..services import assignment_service, training_service
 
 router = APIRouter(prefix="/api", tags=["board"])
 
@@ -41,6 +41,7 @@ def _serialize(board: dict) -> dict:
         "overdue_items": [x.model_dump(mode="json") for x in board["overdue_items"]],
         # M4 训练打卡: 按 assignment_id 给出当天的打卡记录, 前端在训练任务行
         # 上直接显示"练了多久 / 几组 × 几次", 不必每行再请求一次。
+        "training_logs": training_service.logs_by_assignment(board["date"]),
         "has_data": board["has_data"],
     }
 
