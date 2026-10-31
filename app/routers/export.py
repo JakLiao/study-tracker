@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Response
 
 from ..services import export_service
 from ..services.assignment_service import parse_date_param
+from ..services.report_service import _today
 
 router = APIRouter(prefix="/api", tags=["export"])
 

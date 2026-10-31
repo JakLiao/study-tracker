@@ -3049,20 +3049,24 @@ async function loadReview(period) {
   root.innerHTML = '';
   // 周报固定是本周, 不随上面的周期按钮变 —— 它回答"这周过得怎么样",
   // 是整体结论; 下面两块才是可以来回切换的统计区间。
+  const reportP = loadWeeklyReport();
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
   // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
   const timeP = loadReviewTime(period).catch(
     e => el(`<div class="error-banner">用时统计加载失败: ${e.message}</div>`));
   const devP = loadReviewDeviation(period);
+  root.appendChild(await reportP);
   root.appendChild(await timeP);
   root.appendChild(await devP);
 }
 
+// ====== 本周课后周报 (M6) ======
 //
 // 周报单独 fetch, 且自己吞掉异常: 它失败不该让下面的用时/偏差也白屏。
 // 文案原则 (商业计划 §5.7): 只跟孩子自己的历史比, 不评价天赋、不排名;
 // 建议最多 3 条 (1–2 年级 2 条), 先当下有事再下次能改。
+async function loadWeeklyReport() {
   try {
     const r = await api('GET', '/weekly-report');
     return renderWeeklyReport(r);
@@ -3203,6 +3207,8 @@ function renderWeeklyReport(r) {
   if (r.praise.length) {
     card.appendChild(el(`<div class="report-praise"><span>给孩子</span>${escapeAttr(r.praise.join('；'))}</div>`));
   }
+  if (r.coach_note) {
+    card.appendChild(el(`<div class="report-note"><span>给教练</span>${escapeAttr(r.coach_note)}</div>`));
   }
   if (r.suggestions.length) {
     const block = el('<div class="report-block"><div class="report-block-title">今晚可以试</div></div>');
