@@ -10,8 +10,13 @@
 如果只在原文弹窗里隐藏取消按钮而不在手动添加里恢复, 家长先看原文再手动添加,
 就会看到一个没有取消按钮、写着「返回」的提交弹窗。
 
-这些用例锁住两件事:
-  1. 只读弹窗只显示一个「返回」
+2026-10-30 用户再次反馈: 「取消」和「返回」摆在一起像两个功能, 而且样式太浅,
+看着不像按键。因此:
+  - 只读弹窗只留一颗「返回」, 且用 secondary (有边框有底色), 不用 ghost
+  - 弹窗底部那排按钮靠右, 主操作在��右
+
+这些用例锁住这几件事:
+  1. 只读弹窗只显示一个「返回」, 且它不是 primary (关闭类操作不该被强调)
   2. 状态不互相污染, 且「确定」仍能真正提交
   3. .hidden 这个类真的能藏住东西 (之前只有 .modal.hidden / .toast.hidden,
      通用类没定义, 于是只读弹窗里「取消」照样显示, 两颗键并排出现)
@@ -126,7 +131,7 @@ def test_confirm_mode_restores_everything(app_js):
     for frag in ("cancel.classList.remove('hidden')",
                  "ok.textContent = '确定'",
                  "ok.classList.add('primary')",
-                 "ok.classList.remove('ghost', 'modal-solo-btn')"):
+                 "ok.classList.remove('secondary', 'ghost', 'modal-solo-btn')"):
         assert frag in block, f"confirm 分支缺少还原: {frag}"
 
 
@@ -156,6 +161,8 @@ def test_hidden_class_actually_hides(styles):
 
 def test_modal_actions_row_is_right_aligned(styles):
     """弹窗底部按钮靠右: 主操作在右下角, 家长一眼能找到。"""
+    m = re.search(r"\.modal-body \.modal-actions \{([^}]*)\}", styles, re.S)
+    assert m, "缺少 .modal-body .modal-actions 规则"
     assert "justify-content: flex-end" in m.group(1)
 
 

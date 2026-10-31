@@ -99,9 +99,17 @@ def test_edit_minutes_goes_through_prompt_number(app_js):
 
 
 def test_close_modal_is_single_exit(app_js):
-    """四条关闭路径必须都走 closeModal, 否则 Promise 结算不了。"""
+    """四条关闭路径必须都走同一个出口, 否则 Promise 结算不了。
+
+    2026-10-30: 次要键不再直接调 closeModal, 而是走 modalCancel() ——
+    嵌套弹窗(课表时段/周计划项)的次要键是"返回上一层", 只退一层而不是
+    关掉整个弹窗。modalCancel() 在没有 onCancel 时仍退回 closeModal(),
+    所以四条路径的出口依然是同一个。
+    """
     code = _code(app_js)
-    assert "document.getElementById('modal-cancel').addEventListener('click', () => {\n  closeModal();" in code
+    assert "document.getElementById('modal-cancel').addEventListener('click', () => {\n  modalCancel();" in code
+    # 兜底仍要落到 closeModal, 否则没有 onCancel 的弹窗按 Esc 会关不掉
+    assert "const fn = _modalCancel || (() => closeModal());" in code
     assert "e.key !== 'Escape'" in code
     assert "e.target === e.currentTarget" in code
     # 取消只能通过哨兵表达: 各弹窗要的"取消值"类型不同(boolean / null)

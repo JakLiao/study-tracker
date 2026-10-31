@@ -105,8 +105,12 @@ def export_all() -> bytes:
                 (family_id,),
             ).fetchall()]
             # M5: 课表与周计划项是"每周节奏"的配置, 换机后不导出就得重排一遍。
+            schedule_slots = [dict(r) for r in conn.execute(
+                "SELECT * FROM schedule_slots WHERE family_id = %s ORDER BY weekday, start_time, id",
                 (family_id,),
             ).fetchall()]
+            plan_items = [dict(r) for r in conn.execute(
+                "SELECT * FROM plan_items WHERE family_id = %s ORDER BY id",
                 (family_id,),
             ).fetchall()]
         payload = {
@@ -120,6 +124,8 @@ def export_all() -> bytes:
                 "settings": len(settings),
                 "reflections": len(reflections),
                 "training_logs": len(training_logs),
+                "schedule_slots": len(schedule_slots),
+                "plan_items": len(plan_items),
             },
             "assignments": assignments,
             "projects": projects,
@@ -128,6 +134,8 @@ def export_all() -> bytes:
             "settings": settings,
             "daily_reflections": reflections,
             "training_logs": training_logs,
+            "schedule_slots": schedule_slots,
+            "plan_items": plan_items,
         }
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8")
     except Exception as e:

@@ -325,6 +325,7 @@ class TrainingLogSave(BaseModel):
         return v2 or None
 
 
+# ====== 周课表 + 周计划 (M5) ======
 def _norm_hhmm(value: str) -> str:
     """把 "16:30" / "16:30:00" 统一成 "16:30", 并校验是合法时刻."""
     try:

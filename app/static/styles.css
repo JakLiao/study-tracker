@@ -1345,12 +1345,19 @@ tr.is-optional .muted {
   box-shadow: var(--shadow-card);
 }
 .modal-body h3 { margin-top: 0; }
-.modal-body .row:last-child { margin-top: var(--space-4); }
+/* 弹窗底部那排按钮: 主操作(确定/保存)在最右, 次操作(取消)在其左侧。
+   靠右是这套 UI 的既定约定 —— 家长扫一眼弹窗右下角就知道"要按的那个"在哪。
+   用 .modal-actions 而不是 .row:last-child: 后者会连带命中弹窗内容里
+   恰好排在最后的 .row (内容是动态拼的, 位置不固定)。 */
+.modal-body .modal-actions {
+  margin-top: var(--space-4);
+  justify-content: flex-end;
+}
 
 /* 只读弹窗只留「返回」一个按钮时, 仍靠右并保持自然宽度 ——
    不加 min-width 会让单个按钮被 flex 拉成一整条, 看着像输入框。
    这是与系统单按钮对话框一致的做法。 */
-.modal-body .row:last-child .modal-solo-btn { min-width: 96px; }
+.modal-body .modal-actions .modal-solo-btn { min-width: 96px; }
 
 /* 确认弹窗比表单弹窗窄: 确认只需要说清"要做什么", 给一大块空白
    反而会让人以为里面还有没显示的内容。 */
@@ -3281,6 +3288,7 @@ footer {
    已生成到任务池的计划项再压暗并打 ✓, 免得家长以为还得再点一次。 */
 .week-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .week-slot,
+.week-plan {
   display: inline-block;
   max-width: 100%;
   padding: 2px var(--space-2);
@@ -3290,6 +3298,8 @@ footer {
   overflow-wrap: anywhere;
 }
 .week-slot { background: var(--c-training-soft); color: #4B3272; }
+.week-plan { background: var(--surface-2); color: var(--text-2); }
+.week-plan.done { background: var(--c-英-soft); color: var(--c-英); }
 
 .week-day-stats {
   padding-top: var(--space-1);

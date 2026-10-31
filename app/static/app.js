@@ -259,7 +259,7 @@ function toast(msg, ms = 3000) {
 //
 // 复盘页原名 weekly (2026-10-30 改名 review): 该页除按周外还提供
 // "本月", 名字里带 weekly 已与内容不符。
-const TABS = ['board', 'entry', 'list', 'review', 'settings'];
+const TABS = ['board', 'entry', 'list', 'week', 'review', 'settings'];
 const DEFAULT_TAB = 'board';
 
 // 抑制 hashchange 回调里的再次写回, 否则 switchTab <-> hashchange
@@ -306,6 +306,7 @@ function switchTab(name, opts) {
     if (_calSelected) loadList(_calSelected);
   }
   // 周计划保留上次翻到的那一周 (与日历保留月份同理), 不强行弹回本周。
+  if (tab === 'week') loadWeekPlan();
   // 复盘页保留上次选的周期 (与日历页保留上次翻到的月份同理), 别把家长
   // 刚选好的「本月」又弹回「本周」。
   if (tab === 'review') setReviewPeriod(_reviewPeriod);
@@ -1331,9 +1332,14 @@ function openSourceModal(item) {
 }
 
 // 弹窗底部那颗次要键的实际动作。默认关窗; 嵌套弹窗 (从「固定课表」进到
+// 「新增上课时段」) 传 onCancel 改成"退回上一层"。
 // 取消键 / Esc / 点遮罩三条路径都走这里 —— 按键上写着「返回」, 按 Esc 却把
 // 整个弹窗关掉, 一样会让人以为按错了。
+let _modalCancel = null;
 
+function modalCancel() {
+  const fn = _modalCancel || (() => closeModal());
+  _modalCancel = null;
   fn();
 }
 
@@ -1342,12 +1348,13 @@ function openSourceModal(item) {
 //   confirm —— 输入弹窗: 保留「取消」+「确定」, 由调用方接确定按钮的 onclick
 // 不能简单地删掉取消按钮: 手动添加弹窗里"取消"(放弃)与"确定"(提交)
 // 是两种不同操作, 合并会丢掉"放弃这次编辑"的语义。
+// cancelText / onCancel 是 2026-10-30 加的: 嵌套弹窗的次要键是"返回上一层"
 // (回到上一层的列表), 不是"取消"(放弃这次编辑) —— 上一层的列表还在, 按一下
 // 回去比把整个弹窗关掉更顺手。
 // okText / danger 是 2026-09-29 为确认弹窗加的: 危险操作的确认键要写
 // 「删除」而不是「确定」, 且要用实心红 —— 让家长在按下之前再看一眼
 // 自己要做什么, 而不是靠"确定"两个字去猜。
-function setModalActions({ mode, onOk = null, okText = null, danger = false }) {
+function setModalActions({ mode, onOk = null, okText = null, danger = false, cancelText = '取消', onCancel = null }) {
   const cancel = document.getElementById('modal-cancel');
   const ok = document.getElementById('modal-ok');
   // 每次开弹窗都要把确定键恢复可点。
@@ -1359,19 +1366,23 @@ function setModalActions({ mode, onOk = null, okText = null, danger = false }) {
   ok.disabled = false;
   // 次要键的行为同样要重设: 弹窗是共用节点, 上一个弹窗留下的"返回上一层"
   // 不能带到下一个弹窗去。
+  _modalCancel = onCancel;
+  cancel.textContent = cancelText;
   if (mode === 'close') {
     // 只读弹窗: 「取消」与「返回」做的是同一件事 (都只是关窗), 摆两颗
+    // 只会让人犹豫该按哪颗 —— 所以只留一颗, 文案改成「返回」。
     cancel.classList.add('hidden');
     ok.textContent = '返回';
-    ok.classList.remove('primary');
-    ok.classList.add('ghost', 'modal-solo-btn');
-    ok.classList.remove('modal-danger');
+    // 「返回」不是主操作, 但仍要像个按键: 用 secondary (有边框有底色),
+    // 而不是 ghost (透明底透明边, 看起来像一行浅灰文字)。
+    ok.classList.remove('primary', 'modal-danger');
+    ok.classList.add('secondary', 'modal-solo-btn');
     ok.onclick = () => closeModal();
   } else {
     cancel.classList.remove('hidden');
     ok.textContent = '确定';
     ok.classList.add('primary');
-    ok.classList.remove('ghost', 'modal-solo-btn');
+    ok.classList.remove('secondary', 'ghost', 'modal-solo-btn');
     ok.classList.toggle('modal-danger', danger);
     if (okText) ok.textContent = okText;
     ok.onclick = onOk;
@@ -1511,9 +1522,10 @@ function promptNumber({ title, label, value, min = 0, max = 240, hint = '', okTe
   });
 }
 
+// 取消键 / Esc / 点遮罩 —— 三条路径都是"离开当前这一层", 走同一个出口,
 // 否则嵌套弹窗里按 Esc 会把整个弹窗关掉, 而按「返回」却只退一层。
 document.getElementById('modal-cancel').addEventListener('click', () => {
-  closeModal();
+  modalCancel();
 });
 
 // Esc 与点遮罩关闭 —— 弹窗的标准行为, 此前这两条路都不通。
@@ -1521,11 +1533,11 @@ document.getElementById('modal-cancel').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const m = document.getElementById('modal');
-  if (m && !m.classList.contains('hidden')) closeModal();
+  if (m && !m.classList.contains('hidden')) modalCancel();
 });
 // e.target === e.currentTarget 才算点到遮罩: 点击弹窗内容(冒泡上来)不能关
 document.getElementById('modal').addEventListener('click', (e) => {
-  if (e.target === e.currentTarget) closeModal();
+  if (e.target === e.currentTarget) modalCancel();
 });
 
 // ====== 录入 / 解析 ======
@@ -3762,10 +3774,14 @@ function renderDeviationTable(box, r) {
   }
 }
 
+// ====== 周计划 (M5) ======
 // 一页回答三个问题: 这周哪天最满、有没有时间段撞车、固定节奏有没有
 // 落到任务池里。它不是"再看一遍作业" —— 作业在「看板」, 这里只合成。
+const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const WEEKDAY_CHARS = '一二三四五六日';
 
 // 显示中的那一周以哪个日期为锚。null = 本周 (由后端按今天算)。
+let _weekAnchor = null;
 let _weekData = null;
 
 function addDays(iso, n) {
@@ -3780,16 +3796,21 @@ function md(iso) {
   return `${parseInt(iso.slice(5, 7), 10)}/${parseInt(iso.slice(8, 10), 10)}`;
 }
 
+async function loadWeekPlan() {
   const root = document.getElementById('week-content');
   if (!root) return;
   root.innerHTML = '<p class="muted">加载中…</p>';
   try {
+    const anchor = _weekAnchor || todayStr();
+    const w = await api('GET', `/week-plan?date=${anchor}`);
     _weekData = w;
+    renderWeekPlan(root, w);
   } catch (e) {
     root.innerHTML = `<div class="error-banner">加载失败: ${escapeAttr(e.message)}</div>`;
   }
 }
 
+function renderWeekPlan(root, w) {
   root.innerHTML = '';
 
   const bar = el(`<div class="week-bar">
@@ -3801,6 +3822,8 @@ function md(iso) {
     <button type="button" class="ghost week-nav" data-step="7">下周 ›</button>
   </div>`);
   bar.querySelectorAll('.week-nav').forEach(b => b.addEventListener('click', () => {
+    _weekAnchor = addDays(_weekAnchor || w.today, parseInt(b.dataset.step, 10));
+    loadWeekPlan();
   }));
   root.appendChild(bar);
 
@@ -3809,6 +3832,7 @@ function md(iso) {
     <div class="card-title">本周负荷<span class="count">${md(w.week_start)} ~ ${md(w.week_end)}</span></div>
     <div class="week-stats">
       <div class="week-stat"><strong>${t.load_minutes}</strong><span>总负荷(分)</span></div>
+      <div class="week-stat"><strong>${t.slot_minutes}</strong><span>课表(分)</span></div>
       <div class="week-stat ${t.overloaded_days ? 'warn' : ''}"><strong>${t.overloaded_days}</strong><span>超载天数</span></div>
       <div class="week-stat ${t.conflict_days ? 'warn' : ''}"><strong>${t.conflict_days}</strong><span>冲突天数</span></div>
     </div>
@@ -3819,12 +3843,17 @@ function md(iso) {
     <button type="button" class="secondary" id="week-manage-slots">管理课表</button>
     <button type="button" class="secondary" id="week-manage-plans">周计划项</button>
   </div>`);
+  actions.querySelector('#week-generate').addEventListener('click', () => generateWeekTasks(w));
+  actions.querySelector('#week-manage-slots').addEventListener('click', () => openScheduleManager());
+  actions.querySelector('#week-manage-plans').addEventListener('click', () => openPlanItemManager());
   root.appendChild(actions);
 
   const days = el('<div class="week-days"></div>');
+  w.days.forEach(d => days.appendChild(weekDayCard(d)));
   root.appendChild(days);
 }
 
+function weekDayCard(d) {
   const card = el(`<div class="card week-day ${d.is_today ? 'is-today' : ''} ${d.overloaded ? 'overloaded' : ''}">
     <div class="week-day-head">
       <span class="week-day-name">${d.label}</span>
@@ -3845,6 +3874,7 @@ function md(iso) {
   if (d.plans.length) {
     const chips = el('<div class="week-chips"></div>');
     d.plans.forEach(p => chips.appendChild(el(
+      `<span class="week-plan ${p.generated ? 'done' : ''}">${escapeAttr(p.task_name)} ${p.est_minutes}分${p.generated ? ' ✓' : ''}</span>`
     )));
     card.appendChild(chips);
   }
@@ -3852,13 +3882,17 @@ function md(iso) {
   const stats = a.total
     ? `作业 ${a.total} 项 · 完成 ${a.done} · 剩 ${a.remaining_minutes} 分`
     : '当天还没有任务';
+  card.appendChild(el(`<div class="week-day-stats">${stats}${d.plan_pending_minutes ? ` · 待生成 ${d.plan_pending_minutes} 分` : ''}</div>`));
   d.conflicts.forEach(c => card.appendChild(el(`<div class="week-conflict">⚠ ${escapeAttr(c.message)}</div>`)));
   return card;
 }
 
+async function generateWeekTasks(w) {
   const btn = document.getElementById('week-generate');
   if (btn) btn.disabled = true;
   try {
+    const anchor = _weekAnchor || w.today;
+    const r = await api('POST', `/week-plan/generate?date=${anchor}`);
     if (r.created_count) {
       toast(`已生成 ${r.created_count} 项任务${r.skipped_count ? `, 跳过 ${r.skipped_count} 项重复` : ''}`);
     } else if (r.skipped_count) {
@@ -3866,6 +3900,7 @@ function md(iso) {
     } else {
       toast('还没有周计划项, 先点「周计划项」添加');
     }
+    await loadWeekPlan();
   } catch (e) {
     toast('生成失败: ' + e.message);
     if (btn) btn.disabled = false;
@@ -3873,6 +3908,7 @@ function md(iso) {
 }
 
 // ---- 课表时段管理 ----
+function openScheduleManager() {
   const w = _weekData;
   if (!w) return;
   const m = document.getElementById('modal');
@@ -3892,12 +3928,14 @@ function md(iso) {
     const row = el(`<div class="manage-row">
       <div class="manage-main">
         <strong>${escapeAttr(s.project_name)}</strong>
+        <span class="manage-meta">${WEEKDAY_LABELS[s.weekday]} ${s.start_time}-${s.end_time}${s.note ? ' · ' + escapeAttr(s.note) : ''}</span>
       </div>
       <div class="manage-ops">
         <button type="button" class="secondary" data-op="edit">改</button>
         <button type="button" class="danger" data-op="del">删</button>
       </div>
     </div>`);
+    row.querySelector('[data-op="edit"]').addEventListener('click', () => openScheduleSlotModal(s));
     row.querySelector('[data-op="del"]').addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: '删除课表时段',
@@ -3905,17 +3943,22 @@ function md(iso) {
         okText: '删除',
         danger: true,
       });
+      if (!ok) { openScheduleManager(); return; }
       try {
         await api('DELETE', `/schedule-slots/${s.id}`);
         toast('已删除课表时段');
+        await loadWeekPlan();
       } catch (e) {
         toast('删除失败: ' + e.message);
+        openScheduleManager();
       }
     });
     list.appendChild(row);
   });
+  content.querySelector('#slot-add').addEventListener('click', () => openScheduleSlotModal(null));
 }
 
+async function openScheduleSlotModal(slot) {
   if (!_qaProjects.length) await refreshQuickAddData();
   const m = document.getElementById('modal');
   document.getElementById('modal-title').textContent = slot ? '改上课时段' : '新增上课时段';
@@ -3929,6 +3972,7 @@ function md(iso) {
     <label>
       <span class="form-label">星期</span>
       <select id="slot-weekday">
+        ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${i === weekday ? 'selected' : ''}>${label}</option>`).join('')}
       </select>
     </label>
     <label>
@@ -3957,6 +4001,8 @@ function md(iso) {
     // 次要键是"返回上一层" —— 回到课表列表, 而不是把整个弹窗关掉。
     // 上一层还在, 按一下回去比一键退出更顺手; 列表层自己的「返回」才是
     // 退出到周计划页。
+    cancelText: '返回',
+    onCancel: () => openScheduleManager(),
     onOk: async () => {
       const pid = parseInt(document.getElementById('slot-project').value, 10);
       if (!Number.isFinite(pid)) { toast('先选一个项目'); return; }
@@ -3979,6 +4025,8 @@ function md(iso) {
         toast(slot ? '已保存课表时段' : '已新增课表时段');
         // 存完回到课表列表这一层: 新增的那条要看得见, 而不是把人扔回
         // 周计划页再让他重新点一遍「管理课表」。
+        await loadWeekPlan();
+        openScheduleManager();
       } catch (e) {
         okBtn.disabled = false;
         toast('保存失败: ' + e.message);   // 留在弹窗里, 冲突提示要能看到
@@ -3988,6 +4036,7 @@ function md(iso) {
 }
 
 // ---- 周计划项管理 ----
+function openPlanItemManager() {
   const w = _weekData;
   if (!w) return;
   const m = document.getElementById('modal');
@@ -4001,9 +4050,12 @@ function md(iso) {
   setModalActions({ mode: 'close' });
 
   const list = content.querySelector('.manage-list');
+  if (!w.plan_items.length) {
     list.appendChild(el('<p class="muted">还没有周计划项。例如「每日阅读 20 分钟」勾周一至周五。</p>'));
   }
+  w.plan_items.forEach(p => {
     const label = p.project_name || p.subject || TASK_KIND_LABELS[p.task_kind] || '任务';
+    const days = p.weekdays.map(i => WEEKDAY_CHARS[i]).join('');
     const row = el(`<div class="manage-row">
       <div class="manage-main">
         <strong>${escapeAttr(p.task_name)}</strong>
@@ -4014,6 +4066,7 @@ function md(iso) {
         <button type="button" class="danger" data-op="del">删</button>
       </div>
     </div>`);
+    row.querySelector('[data-op="edit"]').addEventListener('click', () => openPlanItemModal(p));
     row.querySelector('[data-op="del"]').addEventListener('click', async () => {
       const ok = await confirmDialog({
         title: '删除周计划项',
@@ -4022,17 +4075,22 @@ function md(iso) {
         okText: '删除',
         danger: true,
       });
+      if (!ok) { openPlanItemManager(); return; }
       try {
         await api('DELETE', `/plan-items/${p.id}`);
         toast('已删除计划项');
+        await loadWeekPlan();
       } catch (e) {
         toast('删除失败: ' + e.message);
+        openPlanItemManager();
       }
     });
     list.appendChild(row);
   });
+  content.querySelector('#plan-add').addEventListener('click', () => openPlanItemModal(null));
 }
 
+async function openPlanItemModal(item) {
   if (!_qaProjects.length) await refreshQuickAddData();
   const kind = item ? item.task_kind : 'subject';
   const isSubject = kind === 'subject';
@@ -4070,6 +4128,7 @@ function md(iso) {
       <span class="form-label">星期</span>
       <span class="form-field">
         <span class="weekday-checks">
+          ${WEEKDAY_LABELS.map((label, i) =>
             `<label class="weekday-check"><input type="checkbox" value="${i}" ${days.includes(i) ? 'checked' : ''}/>${label.slice(1)}</label>`).join('')}
         </span>
         <span class="form-hint">勾选每周固定做的日子</span>
@@ -4089,6 +4148,8 @@ function md(iso) {
     okText: item ? '保存' : '新增',
     // 与上课时段同一个层级关系: 这个弹窗是「周计划项」列表的下层,
     // 次要键退回上一层 (列表), 列表层的「返回」才退出到周计划页。
+    cancelText: '返回',
+    onCancel: () => openPlanItemManager(),
     onOk: async () => {
       const name = document.getElementById('pi-name').value.trim();
       if (!name) { toast('任务名不能为空'); return; }
@@ -4116,6 +4177,8 @@ function md(iso) {
         toast(item ? '已保存计划项' : '已新增计划项');
         // 存完回到周计划项列表这一层, 与课表时段同构: 新加的那条要看得见,
         // 而不是把人直接扔回周计划页再让他重新点一遍「周计划项」。
+        await loadWeekPlan();
+        openPlanItemManager();
       } catch (e) {
         okBtn.disabled = false;
         toast('保存失败: ' + e.message);
