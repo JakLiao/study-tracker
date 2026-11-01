@@ -825,18 +825,29 @@ function fmtElapsed(ms) {
 // 焦点与预填逻辑, 两边混在一起会互相干扰。
 function renderTimerButton(item, opts) {
   const o = opts || {};
-  const btn = el(`<button type="button" class="p-timer ${o.cls || ''}" aria-label="开始计时">开始计时</button>`);
+  // o.icon: 用图标代替文字。
+  // 孩子端卡片是**单行**布局, "开始计时" 四个字要占掉小半行宽度, 挤得任务名
+  // 换行 —— 换成图标省下的宽度全给任务名。计时中按钮直接显示计时数字
+  // (那会儿按钮会变宽, 但用户正盯着它看, 不介意)。
+  const iconSvg = o.icon
+    ? `<svg class="p-timer__ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#${o.icon}"></use></svg>`
+    : '';
+  const btn = el(`<button type="button" class="p-timer ${o.cls || ''}" aria-label="开始计时">${iconSvg}${o.icon ? '' : '开始计时'}</button>`);
   const label = el('<span class="p-timer__label"></span>');
   const wrap = el('<span class="p-timer-wrap"></span>');
   wrap.append(btn, label);
+  const paintIdle = () => {
+    if (o.icon) btn.innerHTML = iconSvg;
+    else btn.textContent = '开始计时';
+    btn.classList.remove('is-running');
+  };
   const stop = async () => {
     const t = _timers.get(item.id);
     if (!t) return;
     clearInterval(t.handle);
     _timers.delete(item.id);
     const minutes = Math.max(1, Math.round((Date.now() - t.startedAt) / 60000));
-    btn.textContent = '开始计时';
-    btn.classList.remove('is-running');
+    paintIdle();
     label.textContent = '';
     try {
       await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: minutes });
@@ -850,12 +861,15 @@ function renderTimerButton(item, opts) {
     if (_timers.has(item.id)) { stop(); return; }
     const startedAt = Date.now();
     const handle = setInterval(() => {
-      label.textContent = `已计 ${fmtElapsed(Date.now() - startedAt)}`;
+      const t = fmtElapsed(Date.now() - startedAt);
+      if (o.icon) btn.innerHTML = `<span class="p-timer__run">${t}</span>`;
+      else label.textContent = `已计 ${t}`;
     }, 500);
     _timers.set(item.id, { startedAt, handle });
-    btn.textContent = '停止计时';
+    if (o.icon) btn.innerHTML = '<span class="p-timer__run">00:00</span>';
+    else btn.textContent = '停止计时';
     btn.classList.add('is-running');
-    label.textContent = '已计 00:00';
+    if (!o.icon) label.textContent = '已计 00:00';
   });
   return wrap;
 }

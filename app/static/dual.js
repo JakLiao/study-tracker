@@ -218,8 +218,13 @@ function bindKidMenus() {
   });
 }
 
-// 任务卡。左边一条学科色条, 中间是任务名, 底下只留**一个**大的
-// 「完成」按钮 —— 编辑/今天不做/删除 全收进右上角的 ⋯ 菜单。
+// 任务卡。左边一条学科色条, 中间是任务名, 右边只有**一个**大的
+// 「完成」按钮 —— 编辑/今天不做/删除 全收进最右边的 ⋯ 菜单。
+//
+// 布局是**一行**: 任务名占中间, 操作按钮靠右排。
+// (初版是三行堆叠 —— 学科行 / 任务名 / 按钮行, 一张卡占掉 140px, 一屏只
+// 看得下两三项, 反而像"大卡片"而不像"待办事项"。压成一行后一屏能扫到
+// 五六项, 孩子自己就能数出还剩几件事。)
 function renderKidCard(item, refresh) {
   bindKidMenus();
   const done = item.status === 'done';
@@ -227,13 +232,13 @@ function renderKidCard(item, refresh) {
   const card = el(`<div class="kid-card ${done ? 'is-done' : ''} ${skipped ? 'is-skipped' : ''}" data-id="${item.id}">
     <span class="kid-card__bar subject-tag ${kidSubjectClass(item)}" aria-hidden="true"></span>
     <div class="kid-card__main">
+      <div class="kid-card__name">${escapeAttr(item.task_name)}</div>
       <div class="kid-card__top">
         <span class="kid-card__subject">${escapeAttr(kidSubjectText(item))}</span>
         <span class="kid-card__est">${item.est_minutes != null ? `约 ${item.est_minutes} 分钟` : ''}</span>
       </div>
-      <div class="kid-card__name">${escapeAttr(item.task_name)}</div>
-      <div class="kid-card__acts"></div>
     </div>
+    <div class="kid-card__acts"></div>
   </div>`);
   const acts = card.querySelector('.kid-card__acts');
 
@@ -258,7 +263,8 @@ function renderKidCard(item, refresh) {
   }
 
   // 计时器 (规范 §7.2): 点开始, 再点停止, 停止后把分钟数写进 actual_minutes。
-  acts.appendChild(renderTimerButton(item, { cls: 'kid-timer', onDone: refresh }));
+  // 图标形态 (i-clock): 卡片是单行的, 文字按钮会挤掉任务名的宽度。
+  acts.appendChild(renderTimerButton(item, { cls: 'kid-timer', icon: 'i-clock', onDone: refresh }));
 
   // ⋯ 菜单
   const more = el('<span class="kid-more-wrap"></span>');
@@ -324,7 +330,9 @@ function renderKidCard(item, refresh) {
     });
   }
   more.append(moreBtn, menu);
-  card.querySelector('.kid-card__top').appendChild(more);
+  // ⋯ 放最右 (而不是塞进学科行): 单行布局里它得贴着卡片右边缘,
+  // 位置固定, 孩子扫一眼就知道"更多的操作都在这儿"。
+  card.appendChild(more);
   return card;
 }
 

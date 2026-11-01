@@ -3975,21 +3975,29 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
 }
 
 /* ===== 27.3 孩子端 · 任务卡 (规范 §4.2) =====
-   圆角 20px, 底 --paper-2, 描边 --rule; 左侧一条学科色条;
-   唯一的主按钮是「完成」(48px 高), 其余操作收进右上角 ⋯。 */
+   单行布局: [学科色条] 任务名 + 学科/估时  [⏱][完 成]  ⋯
+   左侧一条学科色条; 唯一的主按钮是「完成」(48px 高), 其余操作收进 ⋯ 菜单。
+
+   密度是这一段的重点 (2026-11-01 用户反馈): 初版把学科行 / 任务名 / 按钮
+   行竖着堆三行, 一张卡 140px 高, 一屏只看得下两三项, 视觉上像"大卡片"
+   而不是"待办事项"。压成一行后卡高 ~70px, 一屏五六项, 孩子自己就能数出
+   还剩几件事 —— 那才是这个页面该有的样子。
+
+   触控目标没缩水: 「完成」仍然 48px 高 (规范 §7.4), 计时器 48×48。 */
 .kid-card {
   position: relative;
   display: flex;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  margin-bottom: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
   background: var(--paper-2);
   border: 1px solid var(--rule);
-  border-radius: 20px;
+  border-radius: 14px;
 }
 .kid-card__bar {
-  flex: 0 0 6px;
-  width: 6px;
+  flex: 0 0 5px;
+  width: 5px;
   align-self: stretch;
   padding: 0;                /* 覆盖科目标签自带的内边距 */
   font-size: 0;              /* 空元素不留字高 */
@@ -4000,7 +4008,7 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-1);
+  margin-top: 1px;
 }
 .kid-card__subject {
   font-size: var(--fs-sm);
@@ -4014,20 +4022,19 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
   font-variant-numeric: tabular-nums;
 }
 .kid-card__name {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.3;
   color: var(--ink);
   word-break: break-word;
 }
 .kid-card__acts {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex: 0 0 auto;
 }
-.kid-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.kid-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .kid-list .kid-card { margin-bottom: 0; }
 .kid-section {
   margin: var(--space-4) 0 var(--space-2);
@@ -4038,8 +4045,8 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
 /* 「完成」= 蜡笔黄填充 + 深墨字; 按下轻微下沉 (规范 §4.2)。 */
 .kid-btn-done {
   min-height: 48px;         /* 孩子端触控目标 (规范 §7.4) */
-  min-width: 120px;
-  padding: 0 var(--space-5);
+  min-width: 88px;
+  padding: 0 var(--space-4);
   border: none;
   border-radius: var(--radius-pill);
   background: var(--accent);
@@ -4055,8 +4062,9 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
 .kid-card__done {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-1);
   min-height: 48px;
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-pill);
   background: var(--st-done-t);
   color: var(--st-done-c);
@@ -4075,14 +4083,14 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
 }
 
 /* 右上角 ⋯ 菜单: 编辑 / 今天不做 / 删除 全收在这里。 */
-.kid-more-wrap { position: relative; margin-left: auto; }
+.kid-more-wrap { position: relative; flex: 0 0 auto; }
 .kid-more {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
+  width: 40px;
   height: 48px;
-  min-width: 48px;
+  min-width: 40px;
   min-height: 48px;
   padding: 0;
   border: none;
@@ -4433,8 +4441,35 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-/* 孩子端的计时器跟着孩子端的触控目标走 (48px)。 */
-.kid-timer { min-height: 48px; font-size: var(--fs-sm); }
+/* 孩子端的计时器跟着孩子端的触控目标走 (48px)。
+   图标形态 (孩子端单行卡片): 只留沙漏图标, "开始计时"四个字会挤掉任务名的
+   宽度。计时中按钮变宽显示数字 —— 那时用户正盯着它, 不介意。 */
+.kid-timer {
+  min-height: 48px;
+  min-width: 48px;
+  width: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+}
+.kid-timer .p-timer__ico { width: 20px; height: 20px; display: block; }
+.kid-timer .p-timer__run {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+/* 计时中: 按钮按计时数字的宽度放开 (min-width 不能挡着, 得能撑开)。 */
+.kid-timer.is-running {
+  width: auto;
+  min-width: 64px;
+  padding: 0 var(--space-2);
+  border-color: var(--accent);
+  background: var(--accent-t);
+  color: var(--ink);
+}
 
 /* ===== 27.7 家长端 · 复盘可视化 (规范 §4.6) ===== */
 .p-review-extras { display: flex; flex-direction: column; gap: var(--space-2); }
