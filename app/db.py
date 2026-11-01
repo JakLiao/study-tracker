@@ -19,6 +19,11 @@ from psycopg.pq import TransactionStatus
 from . import config
 from .migrations.runner import migrate
 
+# ====== PostgreSQL 连接与迁移入口 (M0 数据底座) ======
+#
+# 单机 SQLite 时代留下的约定在这里全部换成了 psycopg 3:
+# 连接、schema 版本管理、事务边界各归其位, 服务层只管写业务 SQL。
+
 
 def init_db(url: str | None = None) -> dict:
     """初始化数据库 (启动时调用一次).

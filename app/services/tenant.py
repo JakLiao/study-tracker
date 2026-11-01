@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 
 from .. import config
 
+# ====== 家庭 / 孩子上下文 (M0 多租户基座) ======
+#
+# 默认家庭/孩子的创建与读取都收口在这里。将来接账号与云端时, 只换这里
+# 的取法, 业务层的 SQL 不用回头再改一遍。
+
 DEFAULT_FAMILY_NAME = "我的家庭"
 DEFAULT_CHILD_NAME = "孩子"
 

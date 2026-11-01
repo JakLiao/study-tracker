@@ -25,6 +25,11 @@ from .steps import MIGRATIONS, Migration
 
 logger = logging.getLogger("study.migrations")
 
+# ====== 版本化迁移器 (M0 幂等 / 整版原子 / dry-run) ======
+#
+# schema_meta 记已执行的版本, 迁移器据此跳过; 每个 version 一个事务,
+# 失败整版回滚。dry-run 在真实库上跑完立即 ROLLBACK, 不留痕。
+
 CURRENT_VERSION: int = max((m.version for m in MIGRATIONS), default=0)
 
 

@@ -22,13 +22,13 @@ class Migration:
     steps: tuple[Step, ...]
 
 
-# ====== v1: 家庭 / 孩子 / 项目 + 统一任务表 ======
+# ====== v1a: 家庭 / 孩子多租户基座 (M0) ======
 #
 # 三条业务约束落到 schema 上:
 #   family_id / child_id 必填 -> 任何任务都能追溯到唯一归属, 天然隔离租户
 #   subject 可空             -> 培训/习惯任务没有学科
 #   task_kind               -> 学科作业 / 训练打卡 / 习惯, 统一任务池的区分依据
-V1_STEPS: tuple[Step, ...] = (
+V1_BASE_STEPS: tuple[Step, ...] = (
     """
     CREATE TABLE IF NOT EXISTS families (
         id          BIGSERIAL PRIMARY KEY,
@@ -48,6 +48,13 @@ V1_STEPS: tuple[Step, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_children_family ON children(family_id)",
+)
+
+# ====== v1b: 项目 / 统一任务表 (M1) ======
+#
+# 与 v1a 同属 version=1, 只是把同一版的步骤拆成两段, 好按阶段标记归属代码;
+# 已建过库的实例不会重跑这一版, 拆分不影响任何现有数据。
+V1_TASK_STEPS: tuple[Step, ...] = (
     """
     CREATE TABLE IF NOT EXISTS projects (
         id              BIGSERIAL PRIMARY KEY,
@@ -129,6 +136,9 @@ V1_STEPS: tuple[Step, ...] = (
     )
     """,
 )
+
+# v1 的完整步骤 = 多租户基座 + 统一任务池, 顺序与拆分前完全一致。
+V1_STEPS: tuple[Step, ...] = V1_BASE_STEPS + V1_TASK_STEPS
 
 
 # ====== v2: 每日三问 (M3 日结) ======

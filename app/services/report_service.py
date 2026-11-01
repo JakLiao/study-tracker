@@ -35,6 +35,12 @@ SLOW_RATIO = 1.5
 SLOW_LIMIT = 3
 
 
+# ====== 每周课后周报聚合 (M6 完成情况 / 用时分布 / 卡点归因) ======
+#
+# 一条原则: 周报只跟孩子自己的历史比, 不评价天赋、不比较队友。
+# 建议最多 3 条 (1–2 年级 lite 模式 2 条), 先当下有事, 再下次能改。
+
+
 def _today() -> date:
     return datetime.now(timezone.utc).astimezone().date()
 
