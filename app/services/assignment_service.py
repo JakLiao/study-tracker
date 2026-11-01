@@ -30,6 +30,7 @@ from ..models import (
     _as_datetime,
     row_to_assignment_dto,
 )
+from . import kid_service
 from .normalize import dedup_fingerprint, normalize_task_name
 from .project_service import project_exists
 from .tenant import default_family_id, ensure_default_family_child
@@ -512,7 +513,7 @@ def update_status(assignment_id: int, new_status: str) -> dict:
     family_id = default_family_id()
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT status FROM assignments WHERE id = %s AND family_id = %s",
+            "SELECT status, due_date, child_id FROM assignments WHERE id = %s AND family_id = %s",
             (assignment_id, family_id),
         ).fetchone()
         if not row:
@@ -544,6 +545,17 @@ def update_status(assignment_id: int, new_status: str) -> dict:
                     (new_status, now, assignment_id),
                 )
             _log(conn, assignment_id, "status_changed", old_status, new_status)
+            # 双角色改造: 星星账本跟作业状态在**同一个事务**里写。
+            # 另开连接会跟这里持的行锁互相等待 (死锁), 所以把 conn 传下去。
+            kid_service.sync_status_stars(
+                conn,
+                assignment_id=assignment_id,
+                family_id=family_id,
+                child_id=int(row["child_id"]),
+                due_date=_as_date(row["due_date"]),
+                old_status=old_status,
+                new_status=new_status,
+            )
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
@@ -557,7 +569,8 @@ def update_completion(assignment_id: int, actual_minutes: int) -> dict:
     family_id = default_family_id()
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT status, actual_minutes FROM assignments WHERE id = %s AND family_id = %s",
+            "SELECT status, actual_minutes, due_date, child_id FROM assignments "
+            "WHERE id = %s AND family_id = %s",
             (assignment_id, family_id),
         ).fetchone()
         if not row:
@@ -571,6 +584,21 @@ def update_completion(assignment_id: int, actual_minutes: int) -> dict:
                 (actual_minutes, now, assignment_id),
             )
             _log(conn, assignment_id, "actual_logged", old_val, str(actual_minutes))
+            # 双角色改造: 这个接口只记实耗, 不改 status (完成与否走
+            # /status), 所以"在这里置为 done"这条路本来不存在。
+            # 但这条作业若已经是 done, 就顺手补一次幂等的发星 ——
+            # 万一那颗星被撤销过 (撤销完成后又改回来), 这里能补上;
+            # 已经发过的那次会被 partial unique index 挡掉。
+            if row["status"] == "done":
+                kid_service.sync_status_stars(
+                    conn,
+                    assignment_id=assignment_id,
+                    family_id=family_id,
+                    child_id=int(row["child_id"]),
+                    due_date=_as_date(row["due_date"]),
+                    old_status="done",
+                    new_status="done",
+                )
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

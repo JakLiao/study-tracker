@@ -1147,8 +1147,10 @@ def test_edit_button_rendered(live):
     # 与既有的状态按钮并存, 顺序在「删除」之前。
     # 2026-10-12: 编辑改成纯图标按钮, textContent 为空 —— 用 class 判位次。
     assert live["editIndex"] == 3, live["actions"]
+    # 2026-11-01 双角色改造: 行尾多了「开始计时」(计时器是孩子端功能,
+    # 但家长端也允许补录实际用时), 排在「删除」之后。
     assert [a for i, a in enumerate(live["actions"]) if i != 3] == \
-        ["完成", "今天不做", "选做", "删除"]
+        ["完成", "今天不做", "选做", "删除", "开始计时"]
 
 
 @needs_jsdom

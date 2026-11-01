@@ -4,8 +4,9 @@ DTO 与 DB 行解耦, 用 row_to_dto / dto_to_dict 转换.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -476,6 +477,18 @@ ReflectionDifficulty = Literal["easy", "ok", "hard"]
 ReflectionFocus = Literal["good", "ok", "bad"]
 ReflectionMood = Literal["good", "ok", "bad"]
 
+# 晚间小结的标签 (双角色改造 §5.6)。落库时逗号分隔存 code, 读出来是数组。
+# 只允许这 6 个 code: 前端点选给的是固定几个, 服务端再兜一道 ——
+# 标签会进周报聚合, 混进自由文本会让"本周错题多出现几次"这类统计失去意义。
+STAR_TAGS: tuple[str, ...] = (
+    "slow_writing",
+    "reread",
+    "many_errors",
+    "unfamiliar",
+    "good_pace",
+    "focused",
+)
+
 
 class DailyReflectionSave(BaseModel):
     """晚间三问提交.
@@ -493,6 +506,8 @@ class DailyReflectionSave(BaseModel):
     focus: ReflectionFocus | None = None
     mood: ReflectionMood
     note: Annotated[str | None, Field(default=None, max_length=200)] = None
+    # 标签快选 (多选)。不传 = 不改标签; 传空数组 = 清空标签。
+    tags: list[str] | None = None
 
     @field_validator("note")
     @classmethod
@@ -502,6 +517,169 @@ class DailyReflectionSave(BaseModel):
             return None
         v2 = v.strip()
         return v2 or None
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, v: list[str] | None) -> list[str] | None:
+        # 非法 code 直接抛 ValueError -> FastAPI 校验失败 -> 4003。
+        # 去重但保序: 前端按点击顺序给, 回显顺序跟着走, 家长才认得出
+        # 自己点过哪几个。
+        if v is None:
+            return None
+        out: list[str] = []
+        for item in v:
+            code = str(item).strip()
+            if code not in STAR_TAGS:
+                raise ValueError(f"tags 只允许 {'/'.join(STAR_TAGS)}")
+            if code not in out:
+                out.append(code)
+        return out
+
+
+class DailyReflection(BaseModel):
+    """晚间三问的读取态 (双角色改造: 增加 tags)."""
+
+    date: date
+    difficulty: ReflectionDifficulty
+    focus: ReflectionFocus | None = None
+    mood: ReflectionMood
+    note: str | None = None
+    tags: list[str] = []
+    updated_at: datetime | None = None
+
+
+# ====== 孩子端: 星星罐 / 勋章 / 家长 PIN (双角色改造) ======
+#
+# 契约见 docs/07 §5.2。字段名一字不改, 前端直接按名字取值。
+class StarLedgerItem(BaseModel):
+    """星星账本的一行. 正数=获得, 负数=消耗."""
+
+    id: int
+    date: date
+    stars: int
+    reason: str
+    # 家长手动奖励时写的一句话 (给人和孩子看); 机器发星时为空。
+    note: str | None = None
+    assignment_id: int | None = None
+    created_at: datetime
+
+
+class JarInfo(BaseModel):
+    """星星罐. cap 是罐子容量 (20 颗封顶)."""
+
+    date: date
+    stars: int = 0
+    cap: int = 20
+
+
+class StreakInfo(BaseModel):
+    """连续天数. last_date = 最后一条 streak 记录的日期."""
+
+    current: int = 0
+    best: int = 0
+    last_date: date | None = None
+
+
+class WeekInfo(BaseModel):
+    """本周 (周一起算) 概览."""
+
+    stars: int = 0
+    days_active: int = 0
+    tasks_done: int = 0
+
+
+class KidStarsResponse(BaseModel):
+    """GET /api/kid/stars 的完整结构."""
+
+    balance: int = 0
+    today_earned: int = 0
+    jar: JarInfo
+    streak: StreakInfo
+    ledger: list[StarLedgerItem] = []
+    week: WeekInfo
+
+
+class StarGrantRequest(BaseModel):
+    """家长手动奖励. stars 1..20."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stars: Annotated[int, Field(ge=1, le=20)]
+    reason: Annotated[str, Field(max_length=60)] = ""
+
+
+class StarRedeemRequest(BaseModel):
+    """家长手动扣除 (换奖励). stars 1..999."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    stars: Annotated[int, Field(ge=1, le=999)]
+    reason: Annotated[str, Field(max_length=60)] = ""
+
+
+class StarGrantResponse(BaseModel):
+    balance: int
+    today_earned: int
+
+
+class StarRedeemResponse(BaseModel):
+    balance: int
+
+
+class MedalItem(BaseModel):
+    """一枚勋章. icon 是内联 SVG path 的名字 (不是 emoji)."""
+
+    medal_key: str
+    name: str
+    desc: str
+    icon: str
+    earned_date: date | None = None
+    meta: dict[str, Any] | None = None
+
+
+class KidMedalsResponse(BaseModel):
+    items: list[MedalItem] = []
+    locked: list[MedalItem] = []
+
+
+class PinSetRequest(BaseModel):
+    """设置家长 PIN: 4 位数字."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    pin: Annotated[str, Field(max_length=16)]
+
+    @field_validator("pin")
+    @classmethod
+    def _check_pin(cls, v: str) -> str:
+        v2 = str(v).strip()
+        if not re.fullmatch(r"\d{4}", v2):
+            raise ValueError("PIN 必须是 4 位数字")
+        return v2
+
+
+class PinVerifyRequest(BaseModel):
+    """校验家长 PIN."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    pin: Annotated[str, Field(max_length=16)]
+
+    @field_validator("pin")
+    @classmethod
+    def _check_pin(cls, v: str) -> str:
+        v2 = str(v).strip()
+        if not re.fullmatch(r"\d{4}", v2):
+            raise ValueError("PIN 必须是 4 位数字")
+        return v2
+
+
+class PinStatusResponse(BaseModel):
+    enabled: bool
+
+
+class PinVerifyResponse(BaseModel):
+    ok: bool
 
 
 # ====== Analytics ======

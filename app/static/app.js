@@ -250,6 +250,116 @@ function toast(msg, ms = 3000) {
   toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
+// ====== 双角色状态机 (2026-11-01) ======
+// 角色不是"两套产品", 而是**同一份数据的两种读法**:
+//   孩子读方格本 + 星星罐, 家长读备课本 + 批改台。
+// 因此角色只落在两处:
+//   <html data-role>  —— 皮肤 (CSS 按它换令牌与底纹)
+//   localStorage      —— 下次打开还记得
+// 首帧防闪靠 index.html <head> 里的内联脚本 (它比 app.js 先跑),
+// 这里只负责"运行中切换"与"切换之后重画"。
+const ROLE_KEY = 'st.role';
+const ROLE_PARENT = 'parent';
+const ROLE_KID = 'kid';
+// 孩子端能进的页面只有这三个: 登记 / 周计划 / 设置都是家长的事。
+const KID_TABS = ['board', 'list', 'review'];
+// 两个角色共用同一套 Tab 键, 只是标签与内容不同。
+const TAB_LABELS = {
+  parent: { board: '今日', list: '日历', review: '复盘' },
+  kid: { board: '今日', list: '日历', review: '成绩单' },
+};
+
+function currentRole() {
+  return document.documentElement.dataset.role === ROLE_KID ? ROLE_KID : ROLE_PARENT;
+}
+
+function isKidRole() {
+  return currentRole() === ROLE_KID;
+}
+
+// 孩子端强行访问 #/entry / #/week / #/settings 时, 这里放行不了。
+function roleAllowsTab(tab) {
+  return !isKidRole() || KID_TABS.includes(tab);
+}
+
+function persistRole(role) {
+  try { localStorage.setItem(ROLE_KEY, role); } catch (e) { /* 隐私模式: 只是不记住 */ }
+}
+
+// 导航标签与家长专属入口按角色切换。
+function applyRoleNav() {
+  const kid = isKidRole();
+  const labels = TAB_LABELS[currentRole()];
+  document.querySelectorAll('#tabs button[data-tab]').forEach(b => {
+    const t = b.dataset.tab;
+    const span = b.querySelector('span');
+    if (labels[t] && span) span.textContent = labels[t];
+    // 家长专属的深链落点 (登记 / 周计划 / 设置) 永远不进 Tab 栏:
+    // 它们的入口在页面里, 占着 Tab 的位置会把三栏挤成两栏半。
+    if (!labels[t]) b.style.display = 'none';
+  });
+  // 页面内的家长专属入口 (今日页「＋ 登记作业」、日历页「周计划」)
+  document.querySelectorAll('.view-parent-only').forEach(b => {
+    b.style.display = kid ? 'none' : '';
+  });
+  // 头像菜单整套是家长的东西 (设置 / 数据导出 / 隐私说明)
+  const menuWrap = document.getElementById('role-menu-wrap');
+  if (menuWrap) menuWrap.style.display = kid ? 'none' : '';
+  // 角色切换按钮的文案: 家长端显示「切到孩子」, 孩子端显示「家长」
+  const sw = document.getElementById('role-switch');
+  if (sw) {
+    sw.textContent = kid ? '家长' : '切到孩子';
+    sw.setAttribute('aria-label', kid ? '切换到家长端' : '切换到孩子端');
+  }
+  // 复盘页在两个角色下是两页东西, 标题也得跟着换
+  const rt = document.getElementById('review-title');
+  if (rt) rt.textContent = kid ? '我的成绩单' : '周期复盘';
+  // 孩子端只看本周成绩单, 上周/本月对他没有意义
+  document.querySelectorAll('.period-btn').forEach(b => {
+    if (b.dataset.period === 'current') return;
+    b.style.display = kid ? 'none' : '';
+  });
+}
+
+// 切换角色: 落状态 → 改导航 → 重画当前页。
+function applyRoleSwitch(role) {
+  const next = role === ROLE_KID ? ROLE_KID : ROLE_PARENT;
+  if (next === currentRole()) return;
+  document.documentElement.dataset.role = next;
+  persistRole(next);
+  // 日历默认看哪张脸由角色决定: 孩子端贴纸册, 家长端完成情况。
+  _calMode = next === ROLE_KID ? 'sticker' : 'completion';
+  applyRoleNav();
+  // 重画当前页: 同一份数据换个读法 (孩子端换成星星罐, 家长端换成批改台)
+  switchTab(_activeTab || DEFAULT_TAB, { updateUrl: false });
+}
+
+// 角色切换按钮: 孩子 → 家长要过 PIN 门槛 (门槛弹层在 dual.js)。
+// dual.js 没加载时直接放行 —— 那时连家长端都渲染不出来, 卡住毫无意义。
+function requestRoleSwitch() {
+  if (!isKidRole()) { applyRoleSwitch(ROLE_KID); return; }
+  if (typeof openPinGate === 'function') {
+    openPinGate(() => applyRoleSwitch(ROLE_PARENT));
+    return;
+  }
+  applyRoleSwitch(ROLE_PARENT);
+}
+
+// 护眼模式 (规范 §2.4): 设置页开关, 状态存 localStorage, 只改 <html> 上的
+// data-eyecare —— CSS 那边已经写好规则, 前端只管设属性。
+const EYECARE_KEY = 'st.eyecare';
+
+function eyecareOn() {
+  try { return localStorage.getItem(EYECARE_KEY) === 'on'; } catch (e) { return false; }
+}
+
+function applyEyecare(on) {
+  document.documentElement.dataset.eyecare = on ? 'on' : 'off';
+  try { localStorage.setItem(EYECARE_KEY, on ? 'on' : 'off'); } catch (e) { /* 只是不记住 */ }
+  const box = document.getElementById('chk-eyecare');
+  if (box) box.checked = !!on;
+}
+
 // ====== Tab 切换 + hash 路由 (2026-09-28) ======
 // 每个菜单页有独立 URI, 方便直接打开/收藏/分享:
 //   #/board 看板  #/entry 登记  #/list 日历
@@ -261,10 +371,24 @@ function toast(msg, ms = 3000) {
 // "本月", 名字里带 weekly 已与内容不符。
 const TABS = ['board', 'entry', 'list', 'week', 'review', 'settings'];
 const DEFAULT_TAB = 'board';
+// 当前所在的 Tab。角色切换后要按它重画, 所以得记着。
+let _activeTab = DEFAULT_TAB;
 
 // 抑制 hashchange 回调里的再次写回, 否则 switchTab <-> hashchange
 // 会互相触发形成死循环(表现是点菜单后页面瞬间白屏)。
 let _syncingHash = false;
+
+// 最近一次已经路由过去的 (hash, tab)。
+//
+// 背景: 同一次导航, 浏览器会连着发 hashchange 和 popstate 两个事件, 两个都
+// 绑在 applyHashRoute 上就会把当前页渲染两遍 —— 复盘页会并排出现两份周报,
+// 接口也多打一倍 (2026-11-01 实测: 一次 #/list -> #/review 触发 2 次
+// loadReview)。孩子端更明显: 成绩单会出现两个 .kid-report。
+//
+// 判据是"hash 与 tab 都和上次一样" —— 同一次导航的第二个事件一定命中;
+// 而真正的下一次导航(hash 或 tab 至少变一样)不会误伤。
+let _lastRoutedHash = null;
+let _lastRoutedTab = null;
 
 function tabFromHash() {
   const raw = String(location.hash || '').replace(/^#\/?/, '').trim();
@@ -273,6 +397,14 @@ function tabFromHash() {
 
 function switchTab(name, opts) {
   const tab = TABS.includes(name) ? name : DEFAULT_TAB;
+  // 孩子端不许进家长页: 强行访问 #/entry / #/week / #/settings 时
+  // 静默回退到今日页 —— 不报错也不弹窗, 孩子看到报错页只会更乱。
+  // 地址栏也一并换回 #/board: 留着 #/entry 会让人以为自己还在家长页。
+  if (!roleAllowsTab(tab)) {
+    try { history.replaceState({ tab: DEFAULT_TAB }, '', '#/' + DEFAULT_TAB); } catch (e) { /* 老浏览器没有 replaceState 就算了 */ }
+    return switchTab(DEFAULT_TAB, opts);
+  }
+  _activeTab = tab;
   const updateUrl = !opts || opts.updateUrl !== false;
   // 浏览器前进/后退触发的调用不再写回 hash, 否则会把历史记录钉死,
   // 用户按返回键看似回到上一页, 实际又被我们推回同一个 tab。
@@ -285,6 +417,12 @@ function switchTab(name, opts) {
       _syncingHash = false;
     }
   }
+
+  // 记住这次路由落在哪 —— applyHashRoute 用它判断"是不是同一次导航的
+  // 第二个事件"(hashchange + popstate)。少了这一步, 从 #/review 用浏览器
+  // 后退键回 #/review 时会被误判成重复而跳过渲染。
+  _lastRoutedHash = location.hash || '';
+  _lastRoutedTab = tab;
 
   document.querySelectorAll('#tabs button').forEach(b => {
     const active = b.dataset.tab === tab;
@@ -318,9 +456,16 @@ document.querySelectorAll('#tabs button').forEach(btn => {
 
 // 前进/后退: 只切视图, 不写回 URL(见 switchTab 里 syncUrl 的说明)
 function applyHashRoute() {
+  const tab = tabFromHash();
+  const hash = location.hash || '';
+  // 同一次导航浏览器会连着发 hashchange 和 popstate, 两个事件都绑到这里。
+  // 不去重就会把当前页渲染两遍 —— 复盘页并排出现两份周报, 孩子端出现两份
+  // 成绩单, 接口也多打一倍。hash 与 tab 都跟上一次一样 => 是同一次导航的
+  // 第二个事件, 跳过。(switchTab 内部会把这两个值记下来)
+  if (hash === _lastRoutedHash && tab === _lastRoutedTab) return;
   _syncingHash = true;
   try {
-    switchTab(tabFromHash(), { updateUrl: false });
+    switchTab(tab, { updateUrl: false });
   } finally {
     _syncingHash = false;
   }
@@ -447,6 +592,41 @@ async function loadBoard() {
     attachLogs(b.optional_items);
     await loadBoardDateTabs();
     root.innerHTML = '';
+    // 双角色 (2026-11-01): 同一份数据两种读法。
+    // 孩子端走 renderKidBoard (dual.js), 家长端走 renderParentBoard。
+    if (isKidRole()) {
+      renderKidBoardWhenReady(b, root);
+    } else {
+      renderParentBoard(b, root);
+    }
+  } catch (e) {
+    root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
+  }
+  if (scroller) scroller.scrollTop = _boardScroll;
+}
+
+// 孩子端看板的渲染函数在 dual.js 里。
+// 2026-11-01: dual.js 已挪到 app.js **之前** (见 index.html 的注释),
+// 所以正常情况下 renderKidBoard 一开始就在, 不必等。
+// 但这层兜底留着 —— 脚本顺序将来若又被改回去, 等 DOMContentLoaded
+// 至少能保证 dual.js 执行完, 而不是静默把孩子的看板画成家长的。
+function renderKidBoardWhenReady(b, root) {
+  const paint = () => {
+    if (typeof renderKidBoard === 'function') renderKidBoard(b, root);
+    else renderParentBoard(b, root);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', paint, { once: true });
+  } else {
+    paint();
+  }
+}
+
+// 家长端批改台 (2026-11-01 双角色改造)
+// 概览卡 + 待完成/已收尾分区沿用既有结构与类名 (tests/test_density.py 逐字钉着),
+// 在它上面加一行数据卡与一句直白结论, 任务行换成可勾选的密集行, 顶部挂批量操作条。
+function renderParentBoard(b, root) {    const titleEl = document.getElementById('board-title');
+    if (titleEl) titleEl.textContent = b.label === '今天' ? '今日' : (b.label || '今日');
     if (b.is_late_night) {
       root.appendChild(el('<p class="muted">已是凌晨, 注意休息</p>'));
     }
@@ -526,8 +706,26 @@ async function loadBoard() {
     // 夸奖横幅 (2026-10-29): 全部做完时从概览卡里提出来, 独立成一条
     // 横幅放在卡片上方 —— 概览卡是"信息", 横幅是"事件", 后者不该被前者
     // 压成一行小字。庆祝态下卡内不再重复渲染那句提示。
-    const hintEl = hintBlock(hint);
+    //
+    // 2026-11-01: 横幅**只在庆祝态**出现。非庆祝态的提示语已经在下面
+    // 概览卡里渲染过一遍 (${hint && !hint.celebrate ? ...}), 两处都渲染
+    // 会让"还剩 3 项,大约还要 65 分钟"在同一屏上出现两次 —— 家长会以为
+    // 页面坏了。之前一直没被发现, 是因为那天唯一一条作业已完成, 走的是
+    // 庆祝分支; 演示数据一多才暴露出来。
+    const hintEl = hint && hint.celebrate ? hintBlock(hint) : null;
     if (hintEl) root.appendChild(hintEl);
+
+    // ====== 批改台数据卡 (2026-11-01 双角色改造) ======
+    // 三张卡只回答三个问题: 做到哪了 / 还要写多久 / 时间花在哪个科上。
+    // 概览卡下面那句直白结论是同一套原则 (规范 §6.2): 家长端每个数字
+    // 后面都要跟一句人话, 不能只丢一个百分比让人自己解读。
+    root.appendChild(renderParentStatRow({
+      p, pct, pending, settledCount: settled.length, estRemaining, subjStats,
+    }));
+    const estTotal = p.est_total || 0;
+    const actTotal = p.actual_total || 0;
+    root.appendChild(el(`<div class="p-insight">${escapeAttr(
+      buildBoardInsight({ pct, pending, estRemaining, estTotal, actTotal }))}</div>`));
 
     root.appendChild(el(`
       <div class="progress-bar">
@@ -587,9 +785,11 @@ async function loadBoard() {
       const card = open
         ? el(`<div class="card ${cls || ''}"><div class="card-title">${title}<span class="count">${doneN}/${items.length}</span></div><div class="card-body"></div></div>`)
         : el(`<details class="card ${cls || ''}"><summary class="card-title">${title}<span class="count">${doneN}/${items.length}</span></summary><div class="card-body"></div></details>`);
-      items.forEach(item => card.querySelector('.card-body').appendChild(renderAssignment(item, true, null, _focusActualId)));
+      items.forEach(item => card.querySelector('.card-body').appendChild(renderParentRow(item, null, _focusActualId)));
       root.appendChild(card);
     };
+    // 批量操作条 (2026-11-01): 勾选 >=1 条才出现, 固定在任务区顶部。
+    renderParentBatchBar(root);
     section('待完成', pending, 'sec-pending', true);
     section('已收尾', settled, 'sec-settled', false);
 
@@ -606,10 +806,225 @@ async function loadBoard() {
     }
     // 晚间小结 (M3 日结): 只放在"今天", 是每晚的固定收尾动作。
     if (b.is_today) renderDailyWrap(root, b.date);
-  } catch (e) {
-    root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
+}
+
+// ====== 计时器 (2026-11-01, 规范 §7.2) ======
+//
+// 计时状态**只存内存**: 刷新即丢。刻意不写 localStorage —— 半截的
+// 计时状态存进磁盘, 隔天回来是个早就停了的表, 反而误导人。
+const _timers = new Map();   // assignment_id -> { startedAt, handle }
+
+function fmtElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// 「开始计时」按钮。再点一次停止, 停止后把分钟数 (四舍五入, 最少 1)
+// 写进 actual_minutes —— 走既有的 PATCH /api/assignments/{id}/completion。
+// 放在 renderAssignment 之外: 补用时那条路径 (展开输入框) 有自己的一套
+// 焦点与预填逻辑, 两边混在一起会互相干扰。
+function renderTimerButton(item, opts) {
+  const o = opts || {};
+  const btn = el(`<button type="button" class="p-timer ${o.cls || ''}" aria-label="开始计时">开始计时</button>`);
+  const label = el('<span class="p-timer__label"></span>');
+  const wrap = el('<span class="p-timer-wrap"></span>');
+  wrap.append(btn, label);
+  const stop = async () => {
+    const t = _timers.get(item.id);
+    if (!t) return;
+    clearInterval(t.handle);
+    _timers.delete(item.id);
+    const minutes = Math.max(1, Math.round((Date.now() - t.startedAt) / 60000));
+    btn.textContent = '开始计时';
+    btn.classList.remove('is-running');
+    label.textContent = '';
+    try {
+      await api('PATCH', `/assignments/${item.id}/completion`, { actual_minutes: minutes });
+      toast(`已记录 ${minutes} 分钟`);
+      if (o.onDone) o.onDone();
+    } catch (e) {
+      toast('计时没记上: ' + e.message);
+    }
+  };
+  btn.addEventListener('click', () => {
+    if (_timers.has(item.id)) { stop(); return; }
+    const startedAt = Date.now();
+    const handle = setInterval(() => {
+      label.textContent = `已计 ${fmtElapsed(Date.now() - startedAt)}`;
+    }, 500);
+    _timers.set(item.id, { startedAt, handle });
+    btn.textContent = '停止计时';
+    btn.classList.add('is-running');
+    label.textContent = '已计 00:00';
+  });
+  return wrap;
+}
+
+// ====== 家长端批改台组件 (2026-11-01 双角色改造) ======
+//
+// 数据卡 / 直白结论 / 密集行 / 批量条 —— 四块都是**加**在既有概览卡与
+// 分区之上的, 没有改动 renderAssignment 的产出: 任务行的动作按钮
+// (完成/重做/今天不做/选做/补用时/编辑/删除) 仍然只有一处实现,
+// 两边各写一套迟早会漂移 (改了一处忘了另一处, 家长点到的却是不存在的按钮)。
+
+// 一句人话结论 (规范 §6.2)。家长端每个数据后面都要跟一句结论,
+// 不能只丢一个百分比让人自己解读。没有"平时"基准可比 (后端没给),
+// 所以拿实际用时与预估用时比 —— 这两个数同源, 对得上账。
+function buildBoardInsight({ pct, pending, estRemaining, estTotal, actTotal }) {
+  if (!pending) return '今天的必做全部完成, 收工。';
+  if (actTotal > 0 && estTotal > 0) {
+    const diff = actTotal - estTotal;
+    if (diff < 0) return `实际用时比预估少 ${Math.abs(diff)} 分钟, 效率不错。`;
+    if (diff > 0) return `实际用时比预估多 ${diff} 分钟, 今天偏慢一些。`;
+    return '实际用时和预估一样, 节奏稳。';
   }
-  if (scroller) scroller.scrollTop = _boardScroll;
+  return `还有 ${pending} 项没做完, 大约还要 ${estRemaining} 分钟。`;
+}
+
+// 三张数据卡: 完成率 / 剩余用时 / 学科分布。
+function renderParentStatRow({ p, pct, pending, settledCount, estRemaining, subjStats }) {
+  const estTotal = p.est_total || 0;
+  const bars = subjStats.length
+    ? subjStats.map(s => {
+        const w = estTotal ? Math.round(s.total / estTotal * 100) : 0;
+        return `<span class="p-stat__bar"><i class="p-stat__bar-fill ${s.className}" style="width:${w}%"></i>`
+          + `<em>${escapeAttr(s.label)} ${w}%</em></span>`;
+      }).join('')
+    : '<span class="muted">今天没有必做科目</span>';
+  return el(`
+    <div class="p-stat-row">
+      <div class="p-stat">
+        <div class="p-stat__num">${pct}<span class="p-stat__unit">%</span></div>
+        <div class="p-stat__label">完成率</div>
+        <div class="p-stat__hint">${settledCount}/${p.required} 项已收尾</div>
+      </div>
+      <div class="p-stat">
+        <div class="p-stat__num">${estRemaining}<span class="p-stat__unit">分</span></div>
+        <div class="p-stat__label">剩余用时</div>
+        <div class="p-stat__hint">还要写多久</div>
+      </div>
+      <div class="p-stat p-stat--dist">
+        <div class="p-stat__label">学科分布</div>
+        <div class="p-stat__bars">${bars}</div>
+        <div class="p-stat__hint">按预估用时占比</div>
+      </div>
+    </div>
+  `);
+}
+
+// 家长端任务行 (2026-11-01): 左侧一个勾选框 (批量操作用), 右边沿用既有的
+// 任务行 —— 状态/操作按钮仍由 renderAssignment 出, 两边各写一套动作逻辑
+// 迟早会漂移 (改了一处忘了另一处, 家长点到的却是不存在的按钮)。
+//
+// 额外给几个元素补上 p-row__* 的类名 (运行时加, 不动 renderAssignment 的
+// 模板): CSS 那边要按 p-row 的结构写样式, 得有钩子可挂。
+function renderParentRow(item, onChange, focusActualFor) {
+  const row = el('<div class="p-row"></div>');
+  const check = el('<input type="checkbox" class="p-row__check" aria-label="选择这条作业" />');
+  check.dataset.id = item.id;
+  check.addEventListener('change', () => { if (_batchRefresh) _batchRefresh(); });
+  row.appendChild(check);
+  const body = renderAssignment(item, true, onChange, focusActualFor);
+  body.classList.add('p-row__body');
+  const nameEl = body.querySelector('.task-name');
+  if (nameEl) nameEl.classList.add('p-row__name');
+  const minsEl = body.querySelector('.est-min');
+  if (minsEl) minsEl.classList.add('p-row__mins');
+  // 计时器: 每张任务卡都有, 停止后把分钟数写进 actual_minutes。
+  const timer = renderTimerButton(item, {
+    cls: 'p-timer-btn',
+    onDone: onChange || (() => loadBoard()),
+  });
+  const acts = body.querySelector('.row-actions');
+  if (acts) acts.appendChild(timer);
+  row.appendChild(body);
+  return row;
+}
+
+// 批量条刷新回调。勾选框在 renderParentRow 里, 批量条在这里, 两处不在
+// 同一个 DOM 子树里, 用一个模块级回调把状态接起来 (比事件委托少一层
+// 间接, 也不会在每次重绘时叠加监听器)。
+let _batchRefresh = null;
+
+// 批量操作条。勾选 >=1 条才出现 (hidden 由 JS 控制, 下滑入的动效交给 CSS)。
+function renderParentBatchBar(root) {
+  const bar = el(`<div class="p-batch-bar" hidden>
+    <label class="p-batch-all"><input type="checkbox" class="p-batch-all__check" /> 全选</label>
+    <span class="p-batch-count">已选 0 项</span>
+    <button type="button" class="p-batch-btn" data-batch="optional">设为选做</button>
+    <button type="button" class="p-batch-btn" data-batch="unoptional">取消选做</button>
+    <button type="button" class="p-batch-btn" data-batch="tomorrow">改到明天</button>
+    <button type="button" class="p-batch-btn p-batch-btn--danger" data-batch="delete">删除</button>
+  </div>`);
+  const countEl = bar.querySelector('.p-batch-count');
+  const allEl = bar.querySelector('.p-batch-all__check');
+  const boxes = () => Array.from(root.querySelectorAll('.p-row__check'));
+  const refresh = () => {
+    const all = boxes();
+    const n = all.filter(cb => cb.checked).length;
+    countEl.textContent = `已选 ${n} 项`;
+    allEl.checked = all.length > 0 && n === all.length;
+    bar.hidden = n === 0;
+    bar.classList.toggle('is-on', n > 0);
+  };
+  _batchRefresh = refresh;
+  allEl.addEventListener('change', () => {
+    boxes().forEach(cb => { cb.checked = allEl.checked; });
+    refresh();
+  });
+  bar.querySelectorAll('.p-batch-btn').forEach(btn => {
+    btn.addEventListener('click', () => runBatchAction(btn.dataset.batch));
+  });
+  root.appendChild(bar);
+  return bar;
+}
+
+// 批量动作。全部走**已有接口**, 不新增后端端点 (规范 §7.3):
+//   设为选做/取消选做 -> PATCH /api/assignments/{id}/optional
+//   改到明天         -> PATCH /api/assignments/{id} {due_date: 明天}
+//   删除             -> DELETE /api/assignments/{id} (必须二次确认)
+async function runBatchAction(kind) {
+  const ids = Array.from(document.querySelectorAll('.p-row__check:checked'))
+    .map(cb => cb.dataset.id);
+  if (!ids.length) { toast('先勾选要处理的作业'); return; }
+  if (kind === 'delete') {
+    const ok = await confirmDialog({
+      title: `删除这 ${ids.length} 条作业?`,
+      lead: '这些作业会从看板和统计里一并移除, 且无法恢复。',
+      note: '已完成的作业后端不允许删除, 那几条会被自动跳过。',
+      okText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    let n = 0;
+    for (const id of ids) {
+      try { await api('DELETE', `/assignments/${id}`); n++; }
+      catch (e) { toast('删除失败: ' + e.message); }
+    }
+    toast(n ? `已删除 ${n} 条` : '没有可删除的作业');
+    loadBoard();
+    return;
+  }
+  const tomorrow = addDays(todayStr(), 1);
+  let n = 0;
+  for (const id of ids) {
+    try {
+      if (kind === 'optional') {
+        await api('PATCH', `/assignments/${id}/optional`, { is_optional: true });
+      } else if (kind === 'unoptional') {
+        await api('PATCH', `/assignments/${id}/optional`, { is_optional: false });
+      } else if (kind === 'tomorrow') {
+        await api('PATCH', `/assignments/${id}`, { due_date: tomorrow });
+      }
+      n++;
+    } catch (e) {
+      toast('批量操作失败: ' + e.message);
+    }
+  }
+  const label = kind === 'optional' ? '设为选做'
+    : kind === 'unoptional' ? '取消选做' : '改到明天';
+  toast(`已${label} ${n} 项`);
+  loadBoard();
 }
 
 // ====== 晚间小结 (M3 日结) ======
@@ -620,6 +1035,13 @@ async function loadBoard() {
 const DW_DIFFICULTY = [['easy', '轻松'], ['ok', '刚好'], ['hard', '有点难']];
 const DW_FOCUS = [['good', '很专心'], ['ok', '一般'], ['bad', '容易分心']];
 const DW_MOOD = [['good', '开心'], ['ok', '平静'], ['bad', '有点烦']];
+// 标签快选 (2026-11-01 双角色改造, 规范 §4.7): 原来的自由文本备注框
+// 换成点选即用的标签 —— 家长晚上已经累了, 打一句话的成本比点一下高得多。
+// code 与后端 daily_reflections.tags 允许的值一一对应 (规范 §5.6)。
+const DW_TAGS = [
+  ['slow_writing', '写字慢'], ['reread', '读题走神'], ['many_errors', '错题多'],
+  ['unfamiliar', '内容不熟'], ['good_pace', '速度正好'], ['focused', '很专心'],
+];
 
 function renderDailyWrap(root, date) {
   const box = el('<div class="daily-wrap-slot"></div>');
@@ -657,6 +1079,11 @@ function paintDailyWrap(box, w) {
     focus: r.focus || null,
     mood: r.mood || null,
   };
+  // 标签多选。后端存的是逗号分隔的 code, DTO 可能给数组也可能给字符串,
+  // 两种都接住 (规范 §5.6)。
+  const tags = new Set(
+    (Array.isArray(r.tags) ? r.tags : String(r.tags || '').split(','))
+      .map(t => String(t).trim()).filter(Boolean));
   const suggestions = (w.suggestions || [])
     .map(t => `<li>${escapeAttr(t)}</li>`).join('');
   const card = el(`
@@ -674,9 +1101,10 @@ function paintDailyWrap(box, w) {
         ${lite ? '' : dwChoicesHtml('focus', '今天专注', DW_FOCUS, selected.focus)}
         ${dwChoicesHtml('mood', '今天情绪', DW_MOOD, selected.mood)}
       </div>
-      <input class="dw-note" maxlength="200" aria-label="今晚备注"
-             placeholder="想记一句？比如：数学卡在应用题"
-             value="${escapeAttr(r.note || '')}" />
+      ${r.note ? `<p class="dw-note-static muted">今晚备注: ${escapeAttr(r.note)}</p>` : ''}
+      <div class="dw-tags" role="group" aria-label="今晚的情况快选">
+        ${DW_TAGS.map(([code, text]) => `<button type="button" class="dw-tag${tags.has(code) ? ' active' : ''}" data-tag="${code}" aria-pressed="${tags.has(code)}">${text}</button>`).join('')}
+      </div>
       <div class="dw-save-row">
         <button type="button" class="primary dw-save">${w.reflection ? '更新小结' : '保存小结'}</button>
         <span class="dw-saved muted">${w.reflection ? '今晚已记录' : '难度和情绪选一下就能保存'}</span>
@@ -696,6 +1124,16 @@ function paintDailyWrap(box, w) {
     });
   });
 
+  // 标签快选: 点一下就选中/取消, 多选。
+  card.querySelectorAll('.dw-tag').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const code = btn.dataset.tag;
+      if (tags.has(code)) tags.delete(code); else tags.add(code);
+      btn.classList.toggle('active', tags.has(code));
+      btn.setAttribute('aria-pressed', tags.has(code) ? 'true' : 'false');
+    });
+  });
+
   card.querySelector('.dw-save').addEventListener('click', async () => {
     if (!selected.difficulty || !selected.mood) {
       toast('先选一下今天的难度和情绪');
@@ -705,7 +1143,8 @@ function paintDailyWrap(box, w) {
       date: w.date,
       difficulty: selected.difficulty,
       mood: selected.mood,
-      note: card.querySelector('.dw-note').value.trim() || null,
+      note: null,
+      tags: Array.from(tags),
     };
     // 低年级两问版没有专注一题; 用户在普通模式没点专注时也不强制。
     if (!lite && selected.focus) payload.focus = selected.focus;
@@ -2757,6 +3196,12 @@ function renderCalendar() {
   if (!r) return;
   // 模式按钮与图例的选中态跟着 _calMode 走 (切月/切 Tab 回来都保持一致)
   syncCalendarMode();
+  // 孩子端的第三种模式: 贴纸册 (2026-11-01)。渲染放在 dual.js 里 ——
+  // 它要给每天的贴纸挑学科色, 得按天取一次当天作业, 比家长端的格子重。
+  if (isKidRole() && _calMode === 'sticker' && typeof renderKidCalendar === 'function') {
+    renderKidCalendar(grid, r);
+    return;
+  }
   // 记住焦点格子: 下面整块重建会销毁当前聚焦的按钮, 浏览器会把焦点
   // 交给详情区里第一个可聚焦控件 (某条作业的"实耗"输入框) 并把它滚进
   // 视野 —— 表现为"点一下日期, 页面却跳到底部", 家长紧接着敲的数字还会
@@ -2822,18 +3267,26 @@ function syncCalendarMode() {
     const on = b.dataset.calMode === _calMode;
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    // 模式按钮按角色显隐: 孩子端只看贴纸册, 家长端不看贴纸册。
+    // 三个模式都在 DOM 里 (贴纸册是**新增**的第三个, 不是替换),
+    // 但同一时刻只露出该角色用得上的那些。
+    const m = b.dataset.calMode;
+    b.style.display = (isKidRole() && m !== 'sticker') || (!isKidRole() && m === 'sticker') ? 'none' : '';
   });
   const cl = document.getElementById('cal-legend-completion');
   const hl = document.getElementById('cal-legend-heat');
   if (cl) cl.hidden = _calMode !== 'completion';
   if (hl) hl.hidden = _calMode !== 'heat';
+  const sl = document.getElementById('cal-legend-sticker');
+  if (sl) sl.hidden = _calMode !== 'sticker';
 }
 
 function setCalendarMode(mode) {
-  if (mode !== 'completion' && mode !== 'heat') return;
+  // 三个模式: 完成情况 / 用时热力图 (家长端) + 贴纸册 (孩子端)。
+  if (mode !== 'completion' && mode !== 'heat' && mode !== 'sticker') return;
   if (mode === _calMode) return;
   _calMode = mode;
-  // 数据已加载就直接重画, 不重新请求 —— 两种口径都在同一份响应里。
+  // 数据已加载就直接重画, 不重新请求 —— 三种口径都在同一份响应里。
   if (_calData) renderCalendar();
 }
 
@@ -2862,6 +3315,11 @@ function loadList(dateArg) {
 
 function renderDayDetail(root, d, items) {
   root.innerHTML = '';
+  // 孩子端用孩子口径的卡片 —— "已收尾/选做/置信度"这些是给家长看的词。
+  if (isKidRole() && typeof renderKidDayDetail === 'function') {
+    renderKidDayDetail(root, d, items);
+    return;
+  }
   if (!items.length) {
     root.appendChild(el(`
       <div class="empty">
@@ -2942,17 +3400,25 @@ function gotoDate(y, m, day) {
   loadList(_calSelected);
 }
 
+// 翻月 / 跳回今天之后, 格子全换了, 原来那张悬停卡指着的位置已经没有意义了。
+// (dual.js 的 hideCalTip 在这里可用 —— dual.js 排在本文件之前加载。)
+function hideStaleCalTip() {
+  if (typeof hideCalTip === 'function') hideCalTip();
+}
 document.getElementById('cal-prev').addEventListener('click', () => {
+  hideStaleCalTip();
   const n = shiftMonth(_calYear, _calMonth, -1);
   _calYear = n.y; _calMonth = n.m;
   loadCalendar();
 });
 document.getElementById('cal-next').addEventListener('click', () => {
+  hideStaleCalTip();
   const n = shiftMonth(_calYear, _calMonth, 1);
   _calYear = n.y; _calMonth = n.m;
   loadCalendar();
 });
 document.getElementById('cal-today').addEventListener('click', () => {
+  hideStaleCalTip();
   const t = todayParts();
   gotoDate(t.y, t.m, t.d);
 });
@@ -3047,6 +3513,23 @@ async function loadReview(period) {
   // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上
   // 留着一行永远不消失的"加载中…"。
   root.innerHTML = '';
+  // 孩子端是另一页东西: 我的成绩单 (勋章墙 + 成长报告), 家长端的
+  // 环形图/折线/偏差表对他没有意义。
+  //
+  // dual.js 正常排在 app.js 之前, renderKidReport 这时已经在了。
+  // 万一将来脚本顺序被改回去, 这里等它的 'dual-ready' 事件再画 ——
+  // 否则会静默走家长分支, 孩子端成绩单页下整段渲染出家长的周报和偏差表
+  // (2026-11-01 实测踩过: 顺序竞态, 不是逻辑错)。
+  if (isKidRole()) {
+    if (typeof renderKidReport !== 'function') {
+      await new Promise(resolve =>
+        document.addEventListener('dual-ready', resolve, { once: true }));
+    }
+    if (typeof renderKidReport === 'function') {
+      await renderKidReport(root, period);
+    }
+    return;
+  }
   // 周报只在本周出现: 它回答的是"这周过得怎么样", 而 /weekly-report 永远
   // 算的是本周。切到「上周」「本月」时下面的统计区间已经换了, 再挂一份
   // 本周周报会让人以为那些数字属于当前所选区间 —— 所以非本周一律不展示
@@ -3062,6 +3545,16 @@ async function loadReview(period) {
   if (report) root.appendChild(report);
   root.appendChild(await timeP);
   root.appendChild(await devP);
+  // 家长端新增的复盘可视化 (环形占比 / 每日折线 / 薄弱项 / 挪到下周)。
+  // 渲染在 dual.js 里 —— 它要额外发几次请求取按天的用时与小结标签。
+  //
+  // 放在最前面而不是追加在末尾: 旧的周报块内容很长 (负荷表 / 偏差表 / 口径说明
+  // 都在里面), 追加的话这三张图要滚过三屏才看得到, 家长根本等不到。
+  // 「先看结论再看明细」和用户在复盘页的诉求是一致的 —— 环形图就是结论。
+  if (typeof renderParentReviewExtras === 'function') {
+    const extras = await renderParentReviewExtras(period);
+    root.insertBefore(extras, root.firstChild);
+  }
 }
 
 // ====== 本周课后周报 (M6) ======
@@ -3112,7 +3605,9 @@ function renderWeeklyReport(r) {
     const ul = el('<ul class="report-list"></ul>');
     c.unfinished.slice(0, 6).forEach(u => {
       const who = u.subject || u.project_name || '';
-      ul.appendChild(el(`<li>${escapeAttr(u.weekday)}${who ? ' · ' + escapeAttr(who) : ''} · ${escapeAttr(u.task_name)}</li>`));
+      // data-* 是给「挪到下周」用的: 周报返回的未完成项里没有 assignment id
+      // (后端没给), 只能按日期 + 任务名去当天列表里对上号。
+      ul.appendChild(el(`<li data-date="${escapeAttr(u.date || '')}" data-task="${escapeAttr(u.task_name)}" data-subject="${escapeAttr(u.subject || '')}">${escapeAttr(u.weekday)}${who ? ' · ' + escapeAttr(who) : ''} · ${escapeAttr(u.task_name)}</li>`));
     });
     block.appendChild(ul);
     card.appendChild(block);
@@ -4419,7 +4914,70 @@ document.getElementById('btn-export').addEventListener('click', () => {
   window.location.href = API + '/export';
 });
 
+// ====== 双角色接线 (2026-11-01) ======
+// 角色切换按钮: 家长端「切到孩子」, 孩子端「家长」。
+const roleSwitchBtn = document.getElementById('role-switch');
+if (roleSwitchBtn) roleSwitchBtn.addEventListener('click', requestRoleSwitch);
+
+// 头像菜单 (设置 / 数据导出 / 隐私说明)。显隐用 inline style + hidden
+// 属性双写: 作者样式里的 display 会盖掉 UA 的 [hidden] 规则, 只写
+// hidden 属性的话菜单照样显示出来。
+const roleMenuBtn = document.getElementById('role-menu-btn');
+const roleMenu = document.getElementById('role-menu');
+function closeRoleMenu() {
+  if (!roleMenu) return;
+  roleMenu.hidden = true;
+  roleMenu.classList.remove('is-open');
+  roleMenu.style.display = 'none';
+  if (roleMenuBtn) roleMenuBtn.setAttribute('aria-expanded', 'false');
+}
+if (roleMenuBtn && roleMenu) {
+  roleMenuBtn.addEventListener('click', () => {
+    const open = roleMenu.hidden;
+    roleMenu.hidden = !open;
+    roleMenu.classList.toggle('is-open', open);
+    roleMenu.style.display = open ? 'block' : 'none';
+    roleMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  roleMenu.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-role-action]');
+    if (!item) return;
+    const act = item.dataset.roleAction;
+    closeRoleMenu();
+    if (act === 'settings') {
+      switchTab('settings');
+    } else if (act === 'export') {
+      // 导出落在设置页 (那里的按钮才是真正的下载入口), 顺手把它点一下。
+      switchTab('settings');
+      const btn = document.getElementById('btn-export');
+      if (btn) btn.click();
+    } else if (act === 'privacy') {
+      switchTab('settings');
+      const card = document.getElementById('privacy-card');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
+}
+
+// 护眼模式开关 (设置页)
+const eyecareBox = document.getElementById('chk-eyecare');
+if (eyecareBox) {
+  eyecareBox.checked = eyecareOn();
+  eyecareBox.addEventListener('change', () => applyEyecare(eyecareBox.checked));
+}
+
+// 家长端专属页的入口 (孩子端看不到这两个按钮 —— applyRoleNav 负责隐藏)
+const entryTodayBtn = document.getElementById('btn-entry-today');
+if (entryTodayBtn) entryTodayBtn.addEventListener('click', () => switchTab('entry'));
+const weekPlanBtn = document.getElementById('btn-week-plan');
+if (weekPlanBtn) weekPlanBtn.addEventListener('click', () => switchTab('week'));
+
 // ====== 启动 ======
+// 角色与护眼模式必须先落到 <html> 上再渲染任何页面, 否则会闪一帧旧皮肤。
+applyEyecare(eyecareOn());
+// 日历默认看哪张脸由角色决定: 孩子端贴纸册, 家长端完成情况。
+if (isKidRole()) _calMode = 'sticker';
+applyRoleNav();
 loadHealth();
 // 直接打开 /#/settings 时必须先按 hash 切好页, 否则会先渲染看板再切,
 // 家长会看到一次无意义的看板请求和一闪而过的内容。

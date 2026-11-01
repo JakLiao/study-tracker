@@ -131,6 +131,26 @@ class PlanItemNotFoundError(AppError):
     default_message = "周计划项不存在"
 
 
+class InsufficientStarsError(AppError):
+    """星星不够, 不能把余额扣成负数."""
+
+    code = "4019"
+    default_message = "星星不够啦"
+
+
+class PinVerifyFailedError(AppError):
+    """家长 PIN 不匹配.
+
+    2026-11-01: 原先错 PIN 复用了 4011, 但 4011 已经被
+    SampleTooSmallError ("样本不足") 占用 —— 同一个码表达两件事,
+    排障时看到 4011 分不清是"样本太少"还是"密码错了"。
+    改成独立的 4020。
+    """
+
+    code = "4020"
+    default_message = "密码不对, 再试一次"
+
+
 # ====== 5xxx 服务端异常 ======
 class AITimeoutError(AppError):
     code = "5001"

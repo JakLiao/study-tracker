@@ -281,9 +281,100 @@ V4_STEPS: tuple[Step, ...] = (
 )
 
 
+# ====== v5: 孩子端星星 / 勋章 / 家长 PIN (双角色改造) ======
+#
+# 四张表 + 一列, 全部按规范 §5.1 落:
+#
+# kid_star_ledger  星星账本。正数=获得, 负数=消耗。同一条作业只能发一次星,
+#                  靠 idx_star_ledger_assignment_once (partial unique index)
+#                  兜住重复 PATCH —— 这是"幂等"落在 schema 上而不是应用层的
+#                  理由: 并发两个请求同时发星时, 唯一索引才是真正的裁判。
+# kid_medals       勋章。同一种勋章只记一次 (UNIQUE 约束)。
+# kid_streaks      连续天数, 一天一行 (UNIQUE)。
+# parent_access    家长 PIN。只存 PBKDF2 哈希, 不存明文; 一个家庭一条。
+#
+# 幂等要求: 每条 DDL 都带 IF NOT EXISTS, 重跑不会毁数据。
+V5_STEPS: tuple[Step, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS kid_star_ledger (
+        id            BIGSERIAL PRIMARY KEY,
+        family_id     BIGINT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        child_id      BIGINT NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+        star_date     DATE NOT NULL,
+        stars         INTEGER NOT NULL,
+        reason        TEXT NOT NULL,
+        assignment_id BIGINT REFERENCES assignments(id) ON DELETE SET NULL,
+        created_at    TIMESTAMPTZ NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_star_ledger_family_date "
+    "ON kid_star_ledger(family_id, star_date)",
+    # 同一条作业只能发一次星, 防止重复 PATCH 叠发。
+    # partial: assignment_id 可空 (手动奖励 / 全完成奖励没有对应作业),
+    # 所以索引条件必须写 WHERE assignment_id IS NOT NULL, 否则 NULL 行互相冲突。
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_star_ledger_assignment_once "
+    "ON kid_star_ledger(assignment_id) WHERE assignment_id IS NOT NULL",
+    """
+    CREATE TABLE IF NOT EXISTS kid_medals (
+        id          BIGSERIAL PRIMARY KEY,
+        family_id   BIGINT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        child_id    BIGINT NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+        medal_key   TEXT NOT NULL,
+        earned_date DATE NOT NULL,
+        meta        TEXT,
+        created_at  TIMESTAMPTZ NOT NULL,
+        UNIQUE (family_id, child_id, medal_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS kid_streaks (
+        id             BIGSERIAL PRIMARY KEY,
+        family_id      BIGINT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        child_id       BIGINT NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+        streak_date    DATE NOT NULL,
+        current_streak INTEGER NOT NULL DEFAULT 0,
+        best_streak    INTEGER NOT NULL DEFAULT 0,
+        stars_earned    INTEGER NOT NULL DEFAULT 0,
+        tasks_done     INTEGER NOT NULL DEFAULT 0,
+        updated_at     TIMESTAMPTZ NOT NULL,
+        UNIQUE (family_id, child_id, streak_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS parent_access (
+        id         BIGSERIAL PRIMARY KEY,
+        family_id  BIGINT NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+        pin_hash   TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (family_id)
+    )
+    """,
+    # 晚间小结加标签列 (多标签, 逗号分隔的 code)。
+    "ALTER TABLE daily_reflections ADD COLUMN IF NOT EXISTS tags TEXT",
+)
+
+
+# ====== v6: 星星账本补 note 列 (2026-11-01) ======
+#
+# 为什么单独一版而不是并进 v5: v5 已经在生产库跑过了 (schema_meta 记着
+# version=5), 并进去也不会重跑, 老库拿不到新列。
+#
+# 补的是什么: 账本的 reason 存的是机器码 (earn_task / bonus_manual /
+# bonus_all_done / spend), 前端按 code 映射成中文。但家长手动奖励时会写
+# 一句说明 ("今天主动复习"), 那是给人看的, 不是给程序判断的 ——
+# 之前这行字无处安放, 接口收下了参数又丢掉, 家长填了看不见。
+# note 列专门放它, code 与人话分开存。
+V6_STEPS: tuple[Step, ...] = (
+    "ALTER TABLE kid_star_ledger ADD COLUMN IF NOT EXISTS note TEXT",
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, name="baseline", steps=V1_STEPS),
     Migration(version=2, name="daily_reflections", steps=V2_STEPS),
     Migration(version=3, name="training_logs", steps=V3_STEPS),
     Migration(version=4, name="week_plan", steps=V4_STEPS),
+    Migration(version=5, name="kid_rewards", steps=V5_STEPS),
+    Migration(version=6, name="kid_reward_note", steps=V6_STEPS),
 )

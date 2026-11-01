@@ -55,6 +55,11 @@ def theme_css() -> str:
     return (VENDOR / "flatpickr-theme.css").read_text(encoding="utf-8")
 
 
+@pytest.fixture(scope="module")
+def styles_css() -> str:
+    return (ROOT / "app/static/styles.css").read_text(encoding="utf-8")
+
+
 def _rule(css: str, sel: str) -> str:
     """取某条规则的内容。
 
@@ -113,7 +118,44 @@ def _tab_label(btn_inner: str) -> str:
     return re.sub(r"<svg.*?</svg>|<[^>]+>", "", btn_inner, flags=re.S).strip()
 
 
-# ====== 1b. Tab 名称 (2026-09-28: 列表 -> 日历) ======
+# ====== 1b. Tab 名称 (2026-11-01 双角色改造: 6 个 Tab -> 3 个) ======
+#
+# 导航精简成 3 个 Tab: 今日 / 日历 / 复盘。家长端与孩子端共用同一套
+# Tab 键 (board / list / review), 只是标签不同 —— 孩子端第三个叫
+# 「成绩单」, 因为"复盘"是给家长看的词。
+#
+# 家长专属页 (登记 / 周计划 / 设置) 从 Tab 栏里退出去, 改成:
+#   - 今日页右上「＋ 登记作业」
+#   - 日历页右上「周计划」
+#   - 右上角头像菜单里的「设置」
+# 它们在 DOM 里仍然留着一个**隐藏的深链落点**按钮 (data-tab="entry" 等,
+# 直接打开 #/entry 仍能落到那一页), 但不带 .tab-ico —— 带图标的才算 Tab。
+PARENT_TABS = [("board", "今日"), ("list", "日历"), ("review", "复盘")]
+KID_TAB_LABELS = {"board": "今日", "list": "日历", "review": "成绩单"}
+# 顶栏 Tab 用到的图标 symbol —— 三个 Tab 各一个 (2026-11-01 双角色改造后
+# 导航只剩三个 Tab, 原来给"登记/周计划/设置"画的三个 symbol 已随入口
+# 一起退到页面里, 不再是 Tab 图标)。
+TAB_SYMBOLS = {"i-tab-today", "i-tab-calendar", "i-tab-review"}
+
+
+def _nav_tabs(index_html: str) -> list:
+    """只取带 .tab-ico 的那些按钮 —— 那才是 Tab。
+
+    深链落点 (登记/周计划/设置) 也带 data-tab, 但它们是页面入口而不是
+    Tab: 一个图标位都不占。
+    """
+    out = []
+    for m in re.finditer(r'<button[^>]*data-tab="([^"]+)"[^>]*>(.*?)</button>',
+                         index_html, re.S):
+        if '<svg class="tab-ico"' in m.group(2):
+            out.append((m.group(1), _tab_label(m.group(2))))
+    return out
+
+
+def test_three_tabs_in_nav(index_html):
+    """导航只有三个 Tab, 且顺序固定。"""
+    assert _nav_tabs(index_html) == PARENT_TABS
+
 
 def test_list_tab_renamed_to_calendar(index_html):
     m = re.search(r'<button[^>]*data-tab="list"[^>]*>(.*?)</button>', index_html)
@@ -122,27 +164,53 @@ def test_list_tab_renamed_to_calendar(index_html):
 
 
 def test_tab_labels_all_chinese(index_html):
-    """六个 Tab 都不该出现英文代号或版本号。"""
-    labels = [_tab_label(x) for x in
-              re.findall(r'<button[^>]*data-tab="[^"]+"[^>]*>(.*?)</button>', index_html)]
-    # 「解析」(entry) 于 2026-09-28 改名为「登记」: Tab 是给家长看的,
-    # "解析" 描述的是内部机制(AI 解析原文), 不是这一步要做的事 ——
-    # 家长做的事是"把今天的作业登记进来"。
-    # 「周计划」(week, 2026-10-30 新增): 课表与周负荷是独立的一页,
-    # 混进看板会把"今天做什么"和"这周排得下吗"两个问题挤在一屏。
-    assert labels == ["看板", "登记", "日历", "周计划", "复盘", "设置"], labels
+    """三个 Tab 都不该出现英文代号或版本号。"""
+    labels = [l for _, l in _nav_tabs(index_html)]
     for l in labels:
         assert not re.search(r"[A-Za-z]", l), l
+
+
+def test_kid_tab_labels_defined(app_js):
+    """孩子端同一套 Tab 键, 标签换成孩子的说法 (「成绩单」而不是「复盘」)。"""
+    m = re.search(r"const TAB_LABELS = \{(.*?)\n\};", app_js, re.S)
+    assert m, "缺少 TAB_LABELS 定义"
+    block = m.group(1)
+    for key, label in KID_TAB_LABELS.items():
+        assert f"{key}: '{label}'" in block, f"孩子端 {key} 应为 {label}"
+    # 家长端仍然用专业术语
+    assert "review: '复盘'" in block
+
+
+def test_parent_only_entries_are_not_tabs(index_html):
+    """登记 / 周计划 / 设置 留在 DOM 里当深链落点, 但不进 Tab 栏。"""
+    for tab in ("entry", "week", "settings"):
+        m = re.search(r'<button[^>]*data-tab="%s"[^>]*>(.*?)</button>' % tab, index_html)
+        assert m, f"缺少 {tab} 深链落点"
+        assert '<svg class="tab-ico"' not in m.group(1), f"{tab} 不该再占 Tab 的图标位"
+        assert "display:none" in m.group(0), f"{tab} 深链落点必须默认隐藏"
+
+
+def test_parent_only_page_entries_exist(index_html):
+    """家长专属页的入口: 今日页「＋ 登记作业」、日历页「周计划」、
+    右上角头像菜单里的「设置」。"""
+    assert 'id="btn-entry-today"' in index_html
+    assert 'id="btn-week-plan"' in index_html
+    assert 'id="role-menu"' in index_html
+    assert "设置" in index_html
+
+
+def test_role_switch_control_exists(index_html):
+    """角色切换按钮 (家长端「切到孩子」/ 孩子端「家长」)。"""
+    assert 'class="role-switch"' in index_html
+    assert 'id="role-switch"' in index_html
 
 
 # ====== 1c. Tab 图标 (2026-10-12) ======
 
 def test_every_tab_has_an_icon(index_html):
-    """六个 Tab 各配一个图形: 低龄用户先认形再认字。"""
-    for tab, sym in [("board", "i-tab-board"), ("entry", "i-tab-entry"),
-                     ("list", "i-tab-calendar"), ("week", "i-tab-week"),
-                     ("review", "i-tab-review"),
-                     ("settings", "i-tab-settings")]:
+    """三个 Tab 各配一个图形: 低龄用户先认形再认字。"""
+    for tab, sym in [("board", "i-tab-today"), ("list", "i-tab-calendar"),
+                     ("review", "i-tab-review")]:
         m = re.search(r'<button[^>]*data-tab="%s"[^>]*>(.*?)</button>' % tab, index_html)
         assert m, f"缺少 {tab} Tab"
         assert f'href="#{sym}"' in m.group(1), f"{tab} 缺少图标 {sym}"
@@ -153,7 +221,8 @@ def test_tab_icons_inherit_current_color(index_html):
     """图标描边必须是 currentColor: 选中态只改 button 的 color,
     图标才能跟着变色, 不必为每个 Tab 各画一份彩色版。"""
     syms = re.findall(r'<symbol id="i-tab-[^"]+".*?</symbol>', index_html, re.S)
-    assert len(syms) == 6, len(syms)
+    ids = {re.search(r'<symbol id="([^"]+)"', s).group(1) for s in syms}
+    assert ids == TAB_SYMBOLS, ids
     for s in syms:
         assert "currentColor" in s, s[:60]
         assert "#4A3728" not in s and "stroke=\"#" not in s, "图标不应写死颜色"
@@ -161,9 +230,52 @@ def test_tab_icons_inherit_current_color(index_html):
 
 def test_tab_icons_hidden_from_a11y_tree(index_html):
     """图标纯装饰, 读屏只该念出文字, 不能念两遍。"""
-    assert len(re.findall(r'<svg class="tab-ico" aria-hidden="true">', index_html)) == 6
+    assert len(re.findall(r'<svg class="tab-ico" aria-hidden="true">', index_html)) == 3
     # 文字必须包在 span 里, 否则图标与汉字会挤在一行
-    assert len(re.findall(r'<span>[^<]+</span>', index_html)) >= 6
+    assert len(re.findall(r'<span>[^<]+</span>', index_html)) >= 3
+
+
+# ====== 1d. 双角色接线 (2026-11-01) ======
+
+def test_role_applied_before_first_paint(index_html):
+    """data-role 必须在 <head> 里就落到 <html> 上, 否则首帧会闪一帧旧皮肤。
+
+    同一段内联脚本顺手把护眼模式也落上 —— 两个都是"皮肤开关"。
+    """
+    head = index_html.split("</head>")[0]
+    assert "document.documentElement" in head, "角色必须在 head 里就地设置"
+    assert "dataset.role" in head
+    assert "st.role" in head
+    assert "st.eyecare" in head
+
+
+def test_role_fonts_are_system_fonts(index_html, styles_css):
+    """孩子端楷体 / 家长端宋体, 但**不引 CDN**。
+
+    本项目是本地部署, 要求离线可用 —— tests/test_datepicker.py 的
+    test_no_cdn_dependency 已经钉住"页面不得直接引用外部 CDN"。
+    楷体/宋体在 Windows(KaiTi/SimSun)与 macOS(Kaiti SC/Songti SC)
+    都自带, 用系统字体既保住了角色区分, 又不引入网络依赖。
+    """
+    for bad in ("fonts.googleapis.com", "fonts.gstatic.com", "LXGW+WenKai+TC"):
+        assert bad not in index_html, f"不应依赖外部字体 CDN: {bad}"
+    # 字体栈写在 styles.css 里, 两个角色的 display 字体不能是同一个
+    assert "KaiTi" in styles_css or "Kaiti" in styles_css, "孩子端 display 字体应为楷体"
+    assert "SimSun" in styles_css or "Songti" in styles_css, "家长端 display 字体应为宋体"
+
+
+def test_privacy_note_moved_to_settings(index_html):
+    """隐私说明从页脚搬进设置页 (规范 §8): 首页不再常驻这行字。"""
+    foot = re.search(r"<footer>(.*?)</footer>", index_html, re.S).group(1)
+    assert "不上传到任何服务器" not in foot, "首页不该再常驻隐私声明"
+    settings = re.search(r'<section id="view-settings".*?</section>', index_html, re.S).group(0)
+    assert "不上传到任何服务器" in settings, "隐私说明应移进设置页"
+    assert 'id="api-info"' in settings, "#api-info 这个 id 要保留"
+
+
+def test_footer_element_still_there(index_html):
+    """footer 元素本身必须保留: 移动端 CSS 依赖它给手势条留出空间。"""
+    assert re.search(r"<footer>", index_html)
 
 
 def test_view_id_unchanged(index_html):

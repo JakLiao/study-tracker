@@ -7,49 +7,82 @@
  * =====================================================================
  */
 
-/* ===== 1. 设计令牌 (颜色 / 间距 / 字号 / 圆角 / 阴影) ===== */
+/* ===== 1. 设计令牌 (颜色 / 间距 / 字号 / 圆角 / 阴影) =====
+ * 2026-11-01 双角色改造 (规范 docs/07 §2 / §3):
+ *   - 颜色换成规范 §2.1 的共用色板 (学科色 / 状态色), 两个角色完全一致;
+ *   - "纸" (背景/文字/描边) 拆到 [data-role="parent"] / [data-role="kid"]
+ *     两个作用域, :root 这里只留共用层 + 一份兜底值;
+ *   - 旧变量名一个都没删: --bg / --surface / --text-1 ... 既有样式全在用,
+ *     换的只是值, 不是选择器 (约束文档 §0 "加法, 不是重写")。
+ */
 :root {
-  /* 中性色 (暖奶油系, 文字用深棕替代纯黑以保持对比度) */
-  --bg: #FFF8F0;
+  /* --- 中性色 (兜底 = 家长端白纸; 孩子端在 [data-role="kid"] 内覆盖) ---
+     文字用深墨替代纯黑, 保持对比度的同时不刺眼。 */
+  --bg: #FFFFFF;
   --surface: #FFFFFF;
-  --surface-2: #FFF1E4;
-  --border: #FFE0CC;
-  --text-1: #4A3728;
-  --text-2: #8A6F5C;
-  --text-3: #BFA894;
+  --surface-2: #FAF9F6;
+  --border: #E5E0D6;
+  --text-1: #16130F;
+  --text-2: #575046;
+  --text-3: #8B8377;
 
-  /* 科目色 (实底色 + 白字). 三个值均已压暗到白字对比度 >= 4.5:1 (WCAG AA):
-     语 #B85A34 / 数 #2E7A9E / 英 #4A7C42。原先的亮色版本
-     (橘 E07A4E 等) 白字只有 ~3:1, 小字号下不达标。 */
-  --c-语: #B85A34;
-  --c-语-soft: #FBE7DC;
-  --c-数: #2E7A9E;
-  --c-数-soft: #E2EEF6;
-  --c-英: #4A7C42;
-  --c-英-soft: #E8F0E2;
+  /* --- 学科色 (规范 §2.1, 两个角色完全一致) ---
+     -c 主色 (文字/描边/实底), -t 浅底 (chip 背景)。 */
+  --s-yu-c: #BF3B2E;
+  --s-yu-t: #FBEAE6;
+  --s-shu-c: #2C6BA8;
+  --s-shu-t: #E7F0F8;
+  --s-ying-c: #457315;
+  --s-ying-t: #F0F5E4;
+  --s-pei-c: #6B4C9A;
+  --s-pei-t: #EEEAF6;
+  --s-xi-c: #1F7368;
+  --s-xi-t: #E4F1EF;
 
-  /* 任务来源色 (M1 统一任务池): 培训/习惯没有科目, 用颜色区分来源.
-     与三个科目色同样压到白字 >= 4.5:1, 且不与语(橘)/数(蓝)/英(绿)混淆。 */
-  --c-training: #6B4C9A;
-  --c-training-soft: #EDE6F7;
-  --c-habit: #2E7D6B;
-  --c-habit-soft: #E1F1ED;
+  /* 旧科目色 = 新色板别名。既有 .subject-tag / .subj-time / .training-tag
+     直接用这些变量, 一行都不用改, 值却换成了新色板。 */
+  --c-语: var(--s-yu-c);
+  --c-语-soft: var(--s-yu-t);
+  --c-数: var(--s-shu-c);
+  --c-数-soft: var(--s-shu-t);
+  --c-英: var(--s-ying-c);
+  --c-英-soft: var(--s-ying-t);
+  --c-training: var(--s-pei-c);
+  --c-training-soft: var(--s-pei-t);
+  --c-habit: var(--s-xi-c);
+  --c-habit-soft: var(--s-xi-t);
 
-  /* 状态色 */
-  --status-todo: #BFA894;
-  --status-doing: #D97706;
-  --status-done: #3FA34D;
-  --status-optional: #BFA894;
-  --status-overdue: #DC2626;
-  --status-overdue-soft: #FEF3F2;
+  /* --- 状态色 (规范 §2.1) ---
+     形状 + 颜色双信号, 不允许只靠颜色区分 (规范 §2.1 / §7.4)。 */
+  --st-todo-c: #6E6459;
+  --st-todo-t: #F0EDE8;
+  --st-doing-c: #8F5600;
+  --st-doing-t: #FBF0DC;
+  --st-done-c: #1D7A4C;
+  --st-done-t: #E3F2EA;
+  --st-opt-c: #6F6A5F;
+  --st-opt-t: #F2F0EC;
+  --st-late-c: #C2321F;
+  --st-late-t: #FBE7E3;
 
-  /* 主操作色 */
-  --accent: #FF6B9D;
-  /* 主色的浅底: 选中态/焦点环用。#FF6B9D 直接当背景太艳 (对比度不足),
-     浅化后既能看出"当前项"又不会抢文字。 */
-  --accent-soft: #FFE3EC;
-  --warn-soft: #FFF0F4;
-  --warn-ink: #C2185B;
+  /* 旧状态色 = 新状态色别名 */
+  --status-todo: var(--st-todo-c);
+  --status-doing: var(--st-doing-c);
+  --status-done: var(--st-done-c);
+  --status-optional: var(--st-opt-c);
+  --status-overdue: var(--st-late-c);
+  --status-overdue-soft: var(--st-late-t);
+
+  /* --- 主操作色 ---
+     兜底用蜡笔黄 (孩子端主操作); 家长端在 [data-role="parent"] 内换成
+     深靛蓝 #1D4E7C。--accent-soft 是选中态/焦点环的浅底, 必须与主色
+     同族且更浅 (浅底要保持暖色方向, 否则偏灰偏紫)。 */
+  --accent: #FFC53D;
+  --accent-ink: #2B2622;
+  --accent-soft: #FFF0C9;
+  --accent-t: #FFF0C9;
+  --warn-soft: #FBF0DC;
+  --warn-ink: #8A5200;
 
   /* 选做作业 (is_optional) 行底色, 与必做的白卡片区分.
      2026-09-28 用户反馈: 原琥珀黄底太显眼 —— 选做的定义就是"优先级低",
@@ -66,7 +99,9 @@
      partial   做了一部分 (需要继续)
      all-done  必做全完成 (可以安心)
      opt-only  当天只有选做
-     四种底色都压到 >= 1.35:1 对白卡的差异, 否则和 --surface-2 一样"看不出来"。 */
+     四种底色都压到 >= 1.35:1 对白卡的差异, 否则和 --surface-2 一样"看不出来"。
+     这组不被双角色改造动过 —— 热力图/角标的对比度由测试逐档钉死
+     (tests/test_calendar_heatmap.py / test_calendar_marks.py), 换了会红。 */
   --cal-has-bg: #FFE7D0;
   --cal-has-ink: #7A4A21;
   --cal-part-bg: #FFF0BE;
@@ -75,6 +110,48 @@
   --cal-done-ink: #1E5B25;
   --cal-opt-bg: #E8E2F7;
   --cal-opt-ink: #4B3B7A;
+
+  /* --- 纸面令牌 (规范 §2.2 / §2.3) ---
+     :root 这一份是"家长端"兜底 (默认角色就是家长), 孩子端在
+     [data-role="kid"] 作用域内整体覆盖。 */
+  --paper: #FFFFFF;
+  --paper-2: #FAF9F6;
+  --paper-3: #F2F0EA;
+  --ink: #16130F;
+  --ink-2: #575046;
+  --ink-3: #8B8377;
+  --rule: #E5E0D6;
+  --grid: #E5E0D6;          /* 方格线 (孩子端用) */
+  --rule-line: rgba(229, 224, 214, 0.3);   /* 横线账本线色 = --rule 30% */
+  --focus-ring: #1D4E7C;    /* :focus-visible 描边色 (两端都要 >= 3:1) */
+  --star: #FFC53D;          /* 星星三色 (孩子端) */
+  --star-2: #F5A623;
+  --star-3: #FFE08A;
+
+  /* --- 字体分工 (规范 §3) ---
+     UI/正文 = 系统黑体 (两端一致);
+     display = 标题字体, 家长端宋体 / 孩子端楷体, 由角色作用域切换;
+     num  = 数字专用, 永远系统黑体 + tabular-nums —— 数字不跟随 display
+     字体, 否则竖列对不齐 (规范 §3 末行 / 约束文档 §5)。 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui,
+              "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB",
+              var(--font-emoji), sans-serif;
+  --font-num: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui,
+               "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --font-display: "Noto Serif SC", "Songti SC", SimSun, "宋体",
+                   var(--font-emoji), serif;
+  /* Emoji 回退。
+     项目里到处用 emoji (🌿 ✨ 🎉 …, 家长端 boardHint 的文案被 node 脚本
+     逐字钉着, 不能删), 而中文字体 (Noto CJK / 思源宋体 / 霞鹜文楷) **没有**
+     这些字形 —— 缺字时会画成豆腐块 □。
+     把系统自带的 emoji 字体接在字体栈**尾部**: Windows -> Segoe UI Emoji,
+     macOS -> Apple Color Emoji, Linux -> Noto Color Emoji。
+     这只是回退, 不引任何外部字体文件 —— "离线可用 + 不引 CDN" 的约束不变。 */
+  --font-emoji: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+                 "Segoe UI Symbol";
+  /* 五角星轮廓 (贴纸/星星通用): 用 clip-path 而不是 emoji, 缩放不糊 */
+  --star-shape: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%,
+                        50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
 
   /* 间距 (4 倍数) */
   --space-1: 4px;
@@ -93,16 +170,112 @@
   /* 阴影 */
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.04);
 
-  /* 字号 */
+  /* 字号 (规范 §3.1 层级 + 既有旧变量, 两套并存) */
+  --fs-hero: 34px;          /* 家长端完成率大数字 */
   --fs-h1: 22px;
-  --fs-h2: 18px;
+  --fs-h2: 17px;
   --fs-body: 15px;
+  --fs-sm: 13px;
+  --fs-cap: 12px;
+  --fs-num: 18px;           /* 分钟数 / 星星数 */
   --fs-body-s: 14px;
   --fs-caption: 13px;
   --fs-caption-sm: 11px;      /* 次操作按钮与"预估"标签, 刻意弱于正文 */
   --fs-number-l: 22px;
   --fs-number-xl: 34px;      /* 总用时数字: 刻意压过进度条, 让"努力成果"成为视觉主角 */
   --fs-number-s: 14px;
+}
+
+/* ===== 1b. 角色作用域 (规范 §2.2 / §2.3) =====
+   :root 是"共用层 + 家长端兜底" (默认角色就是家长), 这里是两个角色
+   各自的纸面令牌。位置放在 :root 之后: 两者特异度相同 (0,1,0),
+   靠源码顺序让角色令牌生效。
+   旧变量名一个都没删 —— --bg / --surface / --text-1 ... 只是重新指向
+   新纸面色, 既有样式一行都不用改。 */
+[data-role="parent"] {
+  --paper: #FFFFFF;
+  --paper-2: #FAF9F6;
+  --paper-3: #F2F0EA;
+  --ink: #16130F;
+  --ink-2: #575046;
+  --ink-3: #8B8377;
+  --rule: #E5E0D6;
+  --rule-line: rgba(229, 224, 214, 0.3);   /* = --rule 的 30% */
+  --accent: #1D4E7C;                        /* 深靛蓝 = 教师用笔 */
+  --accent-ink: #FFFFFF;
+  --accent-t: #E7EFF6;
+  --accent-soft: var(--accent-t);           /* 旧名指向新"选中底" */
+  --focus-ring: #1D4E7C;
+
+  /* 旧令牌 -> 新纸面令牌 (名保留, 只换指向) */
+  --bg: var(--paper);
+  --surface: var(--paper);
+  --surface-2: var(--paper-2);
+  --border: var(--rule);
+  --text-1: var(--ink);
+  --text-2: var(--ink-2);
+  --text-3: var(--ink-3);
+
+  /* display 字体 = 思源宋体 (规范 §3) */
+  --font-display: "Noto Serif SC", "Songti SC", SimSun, "宋体",
+                   var(--font-emoji), serif;
+}
+
+/* 家长端底纹: 横线账本 (规范 §2.2) —— 28px 一条横线, 线色 = --rule 的 30%。
+   background-attachment: fixed: 纸纹跟着"纸"走, 不跟着内容滚。 */
+[data-role="parent"] body {
+  background-color: var(--paper);
+  background-image: repeating-linear-gradient(
+    to bottom, transparent 0 27px, var(--rule-line) 27px 28px);
+  background-image: repeating-linear-gradient(
+    to bottom, transparent 0 27px,
+    color-mix(in srgb, var(--rule) 30%, transparent) 27px 28px);
+  background-attachment: fixed;
+}
+
+[data-role="kid"] {
+  --paper: #FFFBF2;
+  --paper-2: #FFF6E4;
+  --paper-3: #FDF1DA;
+  --grid: #EADFC8;
+  --ink: #2B2622;
+  --ink-2: #6B5F4E;
+  --ink-3: #9A8C77;
+  --rule: #EADFC8;
+  --rule-line: rgba(234, 223, 200, 0.3);
+  --accent: #FFC53D;                        /* 蜡笔黄 */
+  --accent-ink: #2B2622;                    /* 黄底必须深字 */
+  --accent-t: #FFF0C9;
+  --accent-soft: var(--accent-t);
+  --star: #FFC53D;
+  --star-2: #F5A623;
+  --star-3: #FFE08A;
+  --focus-ring: #1D4E7C;
+
+  /* 旧令牌 -> 新纸面令牌 (孩子端: 卡片 = --paper-2, 次级面 = --paper-3) */
+  --bg: var(--paper);
+  --surface: var(--paper-2);
+  --surface-2: var(--paper-3);
+  --border: var(--rule);
+  --text-1: var(--ink);
+  --text-2: var(--ink-2);
+  --text-3: var(--ink-3);
+
+  /* 孩子端任务名更大 (规范 §3.1 末行) */
+  --fs-body: 17px;
+
+  /* display 字体 = 霞鹜文楷 (规范 §3) */
+  --font-display: "LXGW WenKai TC", "Kaiti SC", "STKaiti", KaiTi, "楷体",
+                   var(--font-emoji), serif;
+}
+
+/* 孩子端底纹: 方格纸 (规范 §2.3) —— 横竖双向, 22px 一格, 线色 = --grid。 */
+[data-role="kid"] body {
+  background-color: var(--paper);
+  background-image:
+    repeating-linear-gradient(to bottom, transparent 0 21px, var(--grid) 21px 22px),
+    repeating-linear-gradient(to right, transparent 0 21px, var(--grid) 21px 22px);
+  background-attachment: fixed;
 }
 
 /* ===== 2. 全局重置 ===== */
@@ -121,8 +294,7 @@ body, input, button, textarea, select {
 .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui,
-               "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  font-family: var(--font-ui);
   margin: 0;
   background: var(--bg);
   color: var(--text-1);
@@ -539,7 +711,9 @@ tr:last-child td { border-bottom: none; }
 }
 .date-tab.active .dt-label,
 .date-tab.active .dt-count {
-  color: #fff;   /* 选中态用白字, 与胶囊按钮的语言保持一致 */
+  /* 选中底是 --accent, 而 --accent 两端不同 (父端深靛蓝 / 子端蜡笔黄),
+     白字只在深底上成立 —— 文字色跟着 --accent-ink 走, 黄底自动变深墨。 */
+  color: var(--accent-ink);
 }
 .date-tab-hint {
   font-size: var(--fs-caption);
@@ -2340,7 +2514,9 @@ footer {
 }
 /* 平日是"基线", 数字用主色; 其余三档刻意压成中性色 —— 分档对照的
    重点是"它们彼此差多少", 让平日独占了视觉重心就够了。 */
-.wt-bucket.is-plain { background: rgba(255, 107, 157, 0.06); border-color: #FFD3E1; }
+/* 平日基线那一档: 旧版用的是已经不存在的粉色主色, 换成角色主色的浅底,
+   两个角色的"平日基线"都是同一套语言。 */
+.wt-bucket.is-plain { background: var(--accent-t); border-color: var(--border); }
 .wt-bucket.is-plain .wt-bucket-num strong { color: var(--accent); }
 .wt-bucket.is-off { opacity: 0.75; }
 
@@ -2773,6 +2949,14 @@ footer {
   color: var(--bg);
 }
 
+/* 孩子端: 模式切换按钮不能是块黑底 —— 家长端的"深棕底米白字"在方格纸上
+   像贴了一块膏药。孩子端用蜡笔黄实心 + 墨字, 与「完成」大按钮同一套语言。 */
+[data-role="kid"] .cal-mode-btn.active,
+[data-role="kid"] .cal-mode-btn.active:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 /* 五档热力底色。档位越高越红, l5 是"这天投入最多"的终点。 */
 .cal-cell.heat-l1 { background: #FFF4CC; border-color: #EFD79A; --heat-ink: #7A5A05; --heat-badge: rgba(122, 90, 5, 0.14); }
 .cal-cell.heat-l2 { background: #FFE28C; border-color: #EDC96A; --heat-ink: #6E4A00; --heat-badge: rgba(110, 74, 0, 0.15); }
@@ -3119,22 +3303,46 @@ footer {
 }
 .dw-q { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .dw-q-label { flex: 0 0 4.2em; color: var(--text-2); font-size: var(--fs-caption); }
-.dw-choices { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.dw-choices { display: flex; flex: 1 1 auto; min-width: 0; gap: var(--space-2); flex-wrap: wrap; }
+/* 晚间小结的三问 (难度 / 专注 / 情绪): 改成**大色块按钮** (规范 §4.7),
+   不是小 chip —— 三个选项挤成一行时小胶囊太难点, 尤其在手机上。
+   选中态实心填充 + 对勾; 对勾的位置常驻占位, 切换时按钮不跳宽。 */
 .dw-choice {
-  min-height: 38px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
+  flex: 1 1 72px;
+  min-height: 48px;
+  min-width: 64px;
+  padding: var(--space-2) var(--space-3);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.25;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
   cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .08s ease;
+}
+.dw-choice::after {
+  content: "✓";
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(.6);
+  transition: opacity .15s ease, transform .15s ease;
 }
 .dw-choice.active {
-  background: var(--accent-soft);
+  background: var(--accent);
   border-color: var(--accent);
-  color: var(--warn-ink);
-  font-weight: 600;
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.dw-choice.active::after {
+  opacity: 1;
+  transform: none;
 }
 .dw-note { width: 100%; margin-top: var(--space-2); }
 .dw-save-row {
@@ -3144,9 +3352,9 @@ footer {
   margin-top: var(--space-2);
   flex-wrap: wrap;
 }
-/* 触屏上把档位按钮抬到 44px: 三个 pill 挤在一行时, 38px 容易点到隔壁。 */
+/* 触屏上档位按钮至少 48px: 基础档已经抬到大色块的高度, 窄屏不再压回去。 */
 @media (max-width: 767px), (max-height: 500px) {
-  .dw-choice { min-height: 44px; }
+  .dw-choice { min-height: 48px; }
 }
 
 /* --- 28. 训练打卡 (M4) ---
@@ -3462,7 +3670,9 @@ button.week-stat span { color: var(--text-2); }
 .report-kicker {
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: var(--accent-ink, var(--warn-ink));
+  /* 不能用 --accent-ink: 家长端它是白字 (靛蓝底上的文字色),
+     周报 kicker 落在浅色卡上, 白字会直接看不见。 */
+  color: var(--text-2);
   letter-spacing: 0.04em;
 }
 .report-range { margin-top: 2px; font-size: var(--fs-h2); font-weight: 700; }
@@ -3631,4 +3841,1095 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* =====================================================================
+ * 27. 双角色组件层 (规范 §4) — 2026-11-01
+ *
+ * 三条纪律 (约束文档 §0):
+ *   1. 既有选择器一个都没删, 这里是**新增**的类; 只有同名同义的地方改值;
+ *   2. 新类名不复用旧类名 —— 孩子端的大卡不继承家长端小卡的 padding,
+ *      两种密度是两套东西, 混在一起必然互相拖累;
+ *   3. 数字永远走 --font-num (系统黑体 + tabular-nums), 不跟随 display
+ *      字体 —— 楷体/宋体的数字跟正文对不齐, 竖列会歪 (规范 §3 末行)。
+ *
+ * 类名以 app/static/dual.js 与 app/static/app.js 实际产出的 DOM 为准。
+ * ===================================================================== */
+
+/* ===== 27.1 角色字体分工 (规范 §3) =====
+   display 字体只给标题与任务名; 正文/UI 一律系统黑体。
+   父端 = 思源宋体, 子端 = 霞鹜文楷 (离线时分别退回宋体 / 楷体)。 */
+[data-role="parent"] header h1,
+[data-role="parent"] .view-title,
+[data-role="parent"] .card-title,
+[data-role="parent"] .report-range {
+  font-family: var(--font-display);
+}
+[data-role="kid"] .kid-hero__line,
+[data-role="kid"] .kid-card__name,
+[data-role="kid"] .kid-card__subject,
+[data-role="kid"] .kid-section,
+[data-role="kid"] .kid-report__comment,
+[data-role="kid"] .kid-empty__text {
+  font-family: var(--font-display);
+}
+/* display 字体里的数字也换回系统黑体: 楷体/宋体的数字宽度跟正文不一致,
+   同一行的"2 项"和"3 颗星"会错开。 */
+[data-role="kid"] .kid-hero__line b,
+[data-role="kid"] .kid-hero__sub b,
+[data-role="kid"] .kid-card__est,
+[data-role="kid"] .kid-report__rate,
+[data-role="kid"] .kid-report__star-num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== 27.2 孩子端 · 星星罐 (规范 §4.1) ===== */
+.kid-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+}
+.jar {
+  position: relative;
+  flex: 0 0 96px;
+  width: 96px;
+  height: 112px;
+  color: var(--rule);
+}
+.jar-svg { display: block; width: 100%; height: 100%; }
+.jar-neck,
+.jar-glass { stroke: currentColor; }
+.jar-stars path { opacity: .95; }
+/* 填充高度 = 已得星星 / 容量 (20 颗封顶)。--stars 由 JS 内联写入。 */
+.jar-fill {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 12%;
+  height: calc(var(--stars, 0) / 20 * 100%);
+  background: linear-gradient(to top, var(--accent-t), var(--accent-soft));
+  border-radius: 6px;
+  opacity: .55;
+  pointer-events: none;
+  transition: height .3s ease;
+}
+.jar-over {
+  position: absolute;
+  top: -2px;
+  right: -6px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--paper-3);
+  color: var(--warn-ink);
+  font-size: var(--fs-cap);
+  font-weight: 700;
+}
+.jar.is-full .jar-fill {
+  background: linear-gradient(to top, var(--star), var(--star-3));
+  opacity: .8;
+}
+/* 单颗星星: --x / --y 定位, 九个固定坑位 —— 位置固定, 重绘不跳位。 */
+.jar-star {
+  position: absolute;
+  left: var(--x, 50%);
+  bottom: var(--y, 0%);
+  width: 16px;
+  height: 16px;
+  background: var(--star);
+  clip-path: var(--star-shape);
+}
+.jar-star:nth-child(1) { --x: 24%; --y: 8%; }
+.jar-star:nth-child(2) { --x: 50%; --y: 8%; }
+.jar-star:nth-child(3) { --x: 76%; --y: 8%; }
+.jar-star:nth-child(4) { --x: 18%; --y: 22%; }
+.jar-star:nth-child(5) { --x: 44%; --y: 22%; }
+.jar-star:nth-child(6) { --x: 70%; --y: 22%; }
+.jar-star:nth-child(7) { --x: 28%; --y: 36%; }
+.jar-star:nth-child(8) { --x: 54%; --y: 36%; }
+.jar-star:nth-child(9) { --x: 80%; --y: 36%; }
+
+.kid-hero__text { flex: 1 1 auto; min-width: 0; }
+.kid-hero__line {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.kid-hero__sub {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.kid-hero__sub b { color: var(--ink); }
+.kid-hero__streak {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-cap);
+  color: var(--warn-ink);
+}
+
+/* ===== 27.3 孩子端 · 任务卡 (规范 §4.2) =====
+   圆角 20px, 底 --paper-2, 描边 --rule; 左侧一条学科色条;
+   唯一的主按钮是「完成」(48px 高), 其余操作收进右上角 ⋯。 */
+.kid-card {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+}
+.kid-card__bar {
+  flex: 0 0 6px;
+  width: 6px;
+  align-self: stretch;
+  padding: 0;                /* 覆盖科目标签自带的内边距 */
+  font-size: 0;              /* 空元素不留字高 */
+  border-radius: 3px;
+}
+.kid-card__main { flex: 1 1 auto; min-width: 0; }
+.kid-card__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.kid-card__subject {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.kid-card__est {
+  font-size: var(--fs-cap);
+  color: var(--ink-3);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.kid-card__name {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--ink);
+  word-break: break-word;
+}
+.kid-card__acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+.kid-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.kid-list .kid-card { margin-bottom: 0; }
+.kid-section {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--ink);
+}
+/* 「完成」= 蜡笔黄填充 + 深墨字; 按下轻微下沉 (规范 §4.2)。 */
+.kid-btn-done {
+  min-height: 48px;         /* 孩子端触控目标 (规范 §7.4) */
+  min-width: 120px;
+  padding: 0 var(--space-5);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  letter-spacing: .12em;
+  cursor: pointer;
+  transition: transform .08s ease, filter .15s ease;
+}
+.kid-btn-done:active { transform: translateY(1px); }
+.kid-btn-done:disabled { opacity: .6; cursor: default; }
+.kid-card__done {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--st-done-t);
+  color: var(--st-done-c);
+  font-size: var(--fs-body);
+  font-weight: 700;
+}
+.kid-card__done.is-skipped {
+  background: var(--st-opt-t);
+  color: var(--st-opt-c);
+}
+/* 已完成: 色条变绿 + 整卡降饱和 (规范 §4.2 末行)。 */
+.kid-card.is-done { filter: saturate(.55); }
+.kid-card.is-done .kid-card__bar,
+.kid-card.is-done .kid-card__bar.subject-tag {
+  background: var(--st-done-c);
+}
+
+/* 右上角 ⋯ 菜单: 编辑 / 今天不做 / 删除 全收在这里。 */
+.kid-more-wrap { position: relative; margin-left: auto; }
+.kid-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.kid-more:hover { background: var(--paper-3); color: var(--ink); }
+.kid-more__ico { width: 20px; height: 20px; display: block; }
+.kid-more-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 30;
+  min-width: 132px;
+  padding: var(--space-1);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.kid-more-menu__item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.kid-more-menu__item:hover { background: var(--paper-3); }
+
+/* 完成时飞进罐子的那颗星 (规范 §7.1)。 */
+.kid-fly-star {
+  position: fixed;
+  z-index: 60;
+  width: 26px;
+  height: 26px;
+  color: var(--star);
+  pointer-events: none;
+}
+.kid-fly-star svg { width: 100%; height: 100%; display: block; }
+
+/* 孩子端空态。 */
+.kid-empty {
+  padding: var(--space-5) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--paper-3);
+  border: 1px dashed var(--rule);
+  border-radius: 20px;
+  text-align: center;
+}
+.kid-empty__text {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+
+/* ===== 27.4 孩子端 · 贴纸册日历 (规范 §4.3) ===== */
+.kid-cell { position: relative; }
+.kid-cell--none { background: transparent; }
+.kid-cell--todo { background: var(--paper-3); }
+.kid-cell--full,
+.kid-cell--half { background: var(--paper-2); }
+/* 今天的格子: 一圈手绘感虚线框 (规范 §4.3)。 */
+.kid-cell--today { outline: 2px dashed var(--warn-ink); outline-offset: -2px; }
+.kid-sticker {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+  color: var(--c-语);
+}
+.kid-sticker--full { color: var(--s-yu-c); }
+.kid-sticker--half { opacity: .45; }
+
+/* ===== 27.5 孩子端 · 我的成绩单 (规范 §4.4) ===== */
+.kid-report { display: flex; flex-direction: column; gap: var(--space-3); }
+.kid-report__banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: linear-gradient(135deg, var(--accent-t) 0%, var(--paper-3) 100%);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+}
+.kid-report__rate {
+  font-family: var(--font-num);
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.kid-report__unit { margin-left: 2px; font-size: var(--fs-h2); }
+.kid-report__text { flex: 1 1 auto; min-width: 0; }
+.kid-report__comment {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+.kid-report__sub {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-cap);
+  color: var(--ink-2);
+}
+.kid-report__stars {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+}
+.kid-report__star-num {
+  font-family: var(--font-num);
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  color: var(--star-2);
+  font-variant-numeric: tabular-nums;
+}
+.kid-star-list { list-style: none; margin: 0; padding: 0; }
+.kid-star-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-sm);
+}
+.kid-star-list__date {
+  color: var(--ink-3);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.kid-star-list__reason { flex: 1 1 auto; color: var(--ink-2); }
+.kid-star-list__n {
+  font-family: var(--font-num);
+  font-weight: 700;
+  color: var(--warn-ink);
+  font-variant-numeric: tabular-nums;
+}
+/* 勋章墙: 72x72 圆角方章, 没拿到的是浅色轮廓 + 锁。 */
+.medal-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: var(--space-3);
+}
+.medal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 72px;
+  padding: var(--space-3) var(--space-2);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+.medal__ico { width: 32px; height: 32px; color: var(--star-2); }
+.medal__ico svg { width: 100%; height: 100%; display: block; }
+.medal__name { font-size: var(--fs-cap); font-weight: 700; color: var(--ink); }
+.medal__desc { font-size: var(--fs-caption-sm); color: var(--ink-3); }
+.medal--locked {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--rule);
+}
+.medal--locked .medal__ico { color: var(--ink-3); opacity: .5; }
+.medal--locked .medal__name { color: var(--ink-3); }
+
+/* ===== 27.6 家长端 · 批改台 (规范 §4.5) ===== */
+.p-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.p-stat {
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.p-stat__num {
+  font-family: var(--font-num);
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  line-height: 1.05;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.p-stat__unit { margin-left: 2px; font-size: var(--fs-h2); }
+.p-stat__label {
+  margin-top: var(--space-1);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text-2);
+}
+.p-stat__hint {
+  margin-top: 2px;
+  font-size: var(--fs-cap);
+  color: var(--text-3);
+}
+.p-stat__bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: var(--space-1);
+}
+/* 学科分布的小条: 条在上、标签在下 —— 挤在一行时条和标签会互相挤,
+   条就画不准了 (条宽 = 该科占比)。 */
+.p-stat__bar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+}
+.p-stat__bar em { font-style: normal; white-space: nowrap; }
+.p-stat__bar-fill {
+  display: block;
+  height: 6px;
+  min-width: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--text-3);
+}
+.p-stat__bar-fill.语文 { background: var(--c-语); }
+.p-stat__bar-fill.数学 { background: var(--c-数); }
+.p-stat__bar-fill.英语 { background: var(--c-英); }
+.p-stat__bar-fill.training { background: var(--c-training); }
+.p-stat__bar-fill.habit { background: var(--c-habit); }
+
+/* 一句人话结论 (规范 §6.2)。 */
+.p-insight {
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* 批量条: 选中 >=1 条才出现 (hidden 由 JS 控制), 160ms 下滑入。 */
+.p-batch-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  background: var(--accent-t);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+}
+.p-batch-bar[hidden] { display: none; }
+.p-batch-bar.is-on { animation: p-batch-slide-in .16s ease-out; }
+@keyframes p-batch-slide-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: none; }
+}
+.p-batch-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.p-batch-all__check { width: 18px; height: 18px; accent-color: var(--accent); }
+.p-batch-count {
+  font-family: var(--font-num);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.p-batch-btn {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.p-batch-btn:hover { border-color: var(--accent); }
+.p-batch-btn--danger {
+  border-color: var(--st-late-c);
+  color: var(--st-late-c);
+  background: var(--surface);
+}
+
+/* 任务行: 勾选框在左, 右对齐分钟数与状态。 */
+.p-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.p-row__check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 10px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.p-row__body { flex: 1 1 auto; min-width: 0; }
+.p-row__name { font-size: var(--fs-body); }
+.p-row__mins {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.p-timer-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.p-timer {
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.p-timer.is-running { border-color: var(--accent); color: var(--accent-ink); }
+.p-timer__label {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+/* 孩子端的计时器跟着孩子端的触控目标走 (48px)。 */
+.kid-timer { min-height: 48px; font-size: var(--fs-sm); }
+
+/* ===== 27.7 家长端 · 复盘可视化 (规范 §4.6) ===== */
+.p-review-extras { display: flex; flex-direction: column; gap: var(--space-2); }
+.p-donut-card,
+.p-line-card-box { margin-bottom: var(--space-2); }
+.p-donut-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.p-donut { width: 160px; height: 160px; flex: none; }
+.p-donut__seg { transition: opacity .15s ease; }
+.p-donut__num {
+  font-family: var(--font-num);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  fill: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.p-donut__unit {
+  font-size: var(--fs-cap);
+  fill: var(--text-3);
+}
+.p-donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.p-donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.p-donut-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.p-donut-legend b {
+  margin-left: auto;
+  font-family: var(--font-num);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.p-donut-legend em {
+  font-style: normal;
+  width: 40px;
+  text-align: right;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.p-donut-empty { padding: var(--space-3); font-size: var(--fs-sm); }
+.p-line-chart-wrap { width: 100%; }
+.p-line-chart { width: 100%; height: auto; display: block; }
+.p-line-chart__line { stroke-linejoin: round; stroke-linecap: round; }
+.p-line-chart__dot { fill: var(--accent); }
+.p-line-chart__dot.is-hot { fill: var(--st-late-c); }
+/* 逐点数值: 折线的意义全在这个数上, 藏进 tooltip 等于没有 */
+.p-line-chart__v {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--text-2);
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+}
+.p-line-chart__v.is-hot { fill: var(--st-late-c); }
+/* 最高点的虚线参照 + 右上角刻度值 */
+.p-line-chart__grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.p-line-chart__axis {
+  font-size: 10px;
+  fill: var(--text-3);
+  text-anchor: end;
+  font-variant-numeric: tabular-nums;
+}
+.p-line-chart__x {
+  font-size: 10px;
+  fill: var(--text-3);
+  text-anchor: middle;
+}
+.p-line-chart__note {
+  margin-top: var(--space-1);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+}
+.p-weak {
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.p-weak__title {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: var(--space-1);
+}
+.p-weak__line {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.p-weak__line + .p-weak__line { margin-top: var(--space-1); }
+/* 「挪到下周」: 改期按钮。 */
+.p-action {
+  min-height: 28px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: var(--fs-caption-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.p-action:hover { background: var(--accent-t); }
+.p-action:disabled { opacity: .6; cursor: default; }
+
+/* ===== 27.8 共用 · 角色切换 / 头像菜单 ===== */
+.role-switch {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.role-switch:hover { border-color: var(--accent); }
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.role-menu-wrap { position: relative; }
+.role-menu-btn {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.role-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 150px;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.role-menu[hidden] { display: none; }
+.role-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.role-menu__item:hover { background: var(--surface-2); }
+.tab-ico-alt { width: 16px; height: 16px; flex: none; }
+
+/* ===== 27.9 共用 · 家长 PIN 门槛 (规范 §1.2) ===== */
+.pin-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(22, 19, 15, 0.45);
+}
+.pin-gate__box {
+  width: 100%;
+  max-width: 320px;
+  padding: var(--space-5) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+.pin-gate__title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.pin-gate__hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.pin-gate__msg {
+  min-height: 20px;
+  margin: var(--space-2) 0;
+  font-size: var(--fs-caption);
+  color: var(--st-late-c);
+}
+.pin-dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.pin-dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+}
+.pin-dots i.is-on { background: var(--accent); border-color: var(--accent); }
+.pin-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: 24px;
+  letter-spacing: .5em;
+  text-align: center;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.pin-key {
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-h1);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.pin-key:active { background: var(--accent-t); }
+.pin-key--fn { font-size: var(--fs-sm); }
+.pin-gate__foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.pin-gate__cancel,
+.pin-gate__skip {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.pin-gate__skip { color: var(--accent); }
+
+/* ===== 27.10 共用 · 庆祝层 (规范 §7.1) =====
+   与旧的 .celebrate-banner 并存: 旧的是卡片内横幅, 新的是全屏层。 */
+.celebrate {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(22, 19, 15, 0.4);
+  animation: celebrate-fade-in .2s ease-out;
+}
+@keyframes celebrate-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.celebrate__card {
+  position: relative;
+  z-index: 1;
+  max-width: 320px;
+  padding: var(--space-5) var(--space-4);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+  box-shadow: var(--shadow-card);
+  text-align: center;
+  animation: celebrate-pop-in .28s cubic-bezier(.2, 1.4, .4, 1);
+}
+@keyframes celebrate-pop-in {
+  from { opacity: 0; transform: scale(.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.celebrate__title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  color: var(--ink);
+  font-family: var(--font-display);
+}
+.celebrate__stars {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-body);
+  color: var(--warn-ink);
+}
+.celebrate__close {
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  cursor: pointer;
+}
+/* 落下的星星: 从上方飘落到卡片上方, 每颗自带 animation-delay。 */
+.celebrate__star {
+  position: absolute;
+  top: -24px;
+  width: 22px;
+  height: 22px;
+  color: var(--star);
+  animation: celebrate-star-fall 1.6s ease-in forwards;
+}
+.celebrate__star svg { width: 100%; height: 100%; display: block; }
+@keyframes celebrate-star-fall {
+  0%   { opacity: 0; transform: translateY(-20px) rotate(0deg); }
+  12%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(60vh) rotate(240deg); }
+}
+
+/* ===== 27.11 共用 · 晚间小结标签快选 (规范 §4.7) ===== */
+.dw-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.dw-tag {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.dw-tag:hover { border-color: var(--accent); }
+.dw-tag.on,
+.dw-tag.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+/* ===== 27.12 护眼模式 (规范 §2.4) =====
+   只对孩子端生效: 家长端是白天办公场景, 偏色反而碍眼。 */
+[data-role="kid"][data-eyecare="on"] body {
+  filter: sepia(.2) hue-rotate(-8deg) saturate(.88) brightness(.97);
+}
+
+/* ===== 27.13 焦点可见 (规范 §7.4) =====
+   键盘可达 + 2px 描边。:focus-visible 只在键盘操作时出现,
+   鼠标点击不会留下一圈高亮。 */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* 输入类元素上面那条 `outline: none` (0,1,1) 会盖掉裸的 :focus-visible
+   (0,1,0), 所以逐个列出来 —— 同特异度靠源码顺序取胜。
+   原来那圈深墨 box-shadow 一并撤掉, 换成角色的焦点色, 免得叠成两圈。 */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+/* ===== 27.14 减弱动态 (规范 §7.1 / §7.4) =====
+   落星、按钮下沉、庆祝层入场全部关掉, 只留静态文案。 */
+@media (prefers-reduced-motion: reduce) {
+  .celebrate,
+  .celebrate__card {
+    animation: none !important;
+  }
+  .celebrate__star {
+    display: none;
+    animation: none !important;
+  }
+  .kid-btn-done:active {
+    transform: none;
+  }
+  .kid-fly-star {
+    display: none;
+  }
+  .p-batch-bar.is-on {
+    animation: none;
+  }
+  .jar-fill {
+    transition: none;
+  }
+}
+/* ===== 27.15 家长端日历悬停详情卡 (规范 §4.5) =====
+   之前这条卡在 CSS 里完全没有对应规则, 于是它在文档流末尾当裸文本显示,
+   家长根本看不见 —— 只有 DOM 里查得到。这次补齐样式与定位。
+
+   定位用 fixed: JS 写进去的 top/left 取自 getBoundingClientRect(),
+   那是视口坐标; 换成 absolute 就得再补一个 scrollY, 页面一滚就错位。 */
+.cal-tip {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  max-width: 260px;
+  padding: var(--space-3);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06), 0 8px 20px rgba(0, 0, 0, 0.10);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-1);
+  /* 不挡鼠标: 否则指针移到卡上会触发格子的 mouseout, 卡自己先消失了 */
+  pointer-events: none;
+}
+.cal-tip[hidden] { display: none; }
+.cal-tip__date {
+  font-weight: 600;
+  font-size: var(--fs-body-s);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--rule);
+}
+.cal-tip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 2px 0;
+}
+.cal-tip__row span { color: var(--text-3); }
+.cal-tip__row b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+/* 学科用时一行里的科目名要能对上学科色, 不然又是"一串读不出来的字" */
+.cal-tip__row--subj { align-items: flex-start; gap: var(--space-1); }
+.cal-tip__row--subj > span { flex: 0 0 auto; padding-top: 1px; }
+.cal-tip__row--subj b { display: flex; flex-wrap: wrap; gap: 2px var(--space-2); }
+
+/* 悬停卡里的学科标签: 圆点 + 学科名, 颜色跟全站学科色板一致。 */
+.cal-tip__subj {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.cal-tip__subj i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
 }

@@ -20,7 +20,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from ..db import get_conn
-from ..models import DailyReflectionSave, _as_date, _as_datetime
+from ..models import DailyReflection, DailyReflectionSave, _as_date, _as_datetime
 from . import assignment_service, settings_service
 from .tenant import default_child_id, default_family_id
 
@@ -28,6 +28,17 @@ from .tenant import default_child_id, default_family_id
 def local_today() -> date:
     """本地日期. 与看板 _local_today 同口径 (凌晨不退到前一天)."""
     return datetime.now(timezone.utc).astimezone().date()
+
+
+def parse_tags(raw: str | None) -> list[str]:
+    """daily_reflections.tags (逗号分隔的 code) -> list[str].
+
+    存的是 code 而不是中文: 标签会进周报聚合 ("本周数学错题最多"),
+    code 是稳定键, 中文文案随时可以改。
+    """
+    if not raw:
+        return []
+    return [t.strip() for t in str(raw).split(",") if t.strip()]
 
 
 def grade_mode(grade: str | None) -> str:
@@ -42,14 +53,22 @@ def grade_mode(grade: str | None) -> str:
 
 def _reflection_dict(row) -> dict[str, Any]:
     updated = _as_datetime(row["updated_at"])
-    return {
-        "date": _as_date(row["reflect_date"]).isoformat(),
-        "difficulty": row["difficulty"],
-        "focus": row["focus"],
-        "mood": row["mood"],
-        "note": row["note"],
-        "updated_at": updated.isoformat() if updated else None,
-    }
+    dto = DailyReflection(
+        date=_as_date(row["reflect_date"]),
+        difficulty=row["difficulty"],
+        focus=row["focus"],
+        mood=row["mood"],
+        note=row["note"],
+        # 老库里可能还没有 tags 列 (迁移未跑), 取不到就当没标签。
+        tags=parse_tags(row.get("tags")),
+        updated_at=updated,
+    )
+    out = dto.model_dump(mode="json")
+    # updated_at 保持 isoformat(+00:00) 的老写法: pydantic 的 JSON 模式
+    # 会把 UTC 序列化成 "...Z", 前端已经在解析带时区偏移的串, 别在这
+    # 一步顺手改格式。
+    out["updated_at"] = updated.isoformat() if updated else None
+    return out
 
 
 def _fetch_reflection(conn, family_id: int, child_id: int, d: date) -> dict | None:
@@ -74,10 +93,17 @@ def save_reflection(req: DailyReflectionSave, today: date | None = None) -> dict
 
     upsert 而不是 insert: 家长晚上记错档位会再点一次, 一天只该有一条。
     created_at 保留首次记录时间, updated_at 记录最后一次修改。
+
+    tags 的两种"没有":
+      None = 这次没带标签 (老前端不传) -> 保留库里已有的标签, 不清空
+      []  = 家长把标签全取消了 -> 写成空串, 真的清空
+    所以插入时 None 落 NULL, [] 落 '' (不是 NULL), 更新时用
+    COALESCE(excluded.tags, daily_reflections.tags) 区分这两种情况。
     """
     family_id = default_family_id()
     child_id = default_child_id()
     now = datetime.now(timezone.utc)
+    tags_col = None if req.tags is None else ",".join(req.tags)
     with get_conn() as conn:
         conn.execute("BEGIN")
         try:
@@ -85,13 +111,14 @@ def save_reflection(req: DailyReflectionSave, today: date | None = None) -> dict
                 """
                 INSERT INTO daily_reflections
                     (family_id, child_id, reflect_date, difficulty, focus, mood, note,
-                     created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     tags, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (family_id, child_id, reflect_date) DO UPDATE SET
                     difficulty = excluded.difficulty,
                     focus = excluded.focus,
                     mood = excluded.mood,
                     note = excluded.note,
+                    tags = COALESCE(excluded.tags, daily_reflections.tags),
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -102,6 +129,7 @@ def save_reflection(req: DailyReflectionSave, today: date | None = None) -> dict
                     req.focus,
                     req.mood,
                     req.note,
+                    tags_col,
                     now,
                     now,
                 ),

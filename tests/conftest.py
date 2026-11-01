@@ -52,6 +52,13 @@ BUSINESS_TABLES = (
     "training_logs",
     "schedule_slots",
     "plan_items",
+    # 双角色改造 (v5): 星星账本 / 勋章 / 连续天数 / 家长 PIN。
+    # 少截一张就会串数据 —— 上一个用例发的星星会让下一个用例的
+    # balance 断言莫名其妙多一颗。
+    "kid_star_ledger",
+    "kid_medals",
+    "kid_streaks",
+    "parent_access",
     "settings",
 )
 

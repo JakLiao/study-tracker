@@ -1,13 +1,36 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-role="parent" data-eyecare="off">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#F5F6F8" />
   <title>作业小助手 · 小学生作业跟踪</title>
+  <!-- 角色字体 (规范 §3): 孩子端楷体, 家长端宋体, 正文一律系统黑体。
+       刻意**不引 Google Fonts CDN** —— 本项目是本地部署, 要求离线可用
+       (tests/test_datepicker.py::test_no_cdn_dependency 钉着这条),
+       而且孩子端楷体/家长端宋体这两个字 Windows(KaiTi/SimSun) 与
+       macOS(Kaiti SC/Songti SC) 都自带, 不必联网拉 20MB 的中文字库。
+       完整字体栈见 styles.css 的 --font-display。 -->
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="stylesheet" href="/static/vendor/flatpickr.min.css" />
   <link rel="stylesheet" href="/static/vendor/flatpickr-theme.css" />
+  <!-- 首帧防闪 (2026-11-01 双角色改造): 角色与护眼模式必须在第一帧
+       就落到 <html> 上, 否则会先画一帧家长皮肤再切成孩子皮肤 —— 孩子
+       一眼就看出"闪了一下"。这段脚本必须留在 <head> 里且同步执行:
+       它比 app.js 先跑, 而 app.js 要等 DOM 解析完才加载。
+       隐私模式下 localStorage 会抛异常, 整段兜住, 失败就用默认值。 -->
+  <script>
+    (function () {
+      var d = document.documentElement;
+      d.dataset.role = 'parent';
+      d.dataset.eyecare = 'off';
+      try {
+        var r = localStorage.getItem('st.role');
+        if (r === 'kid' || r === 'parent') d.dataset.role = r;
+        if (localStorage.getItem('st.eyecare') === 'on') d.dataset.eyecare = 'on';
+      } catch (e) { /* 存不了就只用默认值, 不该因此挡住页面 */ }
+    })();
+  </script>
 </head>
 <body>
   <!-- ====== SVG 图形库 (2026-09-29 新增) ======
@@ -82,23 +105,17 @@
            统一 24x24 / stroke 1.8 / 圆头圆角, 与正文圆角风格一致;
            描边一律 currentColor —— 选中态只改 button 的 color 就能让
            图标跟着变色, 不必为每个 Tab 各画一份彩色版。 -->
-      <!-- 看板: 分栏板 + 四张任务卡 -->
-      <symbol id="i-tab-board" viewBox="0 0 24 24">
-        <rect x="3" y="4" width="18" height="16" rx="3" fill="none"
-              stroke="currentColor" stroke-width="1.8" />
-        <path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.8"
-              stroke-linecap="round" />
-        <rect x="4.9" y="7.4" width="2.6" height="2.6" rx="1" fill="currentColor" />
-        <rect x="10.4" y="7.4" width="2.6" height="2.6" rx="1" fill="currentColor" opacity=".5" />
-        <rect x="4.9" y="12.2" width="2.6" height="2.6" rx="1" fill="currentColor" opacity=".5" />
-        <rect x="10.4" y="12.2" width="2.6" height="2.6" rx="1" fill="currentColor" />
-      </symbol>
-      <!-- 登记: 铅笔 (写下来 = 记一条) -->
-      <symbol id="i-tab-entry" viewBox="0 0 24 24">
-        <path d="M4 20.2h4.2L19 9.4a2.12 2.12 0 0 0-3-3L5.2 17v3.2z" fill="none"
-              stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
-        <path d="M14.6 6.6l2.9 2.9" fill="none" stroke="currentColor"
-              stroke-width="1.8" stroke-linecap="round" />
+      <!-- 今日: 太阳 (2026-11-01 双角色改造)
+           原来的 i-tab-board (分栏板) 是"看板"这一页的图形, 导航精简成
+           3 个 Tab 后那一页改叫「今日」, 图标也换成太阳 —— 一眼就知道
+           "这是今天要干的活"。描边一律 currentColor, 选中态只改 button
+           的 color, 图标自动跟着变色。 -->
+      <symbol id="i-tab-today" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2" fill="none"
+              stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"
+              fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
       </symbol>
       <!-- 日历: 挂历 + 日期点 -->
       <symbol id="i-tab-calendar" viewBox="0 0 24 24">
@@ -119,22 +136,6 @@
         <rect x="10.25" y="9" width="3.5" height="8.8" rx="1.4" fill="currentColor" opacity=".8" />
         <rect x="14.9" y="5.4" width="3.5" height="12.4" rx="1.4" fill="currentColor" />
       </symbol>
-      <!-- 周计划: 七日格子 + 两天有安排的点 -->
-      <symbol id="i-tab-week" viewBox="0 0 24 24">
-        <rect x="3" y="5" width="18" height="15" rx="3" fill="none"
-              stroke="currentColor" stroke-width="1.8" />
-        <path d="M3 9.5h18M7.5 9.5v10.5M12 9.5v10.5M16.5 9.5v10.5" fill="none"
-              stroke="currentColor" stroke-width="1.4" opacity=".7" />
-        <circle cx="7.5" cy="13.2" r="1.15" fill="currentColor" />
-        <circle cx="12" cy="16.4" r="1.15" fill="currentColor" opacity=".55" />
-      </symbol>
-      <!-- 设置: 推子 (调节 = 配置。比齿轮少一圈锯齿, 20px 下更清楚) -->
-      <symbol id="i-tab-settings" viewBox="0 0 24 24">
-        <path d="M3.6 8.2h9.2M18.4 8.2h2M3.6 15.8h3.2M12.4 15.8h8" fill="none"
-              stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-        <circle cx="15.4" cy="8.2" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-        <circle cx="9.4" cy="15.8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-      </symbol>
 
       <!-- 补用时: 沙漏 (2026-10-12 密度优化新增) -->
       <symbol id="i-clock" viewBox="0 0 24 24">
@@ -145,32 +146,90 @@
         <path d="M8 20.6v-3.1c0-1.2 3.6-3.1 4-4.6.4 1.5 4 3.4 4 4.6v3.1" fill="none"
               stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
       </symbol>
-      <!-- 编辑: 铅笔 (与 Tab 图标 i-tab-entry 同形, 全站"改内容"统一用它) -->
+      <!-- 编辑: 铅笔 (全站"改内容"统一用它) -->
       <symbol id="i-edit" viewBox="0 0 24 24">
         <path d="M4 20.2h4.2L19 9.4a2.12 2.12 0 0 0-3-3L5.2 17v3.2z" fill="none"
               stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
         <path d="M14.6 6.6l2.9 2.9" fill="none" stroke="currentColor"
               stroke-width="1.8" stroke-linecap="round" />
       </symbol>
+
+      <!-- ====== 孩子端图形 (2026-11-01 双角色改造) ======
+           贴纸与勋章都用矢量而不是 emoji: emoji 在不同系统里长相不一,
+           颜色也压不住 (同一个 ⭐ 在安卓和 iOS 上根本不是一个样子)。
+           统一 currentColor, 底色交给 CSS 的学科色变量。 -->
+      <!-- 贴纸: 五角星 (贴纸册日历) -->
+      <symbol id="i-kid-sticker" viewBox="0 0 24 24">
+        <path d="M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5 6.1 20.6l1.2-6.5L2.5 9.5l6.6-.9z"
+              fill="currentColor" />
+      </symbol>
+      <!-- 勋章: 圆章 + 绶带 (成绩单) -->
+      <symbol id="i-kid-medal" viewBox="0 0 24 24">
+        <path d="M8 2.6h8l-2.2 5.1H10.2z" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linejoin="round" />
+        <circle cx="12" cy="15" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+        <path d="M9.6 15.1l1.7 1.7 3.2-3.4" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <!-- 更多: 三点 (孩子端任务卡的 ⋯ 菜单) -->
+      <symbol id="i-kid-more" viewBox="0 0 24 24">
+        <circle cx="5.5" cy="12" r="1.7" fill="currentColor" />
+        <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+        <circle cx="18.5" cy="12" r="1.7" fill="currentColor" />
+      </symbol>
     </defs>
   </svg>
 
   <header>
     <h1>作业小助手</h1>
+    <!-- 导航精简为 3 个 Tab (2026-11-01 双角色改造):
+         家长端 今日 / 日历 / 复盘, 孩子端 今日 / 日历 / 成绩单。
+         同一个 Tab 键在两个角色下指向不同的页面, 标签由 app.js 按
+         document.documentElement.dataset.role 改写 (见 TAB_LABELS)。
+
+         下面三个 .tab-utility 按钮是**深链落点**, 不是 Tab:
+         登记 / 周计划 / 设置属于家长端, 它们的入口在页面里 (今日页右上
+         「＋ 登记作业」、日历页右上「周计划」、右上角头像菜单里的「设置」),
+         不占 Tab 栏的位置。保留这三个按钮只是为了让 #/entry、#/week、
+         #/settings 三个深链仍能落到对应的 view 上 (直接输地址栏打开
+         也能用)。display:none 写在内联样式里而不是用 hidden 属性:
+         nav#tabs button 的 display:flex 权重高于 UA 的 [hidden] 规则,
+         只写 hidden 会被它盖掉, 按钮照样显示出来。 -->
     <nav id="tabs" role="tablist">
-      <button data-tab="board" class="active" role="tab" aria-selected="true"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-board"></use></svg><span>看板</span></button>
-      <button data-tab="entry" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-entry"></use></svg><span>登记</span></button>
+      <button data-tab="board" class="active" role="tab" aria-selected="true"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-today"></use></svg><span>今日</span></button>
       <button data-tab="list" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-calendar"></use></svg><span>日历</span></button>
-      <button data-tab="week" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-week"></use></svg><span>周计划</span></button>
       <button data-tab="review" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-review"></use></svg><span>复盘</span></button>
-      <button data-tab="settings" role="tab" aria-selected="false"><svg class="tab-ico" aria-hidden="true"><use href="#i-tab-settings"></use></svg><span>设置</span></button>
+      <button data-tab="entry" class="tab-utility" role="tab" aria-selected="false" style="display:none">登记</button>
+      <button data-tab="week" class="tab-utility" role="tab" aria-selected="false" style="display:none">周计划</button>
+      <button data-tab="settings" class="tab-utility" role="tab" aria-selected="false" style="display:none">设置</button>
     </nav>
     <div id="health-bar" aria-live="polite"></div>
+    <!-- 角色切换 + 头像菜单 (2026-11-01 双角色改造) -->
+    <div class="header-tools">
+      <button type="button" class="role-switch" id="role-switch" aria-label="切换到孩子端">切到孩子</button>
+      <div class="role-menu-wrap" id="role-menu-wrap">
+        <button type="button" class="role-menu-btn" id="role-menu-btn"
+                aria-haspopup="true" aria-expanded="false" aria-label="更多">头像</button>
+        <div class="role-menu" id="role-menu" role="menu" hidden>
+          <button type="button" class="role-menu__item" role="menuitem" data-role-action="settings">设置</button>
+          <button type="button" class="role-menu__item" role="menuitem" data-role-action="export">数据导出</button>
+          <button type="button" class="role-menu__item" role="menuitem" data-role-action="privacy">隐私说明</button>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main>
-    <!-- ====== 看板 ====== -->
+    <!-- ====== 今日 (原「看板」, 2026-11-01 改名) ======
+         家长端 = 批改台, 孩子端 = 星星罐 + 大任务卡, 同一份数据两种读法。
+         「＋ 登记作业」是家长端专属入口 (孩子端看不到)。 -->
     <section id="view-board" class="view active" role="tabpanel">
+      <div class="view-head">
+        <h2 class="view-title" id="board-title">今日</h2>
+        <div class="view-actions">
+          <button type="button" class="ghost view-parent-only" id="btn-entry-today">＋ 登记作业</button>
+        </div>
+      </div>
       <div id="board-date-tabs" class="date-tabs"></div>
       <div id="board-content"></div>
     </section>
@@ -231,7 +290,12 @@
          id 仍是 view-list: switchTab('list') 与之绑定, 改名会牵连多处;
          用户可见的 Tab 名称已改为"日历"(2026-09-28)。 -->
     <section id="view-list" class="view" role="tabpanel">
-      <h2>作业日历</h2>
+      <div class="view-head">
+        <h2 class="view-title">作业日历</h2>
+        <div class="view-actions">
+          <button type="button" class="ghost view-parent-only" id="btn-week-plan">周计划</button>
+        </div>
+      </div>
       <div class="cal-head">
         <button id="cal-prev" class="ghost" aria-label="上个月">← 上月</button>
         <div id="cal-title" class="cal-title"></div>
@@ -239,12 +303,16 @@
         <button id="cal-today" class="ghost">回到今天</button>
       </div>
       <!-- 双模式切换 (2026-10-30): 完成情况 / 用时热力图。
-           两种模式共用同一份 _calData, 切模式不发请求, 只重画格子。 -->
+           两种模式共用同一份 _calData, 切模式不发请求, 只重画格子。
+           第三个模式「贴纸册」是孩子端专属 (2026-11-01): 它是**新增**的,
+           不替换上面两个 —— 家长端仍然只有完成情况 / 用时热力图。 -->
       <div class="cal-mode" role="group" aria-label="日历查看模式">
         <button type="button" class="cal-mode-btn active" data-cal-mode="completion"
                 aria-pressed="true">完成情况</button>
         <button type="button" class="cal-mode-btn" data-cal-mode="heat"
                 aria-pressed="false">用时热力图</button>
+        <button type="button" class="cal-mode-btn cal-mode-kid" data-cal-mode="sticker"
+                aria-pressed="false">贴纸册</button>
       </div>
       <div class="cal-weekdays" aria-hidden="true">
         <span>一</span><span>二</span><span>三</span><span>四</span>
@@ -266,6 +334,12 @@
         <span><i class="lg lg-heat4"></i>140-179分</span>
         <span><i class="lg lg-heat5"></i>180分+</span>
       </div>
+      <!-- 贴纸册图例 (孩子端): 贴纸形状本身在格子里, 这里只解释三种状态 -->
+      <div class="cal-legend" id="cal-legend-sticker" hidden>
+        <span>全部完成</span>
+        <span>完成了一部分</span>
+        <span>还没开始</span>
+      </div>
 
       <div class="list-detail-head">
         <h3 id="list-detail-title">选择日期查看当天作业</h3>
@@ -285,9 +359,11 @@
       <div id="week-content"></div>
     </section>
 
-    <!-- ====== 复盘 ====== -->
+    <!-- ====== 复盘 ======
+         家长端 = 周期复盘 (环形图 / 折线 / 薄弱项), 孩子端 = 我的成绩单
+         (勋章墙 + 成长报告)。标题由 app.js 按角色改写。 -->
     <section id="view-review" class="view" role="tabpanel">
-      <h2>周期复盘</h2>
+      <h2 id="review-title">周期复盘</h2>
       <div class="row review-range">
         <button data-period="current" class="primary period-btn">本周</button>
         <button data-period="last" class="ghost period-btn">上周</button>
@@ -308,8 +384,28 @@
     <section id="view-settings" class="view" role="tabpanel">
       <h2>设置</h2>
       <div id="settings-content"></div>
+      <!-- 护眼模式 (规范 §2.4): 开关放设置页, 状态存 localStorage["st.eyecare"],
+           切换时改 <html data-eyecare>。CSS 已写好对应规则, 前端只管设属性。
+           这里刻意不用 .setting-card —— 那个类只给"设置项"用, 数量被
+           tests/test_settings_ui.py 钉着 (必须是后端返回的那几项)。 -->
+      <div class="card setting-panel eyecare-card">
+        <label class="setting-label" for="chk-eyecare">
+          <span class="setting-name">护眼模式</span>
+          <span class="muted">屏幕调成暖色, 晚上写作业不刺眼 (只对孩子端生效)</span>
+        </label>
+        <label class="eyecare-switch">
+          <input type="checkbox" id="chk-eyecare" />
+          <span>开启</span>
+        </label>
+      </div>
       <h3>数据导出</h3>
       <button id="btn-export" class="primary">下载全部数据 (JSON)</button>
+      <!-- 隐私说明从页脚搬到这里 (规范 §8): 首页不再常驻这行字。
+           #api-info 这个 id 保留下来, 别的脚本/样式可能还指着它。 -->
+      <div class="card setting-panel privacy-card" id="privacy-card">
+        <div class="card-title">数据与隐私</div>
+        <p class="muted" id="api-info">作业数据保存在本机, 不上传到任何服务器</p>
+      </div>
     </section>
   </main>
 
@@ -328,12 +424,24 @@
   <!-- ====== Toast (设计文档 §9 坑 2 兜底) ====== -->
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <footer>
-    <small id="api-info">作业数据保存在本机, 不上传到任何服务器</small>
-  </footer>
+  <!-- 页脚元素本身保留: 移动端 CSS 依赖 footer { padding-bottom: env(safe-area-inset-bottom) }
+       给手势条留出空间 (见 tests/test_mobile_layout.py)。
+       原来常驻在这儿的「作业数据保存在本机…」已经搬进设置页的
+       「数据与隐私」区块 (规范 §8) —— 首页不再常驻隐私声明。 -->
+  <footer></footer>
 
   <script src="/static/vendor/flatpickr.min.js"></script>
   <script src="/static/vendor/flatpickr.zh.js"></script>
+  <!-- dual.js 必须排在 app.js **之前** (2026-11-01 修的一个顺序竞态):
+       app.js 的启动块在解析时就会调 switchTab() -> loadReview(), 而
+       loadReview() 靠 `typeof renderKidReport === 'function'` 判断
+       "孩子端渲染器在不在"。dual.js 若排在后面, 那一刻它还没被下载执行,
+       loadReview 会误走家长分支 —— 孩子端成绩单页下会整段渲染出
+       家长的周报、偏差表和折线图 (实测复现)。
+       dual.js 的顶层只有函数/常量声明, 不在解析期碰 app.js 的全局量,
+       把它提前是安全的。app.js 侧另有 'dual-ready' 事件兜底, 万一将来
+       顺序又被改回去, 会自动重画当前页。 -->
+  <script src="/static/dual.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

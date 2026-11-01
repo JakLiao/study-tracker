@@ -18,6 +18,7 @@ from .routers import board as board_router
 from .routers import daily_wrap as daily_wrap_router
 from .routers import export as export_router
 from .routers import health as health_router
+from .routers import kid as kid_router
 from .routers import parse as parse_router
 from .routers import projects as projects_router
 from .routers import report as report_router
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
 
     # 路由
     app.include_router(health_router.router)
+    app.include_router(kid_router.router)
     app.include_router(parse_router.router)
     app.include_router(assignments_router.router)
     app.include_router(projects_router.router)

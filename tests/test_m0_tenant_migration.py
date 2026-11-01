@@ -46,16 +46,20 @@ def test_migration_creates_schema_and_is_idempotent(scratch_db):
     from app.migrations import migrate
 
     first = migrate(scratch_db)
-    # 0002 = M3 每日三问, 0003 = M4 训练打卡, 0004 = M5 周课表与周计划。
+    # 0002 = M3 每日三问, 0003 = M4 训练打卡, 0004 = M5 周课表与周计划,
+    # 0005 = 双角色改造 (孩子端星星 / 勋章 / 家长 PIN),
+    # 0006 = 星星账本补 note 列 (家长写的奖励说明要能存下来)。
     expected = [
         "0001_baseline",
         "0002_daily_reflections",
         "0003_training_logs",
         "0004_week_plan",
+        "0005_kid_rewards",
+        "0006_kid_reward_note",
     ]
     assert first["pending"] == expected
     assert first["applied"] == expected
-    assert first["version_after"] == 4
+    assert first["version_after"] == 6
     assert first["assignments_before"] is None
     assert first["assignments_after"] == 0
     assert _table_exists(scratch_db, "families")
@@ -64,11 +68,15 @@ def test_migration_creates_schema_and_is_idempotent(scratch_db):
     assert _table_exists(scratch_db, "training_logs")
     assert _table_exists(scratch_db, "schedule_slots")
     assert _table_exists(scratch_db, "plan_items")
+    assert _table_exists(scratch_db, "kid_star_ledger")
+    assert _table_exists(scratch_db, "kid_medals")
+    assert _table_exists(scratch_db, "kid_streaks")
+    assert _table_exists(scratch_db, "parent_access")
 
     second = migrate(scratch_db)
     assert second["pending"] == []
     assert second["applied"] == []
-    assert second["version_after"] == 4
+    assert second["version_after"] == 6
 
 
 def test_dry_run_does_not_create_schema(scratch_db):
@@ -79,6 +87,8 @@ def test_dry_run_does_not_create_schema(scratch_db):
         "0002_daily_reflections",
         "0003_training_logs",
         "0004_week_plan",
+        "0005_kid_rewards",
+        "0006_kid_reward_note",
     ]
     assert pending_migrations(scratch_db) == expected
     report = migrate(scratch_db, dry_run=True)

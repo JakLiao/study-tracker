@@ -768,9 +768,14 @@ def test_period_buttons_drive_load_review():
     否则两者会脱节 —— 详见 test_weekend_toggle.py 的说明)。
     """
     code = _code(_app_js())
-    m = re.search(r"\.period-btn'\)\.forEach\(b => \{(.*?)\n\}\);", code, re.S)
-    assert m, "找不到周期按钮的点击处理"
-    assert "setReviewPeriod(b.dataset.period)" in m.group(1)
+    # 2026-11-01 双角色改造: 周期按钮现在有**两个** forEach —— 一个在角色切换时
+    # 决定要不要显示 (孩子端隐藏整块周期切换), 一个才是点击处理。原来用
+    # re.search 只取第一个, 会匹配到显示控制那个, 误判成"点击处理丢了"。
+    # 改成收集所有块, 只要有一个真在调 setReviewPeriod 就算过。
+    blocks = re.findall(r"\.period-btn'\)\.forEach\(b => \{(.*?)\n\}\);", code, re.S)
+    assert blocks, "找不到周期按钮的处理"
+    assert any("setReviewPeriod(b.dataset.period)" in b for b in blocks), \
+        "周期按钮的点击处理必须调用 setReviewPeriod(b.dataset.period)"
 
 
 def test_review_api_uses_period_param():

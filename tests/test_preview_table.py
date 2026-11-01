@@ -570,7 +570,13 @@ needs_jsdom = pytest.mark.skipif(not jsdom_available, reason="需要 node 与 js
 
 @needs_jsdom
 def test_live_tab_is_登记(live):
-    assert live["tabs"] == ["看板", "登记", "日历", "周计划", "复盘", "设置"]
+    """导航改成 3 个可见 Tab (今日/日历/复盘) + 3 个家长专属隐藏落点。
+
+    2026-11-01 双角色改造: 原来的 6 个 Tab 里, 登记/周计划/设置 退到
+    页面内入口与头像菜单, 但 DOM 上必须保留 (深链 #/entry 等仍要能路由),
+    所以隐藏但存在 —— 这里按 DOM 顺序断言全部 6 个按钮。
+    """
+    assert live["tabs"] == ["今日", "日历", "复盘", "登记", "周计划", "设置"]
 
 
 @needs_jsdom
