@@ -74,10 +74,22 @@
 #   docker run -d --name study-pg --restart unless-stopped \
 #     -e POSTGRES_USER=study -e POSTGRES_PASSWORD=你自己的密码 \
 #     -e POSTGRES_DB=study_tracker -p 127.0.0.1:5434:5432 \
-#     -v study-pg-data:/var/lib/postgresql/data postgres:16-alpine
+#     -v study-pg-data:/var/lib/postgresql/data \
+#     --health-cmd="pg_isready -U study -d study_tracker" \
+#     --health-interval=5s --health-timeout=3s --health-retries=5 \
+#     --health-start-period=10s postgres:16-alpine
 #
 #   ⚠️ 密码自己定, 别用示例值。定好后把同一个密码填进 .env 的 DATABASE_URL
 #      (见下面第 2 步) —— 真实密码只写在 .env, 不进版本库。
+#
+#   healthcheck 不是装饰。容器 "Up" 不代表数据库能连: Docker 抢不到宿主端口
+#   时会**静默丢弃端口发布**, 容器照样 Up 但连不上。healthcheck 让 docker ps
+#   直接显示 healthy / unhealthy, 不用再猜。
+#
+#   要改容器配置只能重建 (Docker 不给已有容器加参数), 数据在具名卷
+#   study-pg-data 里, 重建不碰卷 —— 但重建前先备份:
+#     pg_dump -h 127.0.0.1 -p 5434 -U study -d study_tracker -Fc -f backup.dump
+#   重建后核对行数与内容指纹, 再删旧容器 (见 docs/06-服务启动与自愈.md)。
 
 # 1. 装依赖
 pip install --break-system-packages -r requirements.txt
@@ -304,7 +316,7 @@ study-tracker/
 | WSL2 访问 502 | 代理拦截，设 `NO_PROXY=127.0.0.1,localhost` |
 | 数据库锁死 | 关掉所有可能占用 DB 的进程 |
 | 启动报 "数据库未就绪" | 服务会自己等 `DB_WAIT_SECONDS` 秒；仍失败就按提示逐条查：容器在不在 → 端口发布没 → 端口通不通 → `.env` 连接串对不对 |
-| `docker ps` 显示 `study-pg` 在跑, 但连不上 | 端口可能根本没发布：`docker inspect -f '{{json .NetworkSettings.Ports}}' study-pg`，是 `{}` 或只有 `{"5432/tcp":[]}` 就是没发布（容器 Up 也会这样），跑 `docker restart study-pg` |
+| `docker ps` 显示 `study-pg` 在跑, 但连不上 | 看 healthcheck 那一列: `unhealthy` 或 `starting` 很久 = 数据库真没就绪; 显示 `healthy` 却连不上, 多半是**端口没发布**：`docker inspect -f '{{json .NetworkSettings.Ports}}' study-pg`，是 `{}` 或只有 `{"5432/tcp":[]}` 就是没发布（容器 Up 也会这样），跑 `docker restart study-pg` |
 | PM2 里 `study-tracker` 显示 `errored` | PM2 烧光重启预算后**不会自己再试**。`pm2 restart study-tracker` 手动拉起，再用 `pm2 logs study-tracker --err` 看它当时为什么退出 |
 
 日志：`bash service.sh logs --lines 200` 或看 `run/service.log`。
