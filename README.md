@@ -116,6 +116,9 @@ bash service.sh start
 | `PORT` | `8876` | 监听端口。与 `run.sh` / `service.sh` / `app/config.py` 一致。**8765 已被 serve_gallery.py 占用，不要改回** |
 | `DATABASE_URL` | 无默认，**必填** | 数据库连接串（`postgresql://用户:密码@主机:端口/库名`）。**密码只写在 `.env`，代码与本文档都不留明文**；`.env.example` 里是占位符 `CHANGE_ME`。生产 / 远端换这一行即可 |
 | `TEST_DATABASE_URL` | 由 `DATABASE_URL` 派生的 `study_tracker_test` | 测试专用库，避免清表影响真实数据 |
+| `DB_WAIT_SECONDS` | `120` | 启动时等 PostgreSQL 就绪的最长秒数。专门用来熬过 Docker Desktop 开机到容器 ready 那几十秒 |
+| `DB_INIT_ATTEMPTS` | `5` | 应用侧 `init_db()` 的连接重试次数（指数退避）。用完仍失败就报错退出 |
+| `DB_INIT_RETRY_DELAY` | `1` | 应用侧重试的初始退避秒数（逐次翻倍） |
 
 `.env` 解析规则：按 `KEY=VALUE` 逐行，跳过空行与 `#` 注释，不支持引号嵌套；**已存在的系统环境变量不会被 `.env` 覆盖**。
 
@@ -141,6 +144,20 @@ bash service.sh --help             # 全部参数
 ```
 
 不带参数直接执行 `bash service.sh` 等同于 `status`。
+
+### PM2 托管（开机自启）
+
+服务也可以交给 PM2 监督（崩溃自动拉起 + 开机自启）：
+
+```bash
+pm2 start ecosystem.config.js     # 参数在版本库里, 别写在命令行
+pm2 save                          # 持久化进程列表, 重启后自动拉起
+pm2 logs study-tracker --lines 100
+```
+
+**启动顺序不用你操心**：Docker Desktop 开机比服务慢是常事。`pm2-start.sh` 会在起 uvicorn 之前先等数据库就绪（`scripts/wait_for_db.py`，默认最多等 `DB_WAIT_SECONDS=120` 秒），等待期间进程一直活着，数据库一就绪就自动开始服务，不需要人工干预。
+
+> ⚠️ 别把这套改成"崩了让 PM2 重启"：连接被拒是瞬时的，进程 1 秒内就死，PM2 默认 15 次重试 2 秒内烧光后**永久不再重试**（实测根因修好后也不会自己起来）。`ecosystem.config.js` 里的 `min_uptime` / `max_restarts` / 退避参数都是为这条链配的，改之前先读那里的注释。
 
 ### 前台启动（调试用）
 
@@ -286,6 +303,9 @@ study-tracker/
 | 进度条数字看着不对 | 进度分子分母都只算必做；选做单独统计。若出现 `settled > required` 那是不变式被破坏，属 bug |
 | WSL2 访问 502 | 代理拦截，设 `NO_PROXY=127.0.0.1,localhost` |
 | 数据库锁死 | 关掉所有可能占用 DB 的进程 |
+| 启动报 "数据库未就绪" | 服务会自己等 `DB_WAIT_SECONDS` 秒；仍失败就按提示逐条查：容器在不在 → 端口发布没 → 端口通不通 → `.env` 连接串对不对 |
+| `docker ps` 显示 `study-pg` 在跑, 但连不上 | 端口可能根本没发布：`docker inspect -f '{{json .NetworkSettings.Ports}}' study-pg`，是 `{}` 或只有 `{"5432/tcp":[]}` 就是没发布（容器 Up 也会这样），跑 `docker restart study-pg` |
+| PM2 里 `study-tracker` 显示 `errored` | PM2 烧光重启预算后**不会自己再试**。`pm2 restart study-tracker` 手动拉起，再用 `pm2 logs study-tracker --err` 看它当时为什么退出 |
 
 日志：`bash service.sh logs --lines 200` 或看 `run/service.log`。
 
