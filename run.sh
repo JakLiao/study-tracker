@@ -54,4 +54,11 @@ echo " AI Key : $([ -n "${MINIMAX_API_KEY:-}" ] && echo 已配置 || echo 未配
 echo " DB     : ${DB_DISPLAY}"
 echo "==============================================="
 
+# 等数据库就绪再起服务: 容器 (Docker Desktop) 可能比本进程晚就绪,
+# 直接起会秒退。详见 scripts/wait_for_db.py 顶部注释。
+if ! python3 scripts/wait_for_db.py --wait-seconds "${DB_WAIT_SECONDS:-120}"; then
+  echo "[FATAL] 数据库未就绪, 放弃启动" >&2
+  exit 1
+fi
+
 exec env DATABASE_URL="$DATABASE_URL" python3 -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" --log-level info

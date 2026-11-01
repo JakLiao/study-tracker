@@ -60,6 +60,24 @@ else:
     DB_PATH = (ROOT_DIR / _raw_db_path).resolve()
 
 
+# ====== 数据库就绪等待 ======
+# 为什么需要"等"而不是"崩了让守护进程重启":
+#   连接被拒是瞬时的, 应用进程 1 秒内就死。PM2 默认 max_restarts=15 /
+#   restart_delay=0, 15 次重试 2 秒内烧光, 之后把进程标成 errored 并
+#   **永久不再重试** —— 实测根因修好后 15 秒内一次都没恢复。
+#   而 PM2 的 min_uptime 决定重启算不算"成功": 进程活过 min_uptime 就
+#   计数清零。所以"活着等数据库"永远不会触发放弃。
+#
+# 两个值分开的原因:
+#   DB_INIT_ATTEMPTS/DB_INIT_RETRY_DELAY —— 应用侧 init_db() 的有限重试,
+#       总共约 15s。超过就该让人看见错误, 快速失败比长时间静默更好。
+#   DB_WAIT_SECONDS —— 启动脚本前置探测的长等待, 默认 120s,
+#       专门用来熬过 Docker Desktop 开机到容器 ready 那几十秒。
+DB_INIT_ATTEMPTS: int = int(os.environ.get("DB_INIT_ATTEMPTS", "5"))
+DB_INIT_RETRY_DELAY: float = float(os.environ.get("DB_INIT_RETRY_DELAY", "1"))
+DB_WAIT_SECONDS: int = int(os.environ.get("DB_WAIT_SECONDS", "120"))
+
+
 # ====== 业务默认 ======
 DEFAULT_SUBJECT_BASELINE = {"语文": 20, "数学": 15, "英语": 15}
 DEFAULT_TASK_TYPE_BASELINE = {

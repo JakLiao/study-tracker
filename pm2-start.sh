@@ -10,7 +10,11 @@
 #      (service.sh 的 setsid 脱离法会让 PM2 跟踪不到子进程血缘)
 #
 # 用法 (勿手工后台跑, 交给 PM2):
-#   pm2 start ./pm2-start.sh --name study-tracker --cwd "$(pwd)" --interpreter bash
+#   pm2 start ecosystem.config.js
+#
+# 为什么参数要写进 ecosystem.config.js 而不是命令行: PM2 的重启预算、
+# 退避间隔这些参数决定"数据库晚启动时服务能不能自愈", 属于服务契约的一部分,
+# 必须进版本库 —— 只写在某个人的 shell 历史里, 换台机器就丢了。
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -61,6 +65,19 @@ if [ -z "${MINIMAX_API_KEY:-}" ]; then
 fi
 
 mkdir -p run
+
+# ====== 等数据库就绪 (不靠 PM2 重启兜底) ======
+# 数据库没起来时, 应用进程 1 秒内就死; PM2 默认 15 次重试 2 秒烧光后
+# **永久不再重试** —— 根因修好也不会自己起来。详见 scripts/wait_for_db.py
+# 顶部注释。这里改成"活着等": 端口通了才放行 uvicorn, 进程不退出,
+# PM2 就不会判定失败、不会放弃。
+#
+# DB_WAIT_SECONDS 默认 120s, 专门用来熬过 Docker Desktop 开机到容器 ready
+# 那几十秒 (容器 start + 端口发布 + PG 接受连接)。
+if ! python3 scripts/wait_for_db.py --wait-seconds "${DB_WAIT_SECONDS:-120}"; then
+  echo "[FATAL] 数据库未就绪, 本次启动放弃 (PM2 会按退避策略重试本脚本)" >&2
+  exit 1
+fi
 
 # exec: 让 uvicorn 取代本脚本成为 PM2 的直接子进程
 exec python3 -m uvicorn app.main:app --host "$HOST" --port "$PORT" --log-level info
