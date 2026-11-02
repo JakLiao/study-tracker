@@ -44,15 +44,19 @@
 
 | # | id | 位置 | 选项 | 现有读取方 |
 |---|---|---|---|---|
-| 1 | `qa-subject` | `index.html` 快速添加面板 | 语文/数学/英语 | `app.js:2131` |
-| 2 | `ed-kind` | 编辑作业弹窗 | 学科作业/培训/习惯 | `app.js:1732`(+change) `1780` |
-| 3 | `ed-subject` | 编辑作业弹窗 | 语文/数学/英语 | `app.js:1783` |
-| 4 | `m-kind` | 手动添加弹窗 | 学科作业/培训/习惯 | `app.js:3056`(+change) `3085` |
-| 5 | `m-subject` | 手动添加弹窗 | 语文/数学/英语 | `app.js:3075` `3087` |
-| 6 | `slot-weekday` | 课表时段弹窗 | 周一~周日 | `app.js:4908` |
-| 7 | `pi-kind` | 周计划项弹窗 | 学科作业/培训/习惯 | `app.js:5035`(+change) `5055` |
-| 8 | `pi-subject` | 周计划项弹窗 | 语文/数学/英语 | `app.js:5060` |
-| 9 | `data-field="subject"` | 预览表每行的科目列 | 语文/数学/英语 | `app.js:2937` |
+| 1 | `qa-subject` | `index.html` 快速添加面板 | 语文/数学/英语 | `app.js:2138` |
+| 2 | `ed-kind` | 编辑作业弹窗 | 学科作业/培训/习惯 | `app.js:1787`(+change `1739`) |
+| 3 | `ed-subject` | 编辑作业弹窗 | 语文/数学/英语 | `app.js:1790` |
+| 4 | `m-kind` | 手动添加弹窗 | 学科作业/培训/习惯 | `app.js:3092`(+change `3063`) |
+| 5 | `m-subject` | 手动添加弹窗 | 语文/数学/英语 | `app.js:3094` |
+| 6 | `slot-weekday` | 课表时段弹窗 | 周一~周日 | `app.js:4915` |
+| 7 | `pi-kind` | 周计划项弹窗 | 学科作业/培训/习惯 | `app.js:5062`(+change `5042`) |
+| 8 | `pi-subject` | 周计划项弹窗 | 语文/数学/英语 | `app.js:5067` |
+| 9 | `data-field="subject"` | 预览表每行的科目列 | 语文/数学/英语 | `app.js:2944` |
+
+（行号以 `43d63ec` 为准；实现期间若行号漂移，按函数名定位即可：
+`openEditAssignmentModal` / `openManualAddModal` / `initQuickAdd` /
+`openScheduleSlotModal` / `openPlanItemModal` / `renderPreviewTable` / `collectRows`。）
 
 其中 **4 处挂了 `change` 监听**（`ed-kind` / `m-kind` / `m-subject` 经 `bindEstAutofill` /
 `pi-kind`），**8 处读 `.value`**。这两个事实决定了迁移方案的形状（见 §三）。
@@ -260,10 +264,10 @@ DOM 形态：
 
 | 监听点 | 用途 |
 |---|---|
-| `app.js:1732` `edKindSel` | 切换「科目」行 / 「项目」行的显隐 |
-| `app.js:3056` `kindSel` | 同上（手动添加） |
+| `app.js:1739` `edKindSel` | 切换「科目」行 / 「项目」行的显隐 |
+| `app.js:3063` `kindSel` | 同上（手动添加） |
 | `app.js:2810` `bindEstAutofill` | 换科目时按科目基线重算预计用时 |
-| `app.js:5035` `pi-kind` | 切换显隐（周计划项） |
+| `app.js:5042` `pi-kind` | 切换显隐（周计划项） |
 
 所以 `.sel` 选中后必须：
 
