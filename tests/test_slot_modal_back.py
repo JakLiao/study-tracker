@@ -1,21 +1,29 @@
-"""上课时段弹窗的次要键必须是「返回」而不是「取消」 (2026-10-31).
+"""上课时段弹窗的次要键必须是「返回」而不是「取消」 (2026-10-31 首版,
+2026-11-02 改版).
 
 用户截图反馈: 「新增上课时段」弹窗底部并排摆着「取消」和「新增」,
 圈出来的「取消」让他以为点它等于放弃这次新增。他要的是"返回上一层"。
 
 为什么不是「取消」:
-  这个弹窗是「固定课表」列表的下层 —— 从列表点「＋新增上课时段」进来的。
-  上一层(课表列表)还在, 所以次要键的自然语义是"退回上一层", 而不是
+  这个弹窗是「固定课表」的下层 —— 从课表管理处点「＋新增上课时段」进来的。
+  上一层(课表管理的地方)还在, 所以次要键的自然语义是"退回上一层", 而不是
   "关掉整个流程"。写成「取消」会让人以为整件事被撤销了, 下次进来又得
-  从周计划页重新点一遍「管理课表」。
+  重新找一遍课表。
 
 同一个层级关系也出现在「周计划项」弹窗上, 一起锁住。
 
-这里锁三件事:
+2026-11-02 的变化 (周计划页改版):
+  课表列表从**弹窗**搬到了**页内分区** (#week-sched 的时间轴)。
+  于是「上一层」不再是一个弹窗层, 而是页面里的那个分区。
+  次要键的语义没变 —— 仍是「返回上一层」, 只是上一层现在在页面上:
+  点它 = 关窗 + 高亮页内分区, 让家长知道自己退回到了哪里。
+
+这里锁五件事:
   1. 新增/改上课时段的次要键文案是「返回」, 不是「取消」
-  2. 点它退回上一层 (课表列表), 弹窗不关闭、标题回到「固定课表」
-  3. Esc / 点遮罩也退回上一层 —— 按键写着「返回」, 按 Esc 却把整个弹窗
-     关掉, 一样会让人以为按错了
+  2. 点它 = 关闭弹窗并高亮页内课表分区 (不是"关掉整个流程")
+  3. Esc / 点遮罩 走同一条路
+  4. 课表分区在页面里, 点负荷卡的「课表(分) · 管理」不该再开弹窗
+  5. 删除功能随这条时段进到编辑弹窗里 (列表里的「删」按钮没有了)
 """
 from __future__ import annotations
 
@@ -67,7 +75,16 @@ def test_slot_modal_uses_return_semantics(app_js):
     code = _code(app_js)
     block = code.split("async function openScheduleSlotModal(")[1].split("\n}\n")[0]
     assert "cancelText: '返回'" in block, "上课时段弹窗的次要键应写「返回」"
-    assert "onCancel: () => openScheduleManager()" in block, "点「返回」应退回课表列表层"
+    assert "flashScheduleSection" in block, "点「返回」应高亮页内课表分区"
+
+
+def test_slot_modal_has_delete_button(app_js):
+    """删除功能随这条时段进到编辑弹窗 —— 列表里原来的「删」按钮没有了."""
+    code = _code(app_js)
+    block = code.split("async function openScheduleSlotModal(")[1].split("\n}\n")[0]
+    assert "slot-del" in block, "编辑弹窗里要有删除按钮"
+    assert "删除这个时段" in block
+    assert "/schedule-slots/${slot.id}" in block, "删除要走 DELETE /api/schedule-slots/{id}"
 
 
 def test_plan_item_modal_uses_return_semantics(app_js):
@@ -98,6 +115,18 @@ def test_modal_cancel_goes_through_modal_cancel(app_js):
     assert "function modalCancel()" in code
     # Esc 与遮罩也走同一出口
     assert "modalCancel();" in code
+
+
+def test_schedule_manager_no_longer_opens_a_modal(app_js):
+    """课表列表搬进页面后, 「管理课表」不该再开弹窗。
+
+    列表已经在页面上当分区了, 再开弹窗等于把同一份内容弹两遍。
+    """
+    code = _code(app_js)
+    block = code.split("function openScheduleManager(")[1].split("\n}\n")[0]
+    assert "modal-content" not in block, "openScheduleManager 不该再往弹窗里塞课表列表"
+    assert "week-sched" in block, "应该定位到页内课表分区"
+    assert "function flashScheduleSection()" in code
 
 
 # ====== 运行时 (jsdom) ======
@@ -166,56 +195,64 @@ const state = () => ({
   cancelHidden: cancelBtn.classList.contains('hidden'),
   open: !modal.classList.contains('hidden'),
 });
+const flashed = () => !!doc.querySelector('#week-sched.is-flash');
 
 (async () => {
   const out = { steps: [] };
   w.__w();
   await wait(400);
 
-  // 进「固定课表」列表层
+  // 0. 课表分区在页内, 不在弹窗里
+  out.hasSection = !!doc.getElementById('week-sched');
+  out.blockCount = doc.querySelectorAll('.week-tl-blk').length;
+  out.modalOpenAtStart = !modal.classList.contains('hidden');
+
+  // 1. 点负荷卡的「课表(分) · 管理」-> 定位到分区, 不开弹窗
   click(doc.getElementById('week-manage-slots'));
   await wait(150);
-  out.list = state();
+  out.afterManageClick = state();
+  out.flashedAfterManage = flashed();
 
-  // 1. 「+ 新增上课时段」这一层
-  click(doc.getElementById('slot-add'));
+  // 2. 分区里的「＋ 新增时段」
+  click(doc.querySelector('#week-sched #slot-add'));
   await wait(150);
   out.add = state();
 
-  // 2. 点次要键 -> 退回上一层 (课表列表), 弹窗不关
+  // 3. 次要键 -> 关窗 + 高亮页内分区
   click(cancelBtn);
   await wait(150);
   out.afterBackFromAdd = state();
+  out.flashedAfterBack = flashed();
 
-  // 3. 「改上课时段」这一层
-  const editBtn = doc.querySelector('#modal-content [data-op="edit"]');
-  out.hasEditBtn = !!editBtn;
-  if (editBtn) {
-    click(editBtn);
+  // 4. 点课块 -> 改上课时段 (同一个弹窗)
+  const blk = doc.querySelector('.week-tl-blk');
+  out.hasBlock = !!blk;
+  if (blk) {
+    click(blk);
     await wait(150);
     out.edit = state();
-    // 4. 点次要键 -> 同样退回上一层
+    out.hasDelete = !!doc.getElementById('slot-del');
     click(cancelBtn);
     await wait(150);
     out.afterBackFromEdit = state();
   }
 
-  // 5. Esc 也只退一层, 不是关掉整个弹窗
-  click(doc.getElementById('slot-add'));
+  // 5. Esc 也关窗
+  click(doc.querySelector('#week-sched #slot-add'));
   await wait(150);
   key(doc, 'Escape');
   await wait(150);
   out.afterEsc = state();
 
-  // 6. 点遮罩也只退一层
-  click(doc.getElementById('slot-add'));
+  // 6. 点遮罩也关窗
+  click(doc.querySelector('#week-sched #slot-add'));
   await wait(150);
   click(modal);
   await wait(150);
   out.afterOverlay = state();
 
   // 7. 文案不被上一个弹窗污染: 再进一次仍是「返回」
-  click(doc.getElementById('slot-add'));
+  click(doc.querySelector('#week-sched #slot-add'));
   await wait(150);
   out.addAgain = state();
 
@@ -247,14 +284,25 @@ def live() -> dict:
 needs_jsdom = pytest.mark.skipif(not jsdom_available, reason="需要 node 与 jsdom")
 
 
-@needs_jsdom
-def test_list_level_has_single_return(live):
-    """课表列表层是只读弹窗: 只留一颗「返回」, 退出到周计划页."""
-    s = live["list"]
-    assert s["title"] == "固定课表"
-    assert s["cancelHidden"] is True
-    assert s["okText"] == "返回"
+# ====== 课表分区在页内 ======
 
+@needs_jsdom
+def test_schedule_section_is_in_the_page(live):
+    """课表是页内分区, 不是弹窗。"""
+    assert live["hasSection"] is True, "缺少页内课表分区 #week-sched"
+    assert live["blockCount"] == 1, "课时段应画成时间轴上的色块"
+    assert live["modalOpenAtStart"] is False, "进周计划页不该弹任何窗"
+
+
+@needs_jsdom
+def test_manage_button_does_not_open_a_modal(live):
+    """点「课表(分) · 管理」定位到分区, 不开弹窗。"""
+    s = live["afterManageClick"]
+    assert s["open"] is False, "不该再开课表列表弹窗"
+    assert live["flashedAfterManage"] is True, "应该高亮页内课表分区"
+
+
+# ====== 新增 / 编辑弹窗 ======
 
 @needs_jsdom
 def test_add_slot_modal_cancel_says_return(live):
@@ -267,17 +315,21 @@ def test_add_slot_modal_cancel_says_return(live):
 
 
 @needs_jsdom
-def test_return_goes_back_to_list_level(live):
-    """点「返回」退回课表列表, 弹窗不关闭 —— 上一层还在, 不用重进."""
+def test_return_closes_modal_and_flashes_section(live):
+    """点「返回」= 关闭弹窗 + 高亮页内课表分区。
+
+    上一层(课表管理的地方)从弹窗变成了页内分区, 所以「返回」现在要
+    关掉弹窗 —— 但必须让家长看见自己退回到了哪里, 否则像是整件事被撤销。
+    """
     s = live["afterBackFromAdd"]
-    assert s["open"] is True, "退回上一层而不是关掉整个弹窗"
-    assert s["title"] == "固定课表"
+    assert s["open"] is False, "「返回」应关闭弹窗 (上一层已是页面内的分区)"
+    assert live["flashedAfterBack"] is True, "「返回」应高亮页内课表分区"
 
 
 @needs_jsdom
 def test_edit_slot_modal_cancel_says_return(live):
     """「改上课时段」与新增是同一个弹窗, 次要键同样写「返回」."""
-    assert live["hasEditBtn"] is True
+    assert live["hasBlock"] is True, "时间轴上应有可点的课块"
     s = live["edit"]
     assert s["title"] == "改上课时段"
     assert s["cancelText"] == "返回"
@@ -286,25 +338,28 @@ def test_edit_slot_modal_cancel_says_return(live):
 
 
 @needs_jsdom
-def test_return_from_edit_goes_back_to_list_level(live):
+def test_edit_modal_has_delete_button(live):
+    """列表里的「删」按钮没有了, 删除跟着时段进到编辑弹窗。"""
+    assert live["hasDelete"] is True, "编辑弹窗里应有删除按钮"
+
+
+@needs_jsdom
+def test_return_from_edit_closes_modal(live):
     s = live["afterBackFromEdit"]
-    assert s["open"] is True
-    assert s["title"] == "固定课表"
+    assert s["open"] is False
 
 
 @needs_jsdom
-def test_escape_goes_back_one_level_only(live):
-    """按 Esc 只退一层: 写着「返回」就该只回上一层, 而不是关掉整个弹窗."""
+def test_escape_closes_modal(live):
+    """按 Esc 走同一条路: 关窗 + 回到页内分区。"""
     s = live["afterEsc"]
-    assert s["open"] is True
-    assert s["title"] == "固定课表"
+    assert s["open"] is False
 
 
 @needs_jsdom
-def test_overlay_click_goes_back_one_level_only(live):
+def test_overlay_click_closes_modal(live):
     s = live["afterOverlay"]
-    assert s["open"] is True
-    assert s["title"] == "固定课表"
+    assert s["open"] is False
 
 
 @needs_jsdom

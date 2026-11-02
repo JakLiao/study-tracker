@@ -4679,7 +4679,10 @@ function renderScheduleSection(w) {
 function openScheduleManager() {
   const sec = document.getElementById('week-sched');
   if (!sec) return;
-  sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // scrollIntoView 在 jsdom 里没实现 (老浏览器也可能没有), 用 typeof 挡一下
+  if (typeof sec.scrollIntoView === 'function') {
+    sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
   flashScheduleSection();
 }
 
@@ -4722,19 +4725,42 @@ async function openScheduleSlotModal(slot) {
         <span class="form-hint">如"琴房 3 号", 可不填</span>
       </span>
     </label>
-  </div>`;
+  </div>
+  ${slot ? '<div class="row"><button type="button" class="danger" id="slot-del">删除这个时段</button></div>' : ''}`;
   initProjectPickers(content);
+  // 删除按钮 (2026-11-02): 课表列表从弹窗搬进页面后, 列表里原来的
+  // 「删」按钮没有了 —— 删除跟着这条时段一起走, 进到编辑弹窗里。
+  const del = content.querySelector('#slot-del');
+  if (del) del.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: '删除上课时段',
+      lead: `删除「${slot.project_name} ${WEEKDAY_LABELS[slot.weekday]} ${slot.start_time}-${slot.end_time}」?`,
+      okText: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api('DELETE', `/schedule-slots/${slot.id}`);
+      toast('已删除课表时段');
+      closeModal();
+      await loadWeekPlan();
+    } catch (e) {
+      toast('删除失败: ' + e.message);
+    }
+  });
   m.classList.remove('hidden');
   m.classList.remove('confirm-modal');
   setModalActions({
     mode: 'confirm',
     okText: slot ? '保存' : '新增',
-    // 这个弹窗是「固定课表」的下层 (从列表点「＋新增上课时段」进来的),
-    // 次要键是"返回上一层" —— 回到课表列表, 而不是把整个弹窗关掉。
-    // 上一层还在, 按一下回去比一键退出更顺手; 列表层自己的「返回」才是
-    // 退出到周计划页。
+    // 2026-11-02: 课表列表从弹窗搬到了页内分区, 所以「上一层」不再是
+    // 一个弹窗层, 而是页面里的课表分区。「返回」= 关窗 + 闪一下分区,
+    // 让家长知道自己退回到了哪里, 而不是以为整件事被撤销了。
     cancelText: '返回',
-    onCancel: () => openScheduleManager(),
+    onCancel: () => {
+      closeModal();
+      flashScheduleSection();
+    },
     onOk: async () => {
       const pid = parseInt(document.getElementById('slot-project').value, 10);
       if (!Number.isFinite(pid)) { toast('先选一个项目'); return; }
