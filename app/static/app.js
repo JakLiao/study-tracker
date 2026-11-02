@@ -1665,6 +1665,9 @@ function openEditAssignmentModal(item, onSaved) {
   if (!_qaProjects.length) refreshQuickAddData();
   const edKind = item.task_kind || 'subject';
   const isSubject = edKind === 'subject';
+  // 下面的项目选择器不给 defaultFirst: 这里改的是**已有**的记录, 原记录
+  // 没挂项目就得空着 —— 兜一个「钢琴」出来既是给家长看假信息, 保存时
+  // 还会真的写进库里 (2026-11-02 用户反馈)。
   document.getElementById('modal-content').innerHTML = `
     <div class="form-grid">
       <label>
@@ -2154,7 +2157,8 @@ function initQuickAdd() {
   // 候选随项目列表异步到达, 所以先挂好控件, 列表由 refreshProjectPickers 补上。
   const host = document.getElementById('qa-project-row');
   if (host) {
-    host.innerHTML = projectPickerHtml('qa-project');
+    // 新建流程: 没选就落在第一个项目上, 家长只想加一条培训任务时省一次点击。
+    host.innerHTML = projectPickerHtml('qa-project', null, null, { defaultFirst: true });
     initProjectPickers(host);
   }
   setQuickKind('subject');
@@ -2523,28 +2527,39 @@ function projectOptionList(selectedId, selectedName) {
   return list;
 }
 
-// 项目选择器的 HTML。selectedId 为空时默认落在第一个项目上 —— 原生
-// <select> 也是这个默认 (第一个 option 自动选中), 保持一致: 家长只改了
-// 时间, 不该因为"没碰项目"而被拦下。
-function projectPickerHtml(id, selectedId, selectedName) {
-  const opts = projectOptionList(selectedId, selectedName);
+// 项目选择器的 HTML。
+//
+// 默认值策略 (opts.defaultFirst, 2026-11-02 用户反馈后拆开):
+//   'none'  —— 没选就空着。改**已有**记录时必须这样: 原记录没挂项目,
+//              就不能替它编一个出来。原先一律落在第一个项目上, 于是
+//              学科作业的弹窗里凭空冒出「钢琴」, 更糟的是保存时请求里
+//              夹带 project_id, 把培训任务悄悄挪到了「钢琴」名下。
+//   'first' —— 没选时落在第一个项目上。**新建**记录用这个: 家长只想加
+//              一条培训任务, 每次都多点一次没道理。
+// 两者方向刻意相反: 默认值可以给新记录兜底, 但绝不能改写已存在的记录。
+function projectPickerHtml(id, selectedId, selectedName, opts) {
+  const policy = (opts && opts.defaultFirst) ? 'first' : 'none';
+  const list = projectOptionList(selectedId, selectedName);
   const sid = selectedId == null ? '' : String(selectedId);
   let value = sid;
   let label = '';
   if (value) {
-    const hit = opts.find(o => o.value === value);
+    const hit = list.find(o => o.value === value);
     label = hit ? hit.label : (selectedName || '当前项目');
-  } else if (opts.length) {
-    value = opts[0].value;
-    label = opts[0].label;
+  } else if (policy === 'first' && list.length) {
+    value = list[0].value;
+    label = list[0].label;
   }
   const empty = !value;
-  return `<span class="picker" data-picker data-selected="${escapeAttr(value)}" data-name="${escapeAttr(label)}">
+  // 两种"空"要分清: 一个项目都没有叫「还没有项目」(去建一个),
+  // 有项目但没选叫「未选择项目」(去挑一个)。
+  const emptyText = list.length ? '未选择项目' : '还没有项目';
+  return `<span class="picker" data-picker data-default="${policy}" data-selected="${escapeAttr(value)}" data-name="${escapeAttr(label)}">
     <input type="hidden" id="${id}" value="${escapeAttr(value)}" />
     <span class="picker-row">
       <span class="picker-slot">
         <button type="button" class="picker-trigger" aria-haspopup="listbox" aria-expanded="false">
-          <span class="picker-value${empty ? ' is-empty' : ''}">${escapeAttr(empty ? '还没有项目' : label)}</span>
+          <span class="picker-value${empty ? ' is-empty' : ''}">${escapeAttr(empty ? emptyText : label)}</span>
           <span class="picker-caret" aria-hidden="true"></span>
         </button>
         <span class="picker-panel" hidden>
@@ -2577,6 +2592,9 @@ function bindProjectPicker(root) {
 
   const origId = root.dataset.selected || '';
   const origName = root.dataset.name || '';
+  // 默认值策略由 HTML 决定 (data-default): 'none' = 没选就空着,
+  // 'first' = 没选时落在第一个项目上。见 projectPickerHtml 的说明。
+  const policy = root.dataset.default === 'first' ? 'first' : 'none';
   let current = hidden.value;
 
   // 候选 = 现存项目 + (当前项目已归档时的兜底项)。兜底项只在"当前值
@@ -2596,17 +2614,22 @@ function bindProjectPicker(root) {
       valueEl.textContent = o ? o.label : (origName || '当前项目');
       valueEl.classList.remove('is-empty');
     } else {
-      valueEl.textContent = '还没有项目';
+      // 分清两种空: 项目一个都没有, 与有项目但没选 —— 后者要引导去挑,
+      // 前者要引导去建。
+      valueEl.textContent = options().length ? '未选择项目' : '还没有项目';
       valueEl.classList.add('is-empty');
     }
   };
 
   // 值与候选的同步: 项目列表变了 (新建/归档/首次加载) 后重新对一遍。
-  // 与原生 <select> 一致: 只要还有候选, 就一定有一个选中项 —— 少了这条,
-  // 家长明明看到下拉里有项目, 提交时却被当成"没选项目"。
+  //
+  // 只有新建流程 (policy='first') 才会在"没选"时兜一个第一个项目 ——
+  // 那是给一条**新**记录省一次点击。改已有记录时绝不能这么干: 原记录
+  // 没有项目, 兜上一个就等于替他编了条数据, 保存时还会真的写进库里
+  // (2026-11-02 用户反馈: 弹窗里冒出无关的「钢琴」)。
   const sync = () => {
     const opts = options();
-    if (!current && opts.length) {
+    if (policy === 'first' && !current && opts.length) {
       current = opts[0].value;
       hidden.value = current;
     }
@@ -2990,7 +3013,7 @@ function openManualAddModal() {
       <label id="m-project-wrap" hidden>
         <span class="form-label">项目</span>
         <span class="form-field">
-          ${projectPickerHtml('m-project')}
+          ${projectPickerHtml('m-project', null, null, { defaultFirst: true })}
           <span class="form-hint">没有项目？点「＋新建项目」当场建一个</span>
         </span>
       </label>
@@ -4813,7 +4836,8 @@ async function openScheduleSlotModal(slot) {
   content.innerHTML = `<div class="form-grid">
     <label>
       <span class="form-label">项目</span>
-      ${projectPickerHtml('slot-project', slot && slot.project_id, slot && slot.project_name)}
+      ${projectPickerHtml('slot-project', slot && slot.project_id, slot && slot.project_name,
+                          { defaultFirst: !slot })}
     </label>
     <label>
       <span class="form-label">星期</span>
@@ -4983,7 +5007,8 @@ async function openPlanItemModal(item) {
     </label>
     <label id="pi-project-wrap" ${isSubject ? 'hidden' : ''}>
       <span class="form-label">项目</span>
-      ${projectPickerHtml('pi-project', item && item.project_id, item && item.project_name)}
+      ${projectPickerHtml('pi-project', item && item.project_id, item && item.project_name,
+                          { defaultFirst: !item })}
     </label>
     <label>
       <span class="form-label">任务名</span>

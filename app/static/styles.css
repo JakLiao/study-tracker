@@ -1689,6 +1689,13 @@ button.primary.modal-danger:hover:not(:disabled) {
 .form-grid > label {
   display: contents;   /* 让 label 的子元素直接参与网格, 才有两列 */
 }
+/* 上面那条 display:contents 是作者样式, 优先级高于浏览器对 [hidden] 的
+   display:none —— 于是 hidden 的行照样显示出来 (学科作业的弹窗里凭空
+   多出「项目」一行, 2026-11-02 用户反馈)。同款先例见 .quick-row[hidden]
+   与 .cal-legend[hidden]。 */
+.form-grid > label[hidden] {
+  display: none;
+}
 /* 标签文字: 右对齐 + 不换行, 数字/单位与控件左缘对齐 */
 .form-grid .form-label {
   font-size: var(--fs-caption);
