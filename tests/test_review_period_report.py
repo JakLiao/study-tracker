@@ -71,7 +71,10 @@ def test_non_current_period_does_not_request_report():
 def test_report_still_first_in_current_period():
     """本周周期下周报仍在最上面 (先于用时统计 append)。"""
     code = _code(_app_js())
-    assert code.index("loadWeeklyReport()") < code.index("loadReviewTime(period)")
+    # 匹配到 "loadReviewTime(period" 就停 (不写右括号): 用时统计后来多了
+    # 一个月份参数 (2026-11-03 加「上月」周期), 写死右括号会让这条在
+    # 签名变化时误报 —— 它要守的是**调用顺序**, 不是参数个数。
+    assert code.index("loadWeeklyReport()") < code.index("loadReviewTime(period")
 
 
 # ====== 2. 运行时 (jsdom) ======

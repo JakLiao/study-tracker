@@ -393,6 +393,10 @@
         <button data-period="current" class="primary period-btn">本周</button>
         <button data-period="last" class="ghost period-btn">上周</button>
         <button data-period="month" class="ghost period-btn">本月</button>
+        <!-- 「上月」(2026-11-03): 过去整月的完整复盘, 内容与「本月」同构。
+             它是家长最常问的那个问题 ("上个月过得怎么样"), 而「本月」是
+             month-to-date 的 —— 月才过了三天, 柱状图上只有三根柱子。 -->
+        <button data-period="last_month" class="ghost period-btn">上月</button>
         <!-- 周末显示开关 (2026-10-30): 默认不勾 = 不显示周末。
              作业都在上学最后一天 (通常周五) 布置, 周末既没作业也不存在
              "上了学却没写"的情况 —— 在图上只是一根空柱, 在分档卡里只是
@@ -401,6 +405,18 @@
           <input type="checkbox" id="chk-weekend" />
           <span>显示周末</span>
         </label>
+      </div>
+      <!-- 月份步进器 (2026-11-03): 只在「上月」周期出现。
+           「上月」里能往前翻历史月份 —— 复盘的不该只有最近一个月。
+           最远只到"上个月": 本月有独立的 tab 且是 month-to-date 口径,
+           同一个月份出两套口径会让家长对不上账。 -->
+      <div class="row review-month-nav" id="review-month-nav" hidden>
+        <button type="button" class="ghost review-month-step" id="review-month-prev"
+                aria-label="上一个月">‹</button>
+        <span class="review-month-label" id="review-month-label" aria-live="polite"></span>
+        <button type="button" class="ghost review-month-step" id="review-month-next"
+                aria-label="下一个月">›</button>
+        <button type="button" class="ghost review-month-back" id="review-month-back">回到上月</button>
       </div>
       <div id="review-content"></div>
     </section>

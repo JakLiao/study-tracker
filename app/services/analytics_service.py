@@ -12,22 +12,75 @@ from .tenant import default_family_id
 # 周一=0 ... 周日=6, 与 date.weekday() 对齐
 WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
-# 统计周期的取值与中文名。前端按钮与后端参数用同一套词 (current/last/month),
-# 文案里的"本周/上周/本月"也集中在这里 —— 散落在各处各写一遍, 迟早会漏改。
-PERIOD_LABELS = {"current": "本周", "last": "上周", "month": "本月"}
+# 统计周期的取值与中文名。前端按钮与后端参数用同一套词
+# (current/last/month/last_month), 文案里的"本周/上周/本月/上月"也集中
+# 在这里 —— 散落在各处各写一遍, 迟早会漏改。
+PERIOD_LABELS = {
+    "current": "本周", "last": "上周", "month": "本月", "last_month": "上月",
+}
 
 
-def _period_range(period: str, today: date) -> tuple[date, date]:
+def _parse_month_param(month: str | None) -> date | None:
+    """把 "YYYY-MM" 解析成那个月的 1 号。
+
+    解析不了就返回 None —— 调用方 (_period_range) 收到 None 时按"缺省月份"
+    处理 (上月周期缺省 = 上个月)。**不抛异常**: month 是可选的辅助参数,
+    传坏了当没传, 而不是把整个复盘页打成 500。
+    """
+    s = (month or "").strip()
+    if not s:
+        return None
+    try:
+        y, m = s.split("-")[:2]
+        return date(int(y), int(m), 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def _month_start(d: date) -> date:
+    """d 所在月的 1 号。"""
+    return d.replace(day=1)
+
+
+def _last_month_start(today: date) -> date:
+    """上个月的 1 号。"""
+    return _month_start(_month_start(today) - timedelta(days=1))
+
+
+def _month_label(month_start: date, today: date) -> str:
+    """月份的名字 (相对今天)。
+
+    - 本月 / 上月 / 上上月 —— 就近三个月用相对说法, 家长不用先去数日历;
+    - 更早的月份用 "8月" —— 再往前说"上上上月"就没法读了。
+
+    月报文案与环比基准的名字都由这里给 (前端不自己判断), 免得两处
+    各算一遍、改一处忘另一处。
+    """
+    if month_start == _month_start(today):
+        return "本月"
+    if month_start == _last_month_start(today):
+        return "上月"
+    if month_start == _month_start(_last_month_start(today) - timedelta(days=1)):
+        return "上上月"
+    return f"{month_start.month}月"
+
+
+def _period_range(period: str, today: date, month: str | None = None) -> tuple[date, date]:
     """统计区间.
 
     - current / last: 自然周, 周一为一周开始, 固定 7 天。
     - month: 本月 1 日至**今日** (month-to-date)。
+    - last_month: 指定月 (缺省 = 上个月) 的 1 日至该月最后一天 —— **整月**。
 
     为什么本月不到月底: 本月尚未到来的日子没有数据, 算进分母会把
     "平日日均"稀释成假的 —— 比如 10 月 5 日看本月, 4 个平日里有 3 个
     还没发生, 日均只剩真实值的三分之一。家长拿这个数去估"每天要写
     多久", 会被带偏。本周虽是整周 (含未到的日子), 但一周里未到的
     日子最多 3 天且多半落在周末档, 影响远小于整月。
+
+    为什么上月是整月: 上月已经过完了, 它的每一天都是真实发生过的,
+    没有"未到来"这回事。所以直接取整月, 不做 month-to-date 那套截断。
+    (2026-11-03)
     """
     monday = today - timedelta(days=today.weekday())
     if period == "last":
@@ -35,12 +88,17 @@ def _period_range(period: str, today: date) -> tuple[date, date]:
         return last_mon, last_mon + timedelta(days=6)
     if period == "month":
         return today.replace(day=1), today
+    if period == "last_month":
+        # 指定月份优先; 没指定就看上个月。
+        start = _parse_month_param(month) or _last_month_start(today)
+        return start, _last_day_of_month(start)
     # 默认 current
     return monday, monday + timedelta(days=6)
 
 
-def _empty_result(period: str, today: date, sample_size: int = 0, note: str | None = None):
-    start, end = _period_range(period, today)
+def _empty_result(period: str, today: date, sample_size: int = 0, note: str | None = None,
+                  month: str | None = None):
+    start, end = _period_range(period, today, month)
     return {
         "period": period,
         "period_start": start.isoformat(),
@@ -53,7 +111,7 @@ def _empty_result(period: str, today: date, sample_size: int = 0, note: str | No
     }
 
 
-def build_period_analytics(period: str, today: date) -> dict:
+def build_period_analytics(period: str, today: date, month: str | None = None) -> dict:
     """周期维度偏差: 预估 vs 实际, 按 科目 x 任务类型 聚合.
 
     业务规则:
@@ -61,8 +119,10 @@ def build_period_analytics(period: str, today: date) -> dict:
     - 实际用时缺省时按预估计入 (COALESCE), 不再因为没填就丢弃样本
     - sample_size < 5 -> 抛 SampleTooSmallError (前端展示"样本不足")
     - sample_size >= 5 但没有可执行任务的, 返回 note 提示
+
+    month: last_month 周期下指定看哪个月 ("YYYY-MM"), 缺省看上个月。
     """
-    start, end = _period_range(period, today)
+    start, end = _period_range(period, today, month)
     label = PERIOD_LABELS.get(period, "本周")
 
     # 未填实际用时的已完成项, 用 est_minutes 顶替。
@@ -94,7 +154,7 @@ def build_period_analytics(period: str, today: date) -> dict:
 
     if not rows:
         return _empty_result(period, today, sample_size=0,
-                             note=f"{label}有完成但无实际耗时数据")
+                             note=f"{label}有完成但无实际耗时数据", month=month)
 
     # 按 (subject, task_type) 聚合
     agg: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
@@ -227,7 +287,7 @@ def classify_day(d: date, holidays: dict[str, str], makeup: dict[str, str]) -> t
     return "off", "未知"
 
 
-def build_daily_time_stats(period: str, today: date) -> dict:
+def build_daily_time_stats(period: str, today: date, month: str | None = None) -> dict:
     """每日各科作业用时 (按上学日口径).
 
     返回结构:
@@ -239,8 +299,10 @@ def build_daily_time_stats(period: str, today: date) -> dict:
       weekend     周末单列
       makeup      调休上班日单列
       subject_share  各科时间占用 (预估 / 实际分开), 给占比饼图用
+
+    month: last_month 周期下指定看哪个月 ("YYYY-MM"), 缺省看上个月。
     """
-    start, end = _period_range(period, today)
+    start, end = _period_range(period, today, month)
     holidays = _calendar_holidays()
     makeup = _calendar_makeup()
 
@@ -509,6 +571,11 @@ def build_month_analytics(anchor: date, today: date) -> dict:
 
     环比上月用 **同期对齐**: 上个月同期 (上月 1 日 ~ 上月同一天), 不是上月
     整月。本月才过了 2 天却拿上月整月比, 会得出"少用了 95%"这种假结论。
+
+    但**过去整月** (上月 / 更早的月份) 不是这个口径: 那些日子都已过完,
+    拿整月跟"上个月的同期"比毫无意义 —— 上上月只有 30 天, "同期"会被截断
+    成 30 天, 那其实是整月比。所以过去的整月一律按**整月**比, 并在
+    payload 里标明基准 (prev_month_basis), 让文案说对 (2026-11-03)。
     """
     month_start = anchor.replace(day=1)
     month_end = _last_day_of_month(month_start)
@@ -523,11 +590,35 @@ def build_month_analytics(anchor: date, today: date) -> dict:
 
     with get_conn() as conn:
         rows = _month_range_rows(conn, family_id, month_start, data_end)
+        # 这个家庭最早的一条作业记录在哪天。
+        #
+        # 用途: 判断环比基准月是不是**只记了后半段**。家里是 9 月 21 日
+        # 开始用的这个应用, 于是 9 月只有 9/21 之后的数据 —— 拿 10 月整月
+        # 去比 9 月, 会算出"+329%"这种假涨幅 (9 月少了整整 20 天)。
+        # 不是孩子变勤快了, 是 9 月前 20 天压根没记。
+        # 所以基准月缺前半段时要**说出来**, 不能让家长照着假涨幅下结论。
+        first_row = conn.execute(
+            "SELECT MIN(due_date) AS d FROM assignments WHERE family_id = %s",
+            (family_id,),
+        ).fetchone()
+        first_date = first_row["d"] if first_row else None
+        if isinstance(first_date, str):
+            first_date = date.fromisoformat(first_date)
         prev_start = _add_months(month_start, -1)
-        prev_end = min(
-            prev_start + timedelta(days=max(elapsed_days - 1, 0)),
-            _last_day_of_month(prev_start),
-        )
+        if is_partial:
+            # 本月 (还没过完): **同期对齐** —— 上月 1 日 ~ 上月同一天。
+            # 本月才过 2 天却拿上月整月比, 会得出"少用了 95%"这种假结论。
+            prev_end = min(
+                prev_start + timedelta(days=max(elapsed_days - 1, 0)),
+                _last_day_of_month(prev_start),
+            )
+        else:
+            # 过去的整月: 跟**上一个整月**比, 基准月取全月, 不截断。
+            #
+            # 不能沿用上面的同期算法: 9 月 30 天比 8 月时, "同期"会算成
+            # 8 月 1~30 日, 少算 8 月 31 日那一天 —— 而那是个完整月份的
+            # 基准, 少一天就是拿 30 天比 31 天, 日均与百分比都会偏。
+            prev_end = _last_day_of_month(prev_start)
         prev_rows = (_month_range_rows(conn, family_id, prev_start, prev_end)
                      if elapsed_days > 0 else [])
 
@@ -619,6 +710,21 @@ def build_month_analytics(anchor: date, today: date) -> dict:
 
     completion = _month_completion(rows)
 
+    # 文案依据。**前端不猜"这是本月还是上月"** —— 名字与基准都从这里给,
+    # 否则"上月"周期里写出一句"与上月同期相比"就正好说错了 (上月比的是
+    # 上上月整月, 不是上月同期)。
+    month_label = _month_label(month_start, today)
+    prev_month_label = _month_label(prev_start, today)
+    prev_month_basis = "same_period" if is_partial else "full_month"
+
+    # 基准月是不是只记了后半段?
+    #
+    # 家里若是 9 月 21 日才开始用这个应用, 9 月就只剩 9/21 之后的数据 ——
+    # 拿 10 月整月去比这样的 9 月, 会算出"+329%"这种假涨幅 (9 月少了
+    # 整整 20 天)。不是孩子变勤快了, 是那 20 天压根没记。
+    # 所以基准缺前半段时要**说出来**, 不能让家长照着假涨幅下结论。
+    prev_month_partial = bool(first_date and prev_start < first_date)
+
     return {
         "month": f"{month_start.year:04d}-{month_start.month:02d}",
         "month_start": month_start.isoformat(),
@@ -627,6 +733,10 @@ def build_month_analytics(anchor: date, today: date) -> dict:
         "elapsed_days": elapsed_days,
         "is_partial": is_partial,
         "school_days": school_days,
+        # 所看月份的名字 (相对今天): 本月 / 上月 / 上上月 / 8月
+        "month_label": month_label,
+        # 环比基准的名字 (相对今天): 上月 / 上上月 / 7月
+        "prev_month_label": prev_month_label,
         "completion": completion,
         "time": {
             "total_minutes": total_minutes,
@@ -647,8 +757,18 @@ def build_month_analytics(anchor: date, today: date) -> dict:
             "done": prev_completion["settled"],
             "rate": prev_completion["rate"],
         },
-        # 环比基准是"上月同期", 不是上月整月 —— 前端文案必须照着说。
-        "prev_month_basis": "same_period",
+        # 环比基准: same_period = 上月同期 (本月没过完时的对齐口径);
+        # full_month = 上一个整月 (过去的整月比整月)。
+        # 前端文案必须照着说 —— 写错基准家长会对不上账。
+        "prev_month_basis": prev_month_basis,
+        # 基准月是不是只记了后半段 (家里从这个月才开始用应用)。
+        # 为真时环比数字会偏大, 前端要补一句说明, 别让家长误判。
+        "prev_month_partial": prev_month_partial,
+        # 基准月里有没有数据。压根没记录 (比开始用应用还早的月份) 与
+        # "只记了后半段" 是两回事, 文案不能混着说。
+        "prev_month_has_data": prev_total > 0,
+        # 这个家庭最早的一条作业记录在哪天 (给上面那句说明用)。
+        "first_record_date": first_date.isoformat() if first_date else None,
         "delta": {
             "minutes": total_minutes - prev_total,
             "minutes_pct": (round((total_minutes - prev_total) * 100 / prev_total, 1)

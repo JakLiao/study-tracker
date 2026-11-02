@@ -2485,6 +2485,45 @@ footer {
 /* 勾上后文字变深: 让"当前开着"一眼看得出来, 不必去数方框里那点对勾 */
 .weekend-toggle.is-on { color: var(--text-1); }
 
+/* --- 21b. 复盘页: 月份步进器 (2026-11-03) ---
+   只在「上月」周期出现 (JS 控制 hidden)。它回答的是"现在看的是哪个月",
+   所以月份名要显眼 —— 周期按钮那一排写的是"上月", 而内容可能已经是 8 月,
+   两者不一致时, 家长只能靠这一个标签知道自己在看哪个月。
+   箭头沿用日历页 (‹ ›) 的做法: 单独一行, 靠左排, 不跟周期按钮抢一行。 */
+.review-month-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+/* 作者样式里的 display:flex 会盖掉浏览器对 [hidden] 的 display:none,
+   步进器就永远露在外面 (同 .quick-row[hidden] / .cal-legend[hidden] 的坑)。
+   这条必须写, 否则「本月」「上周」「本周」三个周期下也看得见它。 */
+.review-month-nav[hidden] { display: none; }
+/* 月份名: 定宽 + 表格数字, 翻月时数字不跳动 */
+.review-month-label {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  min-width: 110px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+/* 箭头键: 加大点击目标 (36px 高), 跟周末开关那行一个量级 */
+.review-month-step {
+  min-width: 36px;
+  min-height: 36px;
+  font-size: var(--fs-h2);
+  line-height: 1;
+  padding: 0 var(--space-2);
+}
+/* "回到上月": 靠右排, 与日历页"回到今天"同一个位置感 */
+.review-month-back {
+  margin-left: auto;
+  min-height: 36px;
+}
+
 /* --- 图表容器 (ECharts, 2026-11-02) ---
    ECharts 画在 canvas 上, 容器必须有**确定的高度** —— 给自适应高度它会
    塌成 0, 图就整个不出现。高度定死 260px (与旧手写 SVG 的 H 一样),

@@ -473,26 +473,35 @@ def _month_highlights(analytics: dict, mode: str) -> list[str]:
     completion = analytics["completion"]
     delta = analytics["delta"]
 
+    # 月份的名字由后端给 (本月 / 上月 / 上上月 / 8月) —— 前端不判断,
+    # 文案层也不该自己拼一个"本月"出来: 看的是上个月时, 写"本月作业用时"
+    # 就正好写错了。
+    label = analytics.get("month_label") or "本月"
+    # 环比基准: 本月没过完 -> 上月同期; 过去的整月 -> 上一个整月。
+    prev_label = analytics.get("prev_month_label") or "上月"
+    basis = analytics.get("prev_month_basis") or "same_period"
+    baseline = prev_label + ("同期" if basis == "same_period" else "")
+
     if time_stats["total_minutes"] > 0:
         # 月没过完才叫"至今" —— 已经过去的整月说"至今"是错的。
-        prefix = "本月至今" if analytics["is_partial"] else "本月"
+        prefix = f"{label}至今" if analytics["is_partial"] else label
         out.append(f"{prefix}作业用时 {time_stats['total_minutes']} 分钟, "
                    f"上学日日均 {time_stats['avg_daily_minutes']} 分钟")
     if completion["required"] > 0:
         out.append(f"必做收尾率 {completion['rate']}% ({completion['settled']}/"
                    f"{completion['required']} 项)")
     if delta.get("minutes_pct") is not None and time_stats["total_minutes"] > 0:
-        # 必须写明是"与上月同期比" —— 不写清楚, 家长会以为跟整月比。
+        # 必须写明是跟哪个基准比 —— 不写清楚, 家长会以为跟整月比。
         # 月还没过完时还要带上"至今 N 天": 只过了两天就报一个百分比,
         # 家长会当成"这个月整体变差了"。
-        head = (f"本月至今 {analytics['elapsed_days']} 天, " if analytics["is_partial"] else "")
+        head = (f"{label}至今 {analytics['elapsed_days']} 天, " if analytics["is_partial"] else "")
         if delta["minutes"] == 0:
-            out.append(head + "与上月同期相比用时持平")
+            out.append(head + f"与{baseline}相比用时持平")
         elif delta["minutes"] > 0:
-            out.append(head + f"与上月同期相比多用了 {delta['minutes']} 分钟 "
+            out.append(head + f"与{baseline}相比多用了 {delta['minutes']} 分钟 "
                        f"(+{delta['minutes_pct']}%)")
         else:
-            out.append(head + f"与上月同期相比少用了 {abs(delta['minutes'])} 分钟 "
+            out.append(head + f"与{baseline}相比少用了 {abs(delta['minutes'])} 分钟 "
                        f"({delta['minutes_pct']}%)")
     return out[:2 if mode == "lite" else 3]
 
@@ -502,9 +511,10 @@ def _month_suggestions(analytics: dict, blockers: dict, mode: str) -> list[str]:
     out: list[str] = []
     completion = analytics["completion"]
     weeks = analytics["weeks"]
+    label = analytics.get("month_label") or "本月"
 
     if completion["total"] == 0:
-        out.append("本月还没有作业记录, 先把老师通知登记进来, 月报才有内容")
+        out.append(f"{label}还没有作业记录, 先把老师通知登记进来, 月报才有内容")
     # "哪周最重"这件事至少要过了一周才说得出来 —— 月才过了两天的时候,
     # "第1周最重"是拿两天跟一天比, 没有参考价值。
     if analytics["elapsed_days"] >= 7 and weeks:
@@ -520,7 +530,7 @@ def _month_suggestions(analytics: dict, blockers: dict, mode: str) -> list[str]:
         out.append(f"「{s['task_name']}」实际 {s['actual_minutes']} 分钟, "
                    f"是预估的 {s['ratio']} 倍, 下次直接按 {s['actual_minutes']} 分钟排")
     if not out:
-        out.append("本月节奏平稳, 保持这个安排就好")
+        out.append(f"{label}节奏平稳, 保持这个安排就好")
     return out[:2 if mode == "lite" else 3]
 
 
@@ -560,6 +570,15 @@ def build_monthly_report(anchor: date, today: date | None = None) -> dict:
         "today": today.isoformat(),
         "elapsed_days": analytics["elapsed_days"],
         "is_partial": analytics["is_partial"],
+        # 月份的名字与环比基准的名字 (本月 / 上月 / 上上月 / 8月)。
+        # 前端照着拼标题与口径说明, 不自己判断"这是哪个月"。
+        "month_label": analytics.get("month_label") or "本月",
+        "prev_month_label": analytics.get("prev_month_label") or "上月",
+        # 基准月是不是只记了后半段 (家里从那个月才开始用应用)。
+        # 为真时环比偏大, 前端要补一句说明, 别让家长误判成"孩子变勤快"。
+        "prev_month_partial": bool(analytics.get("prev_month_partial")),
+        "prev_month_has_data": bool(analytics.get("prev_month_has_data")),
+        "first_record_date": analytics.get("first_record_date"),
         "grade": grade,
         "mode": mode,
         "has_data": bool(rows),

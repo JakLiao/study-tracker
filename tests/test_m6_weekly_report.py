@@ -391,7 +391,10 @@ def test_frontend_wires_report_and_csv(app_client):
     assert "export/assignments.csv" in js
     assert "renderWeeklyReport" in js
     # 复盘页顶部: 周报必须先于用时统计被 append
-    assert js.index("loadWeeklyReport()") < js.index("loadReviewTime(period)")
+    # 匹配到 "loadReviewTime(period" 就停 (不写右括号): 用时统计后来多了
+    # 一个月份参数 (2026-11-03 加「上月」周期), 写死右括号会让这条
+    # 在签名变化时误报 —— 它要守的是**调用顺序**, 不是参数个数。
+    assert js.index("loadWeeklyReport()") < js.index("loadReviewTime(period")
     assert ".report-card" in css
     # 与 test_settings_ui 同一口径: 去掉注释再看, 注释里提到 :has() 不算违规。
     import re

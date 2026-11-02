@@ -737,8 +737,9 @@ async function attachDeferButtons() {
 async function renderParentReviewExtras(period, ctx) {
   ctx = ctx || {};
   // 薄弱项要读晚间小结的标签: 最多 7 次请求, 只在复盘页发生。
-  // 日期范围跟着当前周期走 —— 上周周期就该看上周的小结。
-  const dates = reflectionTagDates(period);
+  // 日期范围跟着当前周期走 —— 上周周期就该看上周的小结;
+  // 上月周期看的是**那个月**的小结 (ctx.month), 不是"最近 31 天"。
+  const dates = reflectionTagDates(period, ctx.month);
   const tagCounts = await collectReflectionTags(dates);
   const card = renderPWeak(ctx.deviation, tagCounts);
   attachDeferButtons();
@@ -747,10 +748,23 @@ async function renderParentReviewExtras(period, ctx) {
 
 // 薄弱项要读哪些天的晚间小结。跟着当前周期走 ——
 // 上周周期就该看上周的小结, 而不是永远看最近七天。
-function reflectionTagDates(period) {
+//
+// month: 月视图周期 ('last_month') 下看的是哪个月 ('YYYY-MM')。
+// 月视图要读那个月的**实际**日期 —— 翻回 8 月看 8 月的作业, 配的却是
+// "最近 31 天"的小结, 薄弱项就张冠李戴了。
+function reflectionTagDates(period, month) {
   const dates = [];
   if (period === 'last') {
     for (let i = 7; i >= 1; i--) dates.push(addDays(todayStr(), -i));
+  } else if (period === 'last_month' && month) {
+    // 该月的 1 号 ~ 最后一天。new Date(y, m, 0) 是"下个月的 0 号",
+    // 也就是这个月的最后一天 (2 月、平年闰年都自动对)。
+    const [y, m] = month.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const mm = String(m).padStart(2, '0');
+    for (let d = 1; d <= lastDay; d++) {
+      dates.push(`${y}-${mm}-${String(d).padStart(2, '0')}`);
+    }
   } else if (period === 'month') {
     for (let i = 30; i >= 0; i--) dates.push(addDays(todayStr(), -i));
   } else {

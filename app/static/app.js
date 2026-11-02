@@ -3527,14 +3527,103 @@ document.getElementById('btn-load-yesterday').addEventListener('click', () => {
 });
 
 // ====== 复盘 ======
-// 统计周期: 本周 / 上周 / 本月。period 的取值与后端一致
+// 统计周期: 本周 / 上周 / 本月 / 上月。period 的取值与后端一致
 // (app/routers/analytics.py 的 PERIOD_PATTERN), 别处不要另起一套名字。
-const PERIOD_LABEL = { current: '本周', last: '上周', month: '本月' };
+const PERIOD_LABEL = {
+  current: '本周', last: '上周', month: '本月', last_month: '上月',
+};
+
+// 是不是"月视图"。
+//
+// 「本月」与「上月」共用同一套月视图渲染 (各档日均当主角、占比图的统计
+// 区间是整月), 但它们的区间语义不同: 本月是 month-to-date (1 日~今日),
+// 上月是**整月** (1 日~月末)。
+//
+// 所以凡是判断"是不是月"的代码, 一律走这个函数, 不要写 `period === 'month'` ——
+// 2026-11-03 加「上月」时, 散落的 `r.period === 'month'` 有三处, 漏改一处
+// 就让上月的分档卡按"整周合计"画, 与柱状图对不上账。
+function isMonthPeriod(period) {
+  return period === 'month' || period === 'last_month';
+}
 
 // 当前选中的周期。切走再切回时要用同一个周期重画, 否则高亮的按钮
 // 与画出来的数据对不上 (点「本月」-> 去看板 -> 回来, 按钮还亮着「本月」,
 // 但画的是「本周」)。
 let _reviewPeriod = 'current';
+
+// 「上月」周期里正在看的月份 ('YYYY-MM')。
+//
+// 记下来是为了两件事:
+//   1. 切走再切回复盘页时, 家长翻到 9 月就该还停在 9 月, 而不是弹回上月
+//      (与日历页保留 _calYear/_calMonth 同思路);
+//   2. 请求要带月份 —— 后端得知道是"哪个月", 才能算出那一整月的数据。
+//
+// null = 还没选过, 首次进入「上月」周期时取上个月。
+let _reviewMonth = null;
+
+// ====== 月份步进器 (2026-11-03) ======
+//
+// 「上月」里能往前翻历史月份 —— 家长想看的不该只有最近一个月。
+//
+// 范围: 往前**不设下限** (允许翻到没有作业记录的月份, 那时显示空态),
+// 往后**只到上个月** —— 本月有独立的 tab 且是 month-to-date 口径,
+// 同一个月份出两套口径, 家长对着屏幕对不上账。
+//
+// 月份用 'YYYY-MM' 字符串表示, 比较大小直接比字符串 (定长且高位在前)。
+function reviewMonthKey(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}`;
+}
+
+// 上个月的 'YYYY-MM'。
+function lastMonthKey() {
+  const now = new Date();
+  return reviewMonthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+}
+
+// 本月的 'YYYY-MM'。
+function currentMonthKey() {
+  const now = new Date();
+  return reviewMonthKey(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+// 'YYYY-MM' 往前/往后挪 n 个月。月份是定长字符串, 自己算比转 Date 稳
+// (转 Date 要处理"31 号减一个月"这种坑, 这里 day 恒为 1, 没有坑)。
+function shiftMonthKey(key, n) {
+  const [y, m] = key.split('-').map(Number);
+  const total = y * 12 + (m - 1) + n;
+  return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}`;
+}
+
+// 'YYYY-MM' 显示成 "2026年10月"。
+function reviewMonthTitle(key) {
+  const [y, m] = key.split('-').map(Number);
+  return `${y}年${m}月`;
+}
+
+// 正在看的月份。首次进入「上月」周期时 = 上个月。
+function currentReviewMonth() {
+  if (!_reviewMonth) _reviewMonth = lastMonthKey();
+  return _reviewMonth;
+}
+
+// 月份步进器的界面状态。空月份也允许翻到 —— 那时页面显示空态提示,
+// 而不是禁用按钮 (用户明确要能翻到空月份看看)。
+function syncReviewMonthNav() {
+  const nav = document.getElementById('review-month-nav');
+  if (!nav) return;
+  const on = _reviewPeriod === 'last_month';
+  nav.hidden = !on;
+  if (!on) return;
+  const key = currentReviewMonth();
+  const label = document.getElementById('review-month-label');
+  if (label) label.textContent = reviewMonthTitle(key);
+  // 往后只到上个月 —— 本月有自己的 tab。
+  const next = document.getElementById('review-month-next');
+  if (next) next.disabled = key >= lastMonthKey();
+  const prev = document.getElementById('review-month-prev');
+  if (prev) prev.disabled = false;
+}
 
 // ====== 周末显示开关 (2026-10-30) ======
 // 默认不展示。作业都在上学最后一天 (通常周五) 布置, 周末既没有作业,
@@ -3575,12 +3664,42 @@ function setReviewPeriod(period) {
     x.classList.toggle('primary', on);
     x.classList.toggle('ghost', !on);
   });
+  syncReviewMonthNav();
   loadReview(period);
 }
 
 document.querySelectorAll('.period-btn').forEach(b => {
   b.addEventListener('click', () => setReviewPeriod(b.dataset.period));
 });
+
+// ====== 月份步进器 (2026-11-03) ======
+//
+// ‹ / › 换月份, 「回到上月」跳回最近的一个完整月 (与日历页的"回到今天"
+// 同思路: 翻远了以后要有一键回来的路)。
+const reviewMonthPrev = document.getElementById('review-month-prev');
+if (reviewMonthPrev) {
+  reviewMonthPrev.addEventListener('click', () => {
+    _reviewMonth = shiftMonthKey(currentReviewMonth(), -1);
+    syncReviewMonthNav();
+    loadReview('last_month');
+  });
+}
+const reviewMonthNext = document.getElementById('review-month-next');
+if (reviewMonthNext) {
+  reviewMonthNext.addEventListener('click', () => {
+    _reviewMonth = shiftMonthKey(currentReviewMonth(), 1);
+    syncReviewMonthNav();
+    loadReview('last_month');
+  });
+}
+const reviewMonthBack = document.getElementById('review-month-back');
+if (reviewMonthBack) {
+  reviewMonthBack.addEventListener('click', () => {
+    _reviewMonth = lastMonthKey();
+    syncReviewMonthNav();
+    loadReview('last_month');
+  });
+}
 
 // 周末开关: 勾上 = 画出周末那两天。切换后按当前周期重画。
 const weekendBox = document.getElementById('chk-weekend');
@@ -3638,21 +3757,27 @@ async function loadReview(period) {
     return;
   }
   // 周报只在本周出现: 它回答的是"这周过得怎么样", 而 /weekly-report 永远
-  // 算的是本周。切到「上周」「本月」时下面的统计区间已经换了, 再挂一份
+  // 算的是本周。切到「上周」「本月」「上月」时下面的统计区间已经换了, 再挂一份
   // 本周周报会让人以为那些数字属于当前所选区间 —— 所以非本周一律不展示
   // (连请求都不发, 免得白拉一次数据)。
   const reportP = period === 'current' ? loadWeeklyReport() : Promise.resolve(null);
+  // 「上月」周期要带上月份 —— 后端得知道看的是哪个月, 才能算出那一整月。
+  // 本月 / 上周 / 本周不带这个参数 (区间由 period 唯一确定)。
+  const monthParam = period === 'last_month' ? currentReviewMonth() : null;
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
   // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
-  const timeP = loadReviewTime(period).then(
+  const timeP = loadReviewTime(period, monthParam).then(
     d => ({ ok: true, data: d }),
     e => ({ ok: false, error: e.message }));
-  const devP = loadReviewDeviation(period);
-  // 月报只在「本月」周期拉 —— 其余周期的统计区间不是整月, 月报回答不了
-  // "这个月怎么样"。失败不影响别的块, 单独兜底。
-  const monthP = period === 'month'
-    ? loadMonthlyReport().then(
+  const devP = loadReviewDeviation(period, monthParam);
+  // 月报只在月视图周期拉 —— 其余周期的统计区间不是整月, 月报回答不了
+  // "这个月怎么样"。
+  //
+  // 「本月」不传月份参数 (后端缺省当月, 且是 month-to-date);
+  // 「上月」必须传 —— 要看的是哪个月由步进器决定。
+  const monthP = isMonthPeriod(period)
+    ? loadMonthlyReport(monthParam).then(
       d => ({ ok: true, data: d }),
       e => ({ ok: false, error: e.message }))
     : Promise.resolve({ ok: false, skipped: true });
@@ -3690,7 +3815,7 @@ async function loadReview(period) {
     const share = renderSubjectShare(view);
     if (share) extras.appendChild(share);
   }
-  // 本月周期: 月报卡 + 月内按周对比。
+  // 月视图周期: 月报卡 + 月内按周对比。
   if (month.ok) {
     extras.appendChild(renderMonthReport(month.data));
     const weeks = renderMonthWeeksChart(month.data);
@@ -3699,8 +3824,17 @@ async function loadReview(period) {
     extras.appendChild(el(`<div class="error-banner">月报加载失败: ${escapeAttr(month.error)}</div>`));
   }
   // 薄弱项卡在 dual.js 里 —— 它要读晚间小结的标签 (家长端的措辞)。
-  if (typeof renderParentReviewExtras === 'function') {
-    const weak = await renderParentReviewExtras(period, { deviation: dev.data });
+  //
+  // 「上月」周期传月份: 薄弱项要读**那个月**的晚间小结, 不是"最近 31 天"。
+  //
+  // 空月份直接不画: 薄弱项的标签来自晚间小结, 而 collectReflectionTags
+  // 是"一天一个请求" —— 一个空月份就是三十来个必然落空的请求, 换来的
+  // 只是一张空卡。空态由上面的月报卡说明白了 ("该月还没有作业记录")。
+  const monthHasData = !!view && view.days.some(d => (d.total_minutes || 0) > 0);
+  const skipWeak = period === 'last_month' && !monthHasData
+    && !((dev.data && dev.data.sample_size) > 0);
+  if (typeof renderParentReviewExtras === 'function' && !skipWeak) {
+    const weak = await renderParentReviewExtras(period, { deviation: dev.data, month: monthParam });
     if (weak) extras.appendChild(weak);
   }
   root.insertBefore(extras, root.firstChild);
@@ -3874,12 +4008,15 @@ function renderWeeklyReport(r) {
 
 // 偏差表单独包一层: 它有"样本不足"这个正常分支, 不该把异常抛到调用方,
 // 否则上面已经渲染好的用时统计会被一起清掉。
-async function loadReviewDeviation(period) {
+async function loadReviewDeviation(period, month) {
   // 返回 { node, data }: node 是给页面拼的偏差表, data 是原始响应。
   // 薄弱项卡要用 data —— 它得知道**当前周期**的低估任务 (top_underestimate),
   // 而不是另拉一份本周的数据 (那会让"上周"周期分析到本周的作业)。
+  //
+  // month: 「上月」周期下看哪个月 ('YYYY-MM'), 不传就由后端按周期缺省。
+  const q = month ? `&month=${encodeURIComponent(month)}` : '';
   try {
-    const r = await api('GET', `/analytics/review?period=${period}`);
+    const r = await api('GET', `/analytics/review?period=${period}${q}`);
     const box = el(`<div class="review-deviation">
       <div class="card">
         <strong>${r.period_start} ~ ${r.period_end}</strong>
@@ -3908,8 +4045,12 @@ async function loadReviewDeviation(period) {
 
 // 本月课后月报 (2026-11-02)。只在本月周期拉, 失败由调用方单独兜底 ——
 // 月报挂掉不该把图表与偏差表一起带走。
-async function loadMonthlyReport() {
-  return await api('GET', '/monthly-report');
+//
+// month: 「上月」周期下看哪个月 ('YYYY-MM')。不传 = 当月 (后端缺省)。
+// 「本月」刻意不传 —— 它是 month-to-date, 由后端自己算当月至今。
+async function loadMonthlyReport(month) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : '';
+  return await api('GET', `/monthly-report${q}`);
 }
 
 // ====== 每日各科作业用时 (2026-10-15) ======
@@ -3944,8 +4085,10 @@ const DAY_KIND_META = {
 // 拉复盘页的用时统计。**只返回原始数据**, 不顺手渲染 ——
 // 图表要跟"结论区"画在一起 (dual.js 的 renderParentReviewExtras),
 // 数据得先交到那里去。
-async function loadReviewTime(period) {
-  const r = await api('GET', `/analytics/review-time?period=${period}`);
+async function loadReviewTime(period, month) {
+  // month: 「上月」周期下看哪个月 ('YYYY-MM'), 不传则由后端按周期缺省。
+  const q = month ? `&month=${encodeURIComponent(month)}` : '';
+  const r = await api('GET', `/analytics/review-time?period=${period}${q}`);
   // 在数据边界上校验形状, 别让畸形响应漏到渲染层:
   // 下面 reviewWeekendView / renderReviewTimeBlock 都直接摸 r.days、
   // r.period_start, 少了就会抛 TypeError —— 而那个 throw 发生在
@@ -3997,7 +4140,10 @@ function reviewWeekendView(r) {
 // 图表 (每日用时 + 学科占比) 归结论区, 见 renderParentReviewExtras。
 function renderReviewTimeBlock(r, period) {
   const wrap = el('<div class="wt-block"></div>');
-  const isMonth = r.period === 'month';
+  const isMonth = isMonthPeriod(r.period);
+  // "(至今)" 只给 month-to-date 的「本月」用 —— 上月是**整月**, 说"至今"
+  // 是错的 (整月都已经过完了)。
+  const isPartial = r.period === 'month';
   const label = PERIOD_LABEL[period] || '本周';
   const withWeekend = showWeekend();
 
@@ -4013,7 +4159,7 @@ function renderReviewTimeBlock(r, period) {
         <div class="wt-head-side">
           <div class="muted">上学日</div>
           <div class="wt-side-num">${r.school_day_count}<span class="wt-unit-sm"> 天</span></div>
-          <div class="muted">统计区间 ${r.period_start.slice(5)} ~ ${r.period_end.slice(5)}${isMonth ? ' (至今)' : ''}</div>
+          <div class="muted">统计区间 ${r.period_start.slice(5)} ~ ${r.period_end.slice(5)}${isPartial ? ' (至今)' : ''}</div>
         </div>
       </div>
       <div class="muted wt-scope">口径: 只算已完成作业 (跳过的不计), 未填实际用时按预估计; 选做计入; 观察作业不计。</div>
@@ -4172,7 +4318,7 @@ function renderSubjectShare(r) {
   // 合计不一致家长只会以为图画错了 (2026-11-02 实测踩过: 柱状图 685、
   // 环图 705, 差的是周末那 20 分钟)。
   const wholePeriod = showWeekend();
-  const scope = wholePeriod ? (r.period === 'month' ? '整月' : '整周') : '上学日';
+  const scope = wholePeriod ? (isMonthPeriod(r.period) ? '整月' : '整周') : '上学日';
   const scopeLine = wholePeriod
     ? `统计区间为${scope} (含周末)。`
     : '统计区间为上学日 (已剔除周末), 与上面那张柱状图是同一批天数。';
@@ -4250,8 +4396,12 @@ function renderSubjectShare(r) {
 
 // 本月课后月报卡 (2026-11-02)。
 //
-// 关键数字 + 环比上月 + 建议。环比必须写明是"与上月同期比" ——
-// 月还没过完的时候, 不写清楚家长会以为跟整月比。
+// 关键数字 + 环比 + 建议。环比必须写明是跟哪个基准比 ——
+// 月还没过完的时候比的是"上月同期", 看过去整月时比的是"上一个整月"。
+//
+// 月份的名字与基准的名字都由后端给 (month_label / prev_month_label /
+// prev_month_basis): 本月 / 上月 / 上上月 / 8月 —— 前端不自己判断"这是
+// 哪个月", 否则看上月时写出一句"与上月同期相比"就正好说错了。
 function renderMonthReport(month) {
   month = month || {};
   const t = month.time || {};
@@ -4261,42 +4411,73 @@ function renderMonthReport(month) {
   const weeks = month.weeks || [];
   // 月报是后端算的, 但**不能假设字段一定在** —— 少一个字段就让整页
   // 白屏, 代价太大。缺什么就显示什么, 不崩。
+  const label = month.month_label || '本月';
+  const prevLabel = month.prev_month_label || '上月';
+  const basis = month.prev_month_basis || 'same_period';
+  // 基准的说法: 本月没过完 -> 上月同期; 过去的整月 -> 上一个整月。
+  const baseline = prevLabel + (basis === 'same_period' ? '同期' : '');
   const scope = month.is_partial
-    ? `本月至今 ${month.elapsed_days != null ? month.elapsed_days : 0} 天`
+    ? `${label}至今 ${month.elapsed_days != null ? month.elapsed_days : 0} 天`
     : `整月 ${String(month.month_start || '').slice(5)} ~ ${String(month.month_end || '').slice(5)}`;
 
   const deltaLine = (() => {
     if (delta.minutes_pct == null) return '';
-    if (delta.minutes === 0) return '与上月同期相比用时持平';
+    if (delta.minutes === 0) return `与${baseline}相比用时持平`;
     const dir = delta.minutes > 0 ? '多用了' : '少用了';
     const sign = delta.minutes > 0 ? `+${delta.minutes_pct}` : `${delta.minutes_pct}`;
-    return `与上月同期相比${dir} ${Math.abs(delta.minutes)} 分钟 (${sign}%)`;
+    return `与${baseline}相比${dir} ${Math.abs(delta.minutes)} 分钟 (${sign}%)`;
+  })();
+
+  // 建议的抬头: 「本月」说"下个月"没歧义 (就是接下来那个月);
+  // 历史月份的"下个月"是有歧义的 (翻回 8 月, "下个月"指 9 月还是本月?),
+  // 所以一律说"接下来"。
+  const suggTitle = (month.month_label === '本月') ? '下个月可以这样' : '接下来可以这样';
+
+  // 基准月的两种"不完整", 文案不能混着说:
+  //
+  //   1. 基准月**压根没有记录** (比家里开始用这个应用还早的月份)
+  //      -> 没有可比的基准, 直说没有;
+  //   2. 基准月**只记了后半段** (家里就是那个月中旬才开始用的)
+  //      -> 环比数字偏大, 要说明白, 别让家长以为孩子突然变勤快了。
+  //
+  // 第 2 种最坑: 家里若 9 月 21 日才开始用应用, 9 月就只剩 9/21 之后
+  // 的数据, 拿 10 月整月去比会算出"+329%"这种假涨幅。
+  const prevNote = (() => {
+    if (month.prev_month_has_data === false) {
+      return `<div class="muted p-month-delta">${escapeAttr(prevLabel)}没有作业记录, 没有可比的基准。</div>`;
+    }
+    if (month.prev_month_partial) {
+      return `<div class="muted p-month-delta">注意: ${escapeAttr(prevLabel)}自 ${escapeAttr(String(month.first_record_date || '').slice(5))} 起才有记录,
+         环比数字偏大是因为那个月前面缺了一段, 不是孩子变勤快了。</div>`;
+    }
+    return '';
   })();
 
   return el(`<div class="card report-card p-month-card">
     <div class="report-head">
       <div class="report-head-main">
-        <div class="report-kicker">本月课后月报</div>
-        <div class="report-range">${scope}</div>
+        <div class="report-kicker">${escapeAttr(label)}课后月报</div>
+        <div class="report-range">${escapeAttr(scope)}</div>
       </div>
     </div>
     <div class="report-stats">
-      <div class="report-stat"><strong>${c.rate != null ? c.rate + '%' : '—'}</strong><span>必做收尾率</span></div>
+      <div class="report-stat"><strong>${(c.total || 0) === 0 ? '—' : (c.rate != null ? c.rate + '%' : '—')}</strong><span>必做收尾率</span></div>
       <div class="report-stat"><strong>${t.total_minutes || 0}</strong><span>作业分钟</span></div>
       <div class="report-stat"><strong>${t.avg_daily_minutes != null ? t.avg_daily_minutes : 0}</strong><span>上学日日均</span></div>
-      <div class="report-stat"><strong>${weeks.length}</strong><span>本月周数</span></div>
+      <div class="report-stat"><strong>${weeks.length}</strong><span>${escapeAttr(label)}周数</span></div>
     </div>
     ${deltaLine ? `<div class="muted p-month-delta">${escapeAttr(deltaLine)}</div>` : ''}
+    ${prevNote}
     ${month.highlights && month.highlights.length
       ? `<ul class="p-month-list">${month.highlights.map(h => `<li>${escapeAttr(h)}</li>`).join('')}</ul>`
       : ''}
     ${month.suggestions && month.suggestions.length
       ? `<div class="p-month-sugg">
-           <div class="p-weak__title">下个月可以这样</div>
+           <div class="p-weak__title">${escapeAttr(suggTitle)}</div>
            ${month.suggestions.map(s => `<div class="p-weak__line">${escapeAttr(s)}</div>`).join('')}
          </div>`
       : ''}
-    <div class="muted wt-scope">口径: 只算已完成作业, 未填实际用时按预估计入; 选做计入, 观察作业不计。环比基准为上月同期 (${prev.start || ''} ~ ${prev.end || ''})。</div>
+    <div class="muted wt-scope">口径: 只算已完成作业, 未填实际用时按预估计入; 选做计入, 观察作业不计。环比基准为${escapeAttr(baseline)} (${prev.start || ''} ~ ${prev.end || ''})。</div>
   </div>`);
 }
 
@@ -4304,9 +4485,10 @@ function renderMonthReport(month) {
 function renderMonthWeeksChart(month) {
   const weeks = (month && month.weeks) || [];
   if (!weeks.length) return null;
+  const label = (month && month.month_label) || '本月';
   const card = el(`<div class="card p-month-weeks-card">
-    <div class="card-title">月内按周对比<span class="count">分钟</span></div>
-    <div class="wt-chart-canvas p-month-weeks-canvas" role="img" aria-label="本月按周用时对比柱状图"></div>
+    <div class="card-title">${escapeAttr(label)}按周对比<span class="count">分钟</span></div>
+    <div class="wt-chart-canvas p-month-weeks-canvas" role="img" aria-label="${escapeAttr(label)}按周用时对比柱状图"></div>
     <div class="wt-chart-fallback"></div>
   </div>`);
   const canvasBox = card.querySelector('.p-month-weeks-canvas');
@@ -4336,7 +4518,8 @@ function renderMonthWeeksChart(month) {
 function renderBuckets(r, withWeekend) {
   const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
   const subs = orderedSubjects(pa.by_subject);
-  const isMonth = r.period === 'month';
+  // 月视图 (本月 / 上月) 各档天数差得远, 日均当主角; 周视图合计当主角。
+  const isMonth = isMonthPeriod(r.period);
 
   // 周五与周末合成"长档": 周五通常已经把周末的量布置下去了,
   // 分开看会低估周末负担, 合并才是真实的"周末档"。
