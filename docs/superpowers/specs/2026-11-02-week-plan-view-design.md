@@ -62,7 +62,7 @@
 | # | 决策 | 说明 |
 |---|---|---|
 | D1 | 入口 = 日历页**分段切换器**「月历 \| 周计划」 | 不是实心按钮，也不是塞进 `.cal-mode` 组。切换器表达「同一处的两种看法」，且周计划页顶上有同一个切换器可切回来 |
-| D2 | 周计划主区 = **7 列等宽周视图** | 周一至周日横向铺满，超载列淡红底、今天列描蓝 |
+| D2 | 周计划主区 = **7 列等宽周视图** | 周一至周日横向铺满；今天沿用粉框、超载沿用琥珀边 + 角标（现有约定） |
 | D3 | 课表 = 页内**独立分区**，纵向时间轴 × 7 列 | 不再用弹窗装课表列表 |
 | D4 | 课表**单条编辑仍走弹窗** | 列表在页内；改一条课要填 5 个字段，弹窗与项目其它表单一致 |
 | D5 | 生成任务前加**预览确认层** | 列出今天及以后将要生成的条目，确认后才 POST |
@@ -130,6 +130,12 @@ loadWeekPlan()                      GET /api/week-plan?date=
 **硬约束**：`id="btn-week-plan"` 必须保留在 `index.html` 里 ——
 `tests/test_header_ui.py::test_parent_only_page_entries_exist` 钉着这个 id。
 
+**连带修正**（实现时发现的）：`.view-head` 原本是 `display: block`，操作区落到
+标题**下面一行左对齐** —— 所以「＋ 登记作业」其实并不在「右上」，
+尽管 `docs/07` §1.3 写的就是「右上」。改成 flex 后，三个页面
+（今日 / 日历 / 周计划）的操作区都回到右上，与设计文档一致。
+没有测试钉住这块布局，改动无风险。
+
 | 项 | 规则 |
 |---|---|
 | 点击「周计划」 | `switchTab('week')` → URL 变 `#/week` |
@@ -162,8 +168,15 @@ body[data-view="week"] main { max-width: 1240px; }
 
 | 断点 | 列数 | 行为 |
 |---|---|---|
-| ≥ 768px | `repeat(7, minmax(0, 1fr))` | 等宽铺满 |
-| ≤ 767px | `repeat(7, minmax(140px, 1fr))` + `overflow-x: auto` | 横向滚动 |
+| ≥ 1101px | `repeat(7, minmax(0, 1fr))` | 等宽铺满 |
+| ≤ 1100px | `repeat(7, minmax(150px, 1fr))` + `overflow-x: auto` | 横向滚动 |
+
+> **实现时改过一次断点**：初稿写的是「≤767px 才横向滚动」，但文件里原本就有
+> `@media (max-width: 1100px) { .week-days { grid-template-columns: repeat(2, …) } }`
+> 和 `@media (max-width: 767px) { .week-days { grid-template-columns: 1fr } }`
+> 两条**位置更靠后**的规则，会把新写的覆盖掉（窄屏实测退化成单列堆叠）。
+> 最终改的是那两条原规则本身，断点上提到 1100px —— 因为 1100px 视口下
+> 周计划页每格只有 ~130px，中文任务名同样会折成竖排。
 
 **沿用现有类名**（`tests/test_m5_week_plan.py` 钉着）：
 `.week-days` / `.week-day` / `.week-chips` / `.week-slot` / `.week-plan` / `.week-conflict`。
@@ -180,10 +193,12 @@ body[data-view="week"] main { max-width: 1240px; }
 └──────────────────────┘
 ```
 
-- 今日：整列 `box-shadow: inset 0 0 0 2px var(--accent)`（描蓝；`--accent` 在家长端 = `#1D4E7C`）
-- 超载：沿用**现有**约定 `.week-day.overloaded { border-color: var(--status-doing) }`
-  —— 超载是**橙色**（`--status-doing` / `--warn-soft`），**红色留给逾期与冲突**
-  （`--status-overdue` = `#C2321F`），两者不能混
+- 今日：沿用**现有** `.week-day.is-today` —— 粉框
+  （`box-shadow: 0 0 0 2px var(--accent-soft)`），不新造蓝色内描边
+- 超载：沿用**现有**约定 —— 琥珀边 `border-color: var(--status-doing)`
+  + 「超载」角标（`.week-badge.warn`）。**红色留给逾期与冲突**
+  （`--status-overdue` = `#C2321F`），两者不能混。
+  现有注释写明「两者同时出现时今天先赢，超载靠角标表达」—— 沿用，不改
 - 课表 chip 内时间换行（`国际象棋` / `16:00-18:00` 两行），避免窄列里中文折成竖排
 
 ### 3.5 课表时间轴分区
@@ -219,9 +234,25 @@ body[data-view="week"] main { max-width: 1240px; }
 |---|---|
 | `grid-column` | 星期索引 + 2（跳过刻度列） |
 | `grid-row` | 由 `start_time` / `end_time` 映射到小时行 |
+| 上下偏移 | 行内分钟偏移算出的 `margin-top` / `margin-bottom`（见下） |
 | 撞车的两段 | 后一段 `margin-left: 30%`，视觉上错开叠放 |
 | 撞车配色 | `--status-overdue`（`#C2321F`）/ `--status-overdue-soft`（`#FBE7E3`）+ 虚线描边 |
 | 正常配色 | 培训色 `--c-training` / `--c-training-soft`（沿用 `.week-slot` 现有配色） |
+
+**分钟级精度**（实现时补的）：只按小时取整会让 15:50 的课看起来**从 15:00
+就开始**。所以块的高度用行内分钟偏移算：
+
+```
+r1   = floor((start - range.start) / 60)      起始所在的小时行
+r2   = ceil((end   - range.start) / 60)      结束所在的小时行
+mTop = ((start - range.start) - r1*60) / 60 * 44px
+mBot = (r2*60 - (end - range.start)) / 60 * 44px
+```
+
+块的实际高度 = `r2-r1` 行 − 上下偏移 = 真实时长换算的像素。
+实测：15:50-17:20 的课块高 62px（1.5h = 66px − 上下各 2px），起始偏移 38.7px。
+
+不足 45 分钟的课块放不下两行字，隐藏时间行（`.is-short`），只留课名。
 
 **交互**：
 

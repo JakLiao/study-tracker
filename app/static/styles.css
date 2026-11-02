@@ -3525,6 +3525,24 @@ button.week-stat span { color: var(--text-2); }
    「月历和周计划是同一个地方的不同看法」, 所以用分段控件, 而不是
    一个孤零零的按钮 —— 之前的 ghost 灰色小字看着像普通文字, 家长
    根本认不出那是能点的。 */
+/* 页头行 (2026-11-02): 标题在左, 操作区在右。
+   之前 .view-head 是 block —— 操作区落到标题下面一行左对齐, 所以
+   「＋ 登记作业」其实并不在「右上」(docs/07 §1.3 写的就是右上)。
+   改成 flex 之后, 三个页面 (今日 / 日历 / 周计划) 的操作区都回到右上。 */
+.view-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.view-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+.view-head .view-title { margin-bottom: 0; }
+
 .view-switch {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -3573,17 +3591,6 @@ body[data-view="week"] main { max-width: 1240px; }
   }
   .week-flow-arrow { transform: rotate(90deg); }
   .week-flow-step { width: 100%; }
-}
-
-/* 窄屏 (≤767px): 7 列在 375px 上每格只有 50px, 中文任务名会折成
-   竖排。横向滚动保留「一周对比」的用处 —— 挤成 1 列就退回到改版
-   前的 4 列网格, 反而更窄。 */
-@media (max-width: 767px) {
-  .week-days {
-    grid-template-columns: repeat(7, minmax(150px, 1fr));
-    overflow-x: auto;
-    padding-bottom: var(--space-2);
-  }
 }
 
 /* 7 天卡: 桌面 7 列 (周一~周日横向铺满), 窄屏横向滚动。
@@ -3780,6 +3787,8 @@ body[data-view="week"] main { max-width: 1240px; }
 }
 .week-tl-blk strong { display: block; font-size: var(--fs-caption-sm); }
 .week-tl-blk small { display: block; font-size: var(--fs-caption-sm); opacity: .75; }
+/* 不到 45 分钟的课块放不下两行字, 只留课名 —— 时间在点开后的弹窗里看。 */
+.week-tl-blk.is-short small { display: none; }
 /* 撞车: 红色 —— 本项目里红色是冲突/逾期专用, 超载是琥珀色。 */
 .week-tl-blk.is-conflict {
   background: var(--status-overdue-soft);
@@ -3839,12 +3848,19 @@ body[data-view="week"] main { max-width: 1240px; }
    :has() 会让整条规则失效, 反而看不出勾没勾。 */
 .weekday-check input { margin: 0; accent-color: var(--accent); }
 
+/* 窄屏 (≤1100px): 7 列在窄容器里每格只剩 ~130px, 中文任务名会折成竖排。
+   横向滚动保留「一周对比」的用处 —— 挤成 1 列或 2 列就失去了周视图
+   的意义 (改版前就是 4 列网格, 那正是「右边空一大片」的由来)。 */
 @media (max-width: 1100px) {
-  .week-days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .week-days {
+    grid-template-columns: repeat(7, minmax(150px, 1fr));
+    overflow-x: auto;
+    padding-bottom: var(--space-2);
+  }
 }
 @media (max-width: 767px), (max-height: 500px) {
-  .week-days { grid-template-columns: minmax(0, 1fr); }
   .week-nav { min-height: 44px; }
+  .week-today { min-height: 44px; }
   .manage-ops button { min-height: 44px; }
   .weekday-check { min-height: 44px; }
 }

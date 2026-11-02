@@ -115,20 +115,23 @@ def test_week_days_is_seven_columns():
 def test_narrow_screen_scrolls_horizontally():
     """窄屏 7 列放不下, 横向滚动 —— 挤成 1 列会失去「一周对比」。
 
-    文件里有好几个 767px 断点块 (触控目标、底栏…), 所以要**全部**扫,
+    文件里有好几个断点块 (1100px / 767px / 触控目标…), 要**全部**扫,
     找出其中任何一个含 .week-days 的 —— 只看第一个会漏掉。
     """
     css = STYLES.read_text(encoding="utf-8")
     blocks = [
         body for head, body in re.findall(
-            r"@media ([^{]*max-width: 767px[^{]*)\{(.*?)\n\}", css, re.S
+            r"@media ([^{]*max-width[^{]*)\{(.*?)\n\}", css, re.S
         )
     ]
-    assert blocks, "缺少 max-width: 767px 媒体查询"
+    assert blocks, "缺少 max-width 媒体查询"
     hits = [b for b in blocks if ".week-days" in b]
-    assert hits, "没有任何 767px 断点处理 .week-days"
+    assert hits, "没有任何断点处理 .week-days"
     assert any("overflow-x" in b for b in hits), \
         "窄屏 .week-days 缺横向滚动"
+    # 窄屏不能退回单列 —— 那正是改版前「一周对比」失效的样子
+    assert not any("grid-template-columns: minmax(0, 1fr)" in b for b in hits), \
+        "窄屏 .week-days 不该退回单列"
 
 
 def test_load_bar_exists():

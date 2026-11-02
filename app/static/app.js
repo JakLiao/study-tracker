@@ -4414,6 +4414,13 @@ function md(iso) {
   return `${parseInt(iso.slice(5, 7), 10)}/${parseInt(iso.slice(8, 10), 10)}`;
 }
 
+// 周一 = 0 的星期序号。用本地时间构造 —— 与 addDays 同一口径,
+// 别用 toISOString(): 那是 UTC, 东八区会退一天。
+function isoWeekday(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  return (d.getDay() + 6) % 7;
+}
+
 async function loadWeekPlan() {
   const root = document.getElementById('week-content');
   if (!root) return;
@@ -4431,6 +4438,9 @@ async function loadWeekPlan() {
 function renderWeekPlan(root, w) {
   root.innerHTML = '';
 
+  // 「回到本周」只在翻到别的周时出现 —— 停在本周时它是个死按钮,
+  // 摆在那儿只会让家长以为点它会发生什么。
+  const offWeek = addDays(w.today, -isoWeekday(w.today)) !== w.week_start;
   const bar = el(`<div class="week-bar">
     <button type="button" class="ghost week-nav" data-step="-7">‹ 上周</button>
     <div class="week-range">
@@ -4438,11 +4448,17 @@ function renderWeekPlan(root, w) {
       <span class="muted">每天上限 ${w.daily_load_limit} 分钟</span>
     </div>
     <button type="button" class="ghost week-nav" data-step="7">下周 ›</button>
+    ${offWeek ? '<button type="button" class="ghost week-today" id="week-back-today">回到本周</button>' : ''}
   </div>`);
   bar.querySelectorAll('.week-nav').forEach(b => b.addEventListener('click', () => {
     _weekAnchor = addDays(_weekAnchor || w.today, parseInt(b.dataset.step, 10));
     loadWeekPlan();
   }));
+  const backToday = bar.querySelector('#week-back-today');
+  if (backToday) backToday.addEventListener('click', () => {
+    _weekAnchor = w.today;
+    loadWeekPlan();
+  });
   root.appendChild(bar);
 
   const t = w.totals;
@@ -4486,7 +4502,7 @@ function renderWeekPlan(root, w) {
   flow.querySelector('#week-generate').addEventListener('click', () => generateWeekTasks(w));
   flow.querySelector('#week-manage-plans').addEventListener('click', () => openPlanItemManager());
   root.appendChild(flow);
-  root.appendChild(el('<p class="week-flow-note">课外课表在上面的「课表(分)」里单独维护, 只影响负荷统计, 不参与生成。</p>'));
+  root.appendChild(el('<p class="week-flow-note">课外课表在下面的「固定课表」里维护, 只影响负荷统计, 不参与生成。</p>'));
 
   const days = el('<div class="week-days"></div>');
   w.days.forEach(d => days.appendChild(weekDayCard(d)));
@@ -4646,6 +4662,10 @@ function hhmmToMinutes(t) {
   return h * 60 + m;
 }
 
+// 课表时间轴的行高 (px)。与 grid-template-rows 里的值必须一致 ——
+// 课块靠行内分钟偏移算高度, 行高对不上块就会画歪。
+const TL_ROW_H = 44;
+
 // 课表时间轴分区 (2026-11-02)。
 //
 // 之前课表是「弹窗里的平铺列表」: 要先点「管理」才看得见, 看到的是
@@ -4672,7 +4692,7 @@ function renderScheduleSection(w) {
   }
 
   const rows = Math.round((range.end - range.start) / 60);
-  const grid = el(`<div class="week-tl" style="grid-template-rows: 26px repeat(${rows}, 44px)"></div>`);
+  const grid = el(`<div class="week-tl" style="grid-template-rows: 26px repeat(${rows}, ${TL_ROW_H}px)"></div>`);
 
   // 表头: 周一 ~ 周日
   WEEKDAY_LABELS.forEach((label, i) => {
@@ -4717,9 +4737,15 @@ function renderScheduleSection(w) {
     const b = hhmmToMinutes(s.end_time);
     const r1 = Math.max(0, Math.floor((a - range.start) / 60));
     const r2 = Math.min(rows, Math.ceil((b - range.start) / 60));
+    // 行内取整到小时会让 15:50 的课看起来从 15:00 就开始。用行内的分钟
+    // 偏移把块缩到实际时长上 —— 上下各留一段 margin, 高度就是真实分钟数
+    // 换算出来的像素。
+    const mTop = Math.max(0, ((a - range.start) - r1 * 60) / 60 * TL_ROW_H);
+    const mBot = Math.max(0, (r2 * 60 - (b - range.start)) / 60 * TL_ROW_H);
     const off = (s.__off || 0) * 30;
-    const cls = conflictIds.has(s.id) ? ' is-conflict' : '';
-    const blk = el(`<button type="button" class="week-tl-blk${cls}" style="grid-column:${s.weekday + 2};grid-row:${r1 + 2}/${r2 + 2};margin-left:${off}%">
+    const short = (b - a) < 45;   // 不到 45 分钟的课块放不下两行字
+    const cls = (conflictIds.has(s.id) ? ' is-conflict' : '') + (short ? ' is-short' : '');
+    const blk = el(`<button type="button" class="week-tl-blk${cls}" style="grid-column:${s.weekday + 2};grid-row:${r1 + 2}/${r2 + 2};margin:${(mTop + 2).toFixed(1)}px 3px ${(mBot + 2).toFixed(1)}px calc(3px + ${off}%)">
       <strong>${escapeAttr(s.project_name)}</strong>
       <small>${s.start_time}-${s.end_time}${s.note ? ' · ' + escapeAttr(s.note) : ''}</small>
     </button>`);
