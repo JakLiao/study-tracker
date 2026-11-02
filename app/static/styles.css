@@ -3575,12 +3575,26 @@ body[data-view="week"] main { max-width: 1240px; }
   .week-flow-step { width: 100%; }
 }
 
-/* 7 天卡: 桌面 4 列 (7 格排成两行), 窄屏 1 列。
-   不用 7 列是因为每格要塞课表 chips + 计划项 + 统计, 7 列时每格
-   只剩 130px, 中文任务名会折成竖排。 */
+/* 窄屏 (≤767px): 7 列在 375px 上每格只有 50px, 中文任务名会折成
+   竖排。横向滚动保留「一周对比」的用处 —— 挤成 1 列就退回到改版
+   前的 4 列网格, 反而更窄。 */
+@media (max-width: 767px) {
+  .week-days {
+    grid-template-columns: repeat(7, minmax(150px, 1fr));
+    overflow-x: auto;
+    padding-bottom: var(--space-2);
+  }
+}
+
+/* 7 天卡: 桌面 7 列 (周一~周日横向铺满), 窄屏横向滚动。
+   2026-11-02 改: 原来是 4 列, 注释里写着「不用 7 列是因为每格要塞
+   课表 chips + 计划项 + 统计, 7 列时每格只剩 130px, 中文任务名会
+   折成竖排」—— 那个反对意见本身没错, 但它成立的前提 (容器 688px)
+   正是本次要解决的问题: 周计划页单独放宽到 1240px 之后, 7 列每格
+   ≈156px, 与原来 4 列的单格 163px 同宽, 反对意见自动消解。 */
 .week-days {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: var(--space-3);
 }
 .week-day { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -3598,6 +3612,21 @@ body[data-view="week"] main { max-width: 1240px; }
   flex-wrap: wrap;
   gap: var(--space-1);
 }
+
+/* 负荷条: 按 load / limit 的比例画一根细条, 让「哪天最满」不用
+   逐列数字比。超载的列用琥珀色 —— 超载本来就是琥珀边, 保持一致。 */
+.week-load-bar {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.week-load-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.week-day.overloaded .week-load-bar i { background: var(--status-doing); }
 .week-day-name { font-weight: 700; font-size: var(--fs-body); color: var(--text-1); }
 .week-day-date { font-size: var(--fs-caption); color: var(--text-3); }
 .week-today-tag {

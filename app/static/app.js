@@ -4504,6 +4504,13 @@ function weekDayCard(d) {
       ${d.conflicts.length ? '<span class="week-badge danger">冲突</span>' : ''}
     </div>`);
 
+  // 负荷条: 按 load / limit 画比例。上限为 0 (没设) 时不画 —— 没有分母
+  // 的比例条会骗人。
+  if (d.limit_minutes > 0) {
+    const pct = Math.min(100, Math.round(d.load_minutes / d.limit_minutes * 100));
+    card.appendChild(el(`<div class="week-load-bar" title="${d.load_minutes} / ${d.limit_minutes} 分钟"><i style="width:${pct}%"></i></div>`));
+  }
+
   if (d.slots.length) {
     const chips = el('<div class="week-chips"></div>');
     d.slots.forEach(s => chips.appendChild(el(
