@@ -118,6 +118,23 @@ const TIME_STATS = {
   subject_share: { est: { by_subject: {}, total_minutes: 0 }, actual: { by_subject: {}, total_minutes: 0 } },
 };
 
+// 本月课后月报 (2026-11-02)。「本月」周期会拉它。
+const MONTH_REPORT = {
+  month: '2026-10', month_start: '2026-10-01', month_end: '2026-10-31',
+  data_end: '2026-10-31', elapsed_days: 31, is_partial: false,
+  completion: { total: 42, optional: 0, required: 42, settled: 31, rate: 74 },
+  time: { total_minutes: 505, avg_daily_minutes: 101, school_days: 5, by_subject: { '语文': 180 } },
+  subjects: [{ subject: '语文', minutes: 180, pct: 35.6, avg_per_day: 36 }],
+  weeks: [{ label: '第1周', start: '2026-10-01', end: '2026-10-04', days: 4,
+            minutes: 150, avg_minutes: 37.5, done: 12, required: 13, settled: 12, rate: 92 }],
+  prev_month: { month: '2026-09', start: '2026-09-01', end: '2026-09-30', days: 30,
+                total_minutes: 400, avg_daily_minutes: 80, school_days: 5, done: 28, rate: 70 },
+  prev_month_basis: 'same_period',
+  delta: { minutes: 105, minutes_pct: 26.3, rate: 4, avg_daily_minutes: 21 },
+  highlights: ['本月作业用时 505 分钟, 上学日日均 101.0 分钟'],
+  suggestions: ['本月节奏平稳, 保持这个安排就好'],
+};
+
 const dom = new JSDOM(fs.readFileSync(htmlPath, 'utf8'), {
   url: 'http://127.0.0.1:8876/#/review',
   runScripts: 'outside-only', pretendToBeVisual: true,
@@ -129,6 +146,7 @@ w.fetch = async (u) => {
   calls.push(s);
   const ok = (d) => ({ ok: true, status: 200, text: async () => JSON.stringify(d) });
   if (s.includes('/weekly-report')) return ok(REPORT);
+  if (s.includes('/monthly-report')) return ok(MONTH_REPORT);
   if (s.includes('/analytics/review-time')) return ok(TIME_STATS);
   if (s.includes('/analytics/review')) return ok({ period: 'current', by_type: [], sample_size: 0 });
   if (s.includes('/health')) return ok({ ai_model: 'x', ai_reachable: true });
@@ -138,10 +156,20 @@ w.confirm = () => true; w.alert = () => {}; w.scrollTo = () => {};
 w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 w.eval(fs.readFileSync(fpPath, 'utf8'));
 w.eval(fs.readFileSync(zhPath, 'utf8'));
+// charts.js 必须先于 app.js 加载 (与 index.html 的顺序一致): 复盘页的图
+// 走 charts.js 的封装。jsdom 没有 canvas 包, 图表会走"退化成表格"那条
+// 降级路径 —— 这正是降级逻辑要守的行为, 所以这里**不**加载 echarts.min.js。
+w.eval(fs.readFileSync(require('path').join(require('path').dirname(appJsPath), 'charts.js'), 'utf8'));
 w.eval(fs.readFileSync(appJsPath, 'utf8'));
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
-const reportCards = () => doc.querySelectorAll('#review-content .report-card').length;
+// 只数**周报**那一张卡。
+// 2026-11-02 复盘页多了「本月课后月报」, 它也用 .report-card 这套样式,
+// 但它不是周报 —— 按"卡片数"判会把月报算进来。认标题最准。
+const reportCards = () => [...doc.querySelectorAll('#review-content .report-kicker')]
+  .filter(k => k.textContent.includes('本周课后周报')).length;
+const monthCards = () => [...doc.querySelectorAll('#review-content .report-kicker')]
+  .filter(k => k.textContent.includes('本月课后月报')).length;
 
 (async () => {
   const out = {};
@@ -163,7 +191,9 @@ const reportCards = () => doc.querySelectorAll('#review-content .report-card').l
   month.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   await wait(500);
   out.monthCards = reportCards();
+  out.monthReportCards = monthCards();
   out.monthRequested = calls.filter(c => c.includes('/weekly-report')).length;
+  out.monthMonthlyRequested = calls.filter(c => c.includes('/monthly-report')).length;
 
   // 切回「本周」-> 周报要回来
   calls.length = 0;
@@ -214,6 +244,14 @@ def test_last_period_hides_report(live):
 @needs_jsdom
 def test_month_period_hides_report(live):
     assert live["monthCards"] == 0, "选「本月」时不该出现「本周课后周报」"
+
+
+@needs_jsdom
+def test_month_period_shows_monthly_report(live):
+    """选「本月」时要出现月报卡, 而且只请求一次月报接口。"""
+    assert live["monthReportCards"] == 1, "选「本月」时该出现「本月课后月报」"
+    assert live["monthMonthlyRequested"] == 1, \
+        f"月报接口被请求了 {live['monthMonthlyRequested']} 次 (应该只 1 次)"
 
 
 @needs_jsdom

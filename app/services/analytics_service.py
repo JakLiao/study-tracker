@@ -261,6 +261,9 @@ def build_daily_time_stats(period: str, today: date) -> dict:
 
     # 先按 (日期, 科目) 累加 —— 一次查询, 不按天循环查库
     per_day: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # 逐日的**预估**用时 (per_day 是实际/兜底预估)。前端要能按"只看得学日"
+    # 重新算占比, 就必须拿到每天的预估值 —— 只有整段的 subject_share 是不够的。
+    per_day_est: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     # 各科时间占用 (给"占比饼图"用): 预估与实际分开累加。
     # 预估按 est_minutes; 实际按上面那个 minutes (即 COALESCE(actual, est)),
     # 与逐日用时同一口径 —— 这样饼图两个环的合计与柱状图的总用时对得上账。
@@ -272,6 +275,7 @@ def build_daily_time_stats(period: str, today: date) -> dict:
         if not isinstance(due, str):
             due = due.isoformat()
         per_day[due][subj] += int(r["minutes"] or 0)
+        per_day_est[due][subj] += int(r["est_minutes"] or 0)
         share_est[subj] += int(r["est_minutes"] or 0)
         share_actual[subj] += int(r["minutes"] or 0)
 
@@ -306,6 +310,9 @@ def build_daily_time_stats(period: str, today: date) -> dict:
             "kind_label": label,
             "is_school_day": kind in ("plain", "friday", "makeup"),
             "by_subject": by_subject,
+            # 这一天各科的预估用时 (与 by_subject 分开存): 前端把周末
+            # 藏掉时, 占比图要跟着一起藏, 两张图才能对得上账。
+            "est_by_subject": _ordered(dict(per_day_est.get(ds, {}))),
             "total_minutes": total,
         }
         days.append(entry)
@@ -387,5 +394,266 @@ def build_daily_time_stats(period: str, today: date) -> dict:
                 "by_subject": actual_by_subject,
                 "total_minutes": sum(actual_by_subject.values()),
             },
+        },
+    }
+
+
+# ====== 月维度聚合 (2026-11-02) ======
+#
+# 为什么需要:
+#   period=month 的 build_daily_time_stats 只把同一批图拉长到三十来天 ——
+#   没有"这个月分成了几个周", 也没有"跟上月比怎么样"。家长真正想问的是
+#   "这个月哪一周最重" 和 "这个月比上个月多花还是少花"。
+#
+# 口径与 build_daily_time_stats **完全一致** (只算 done、实耗为空按预估计、
+# 排除 observation、只保留 SUBJECTS 里的学科), 这样
+#   月报的合计 == 复盘页柱状图合计 == 环图合计
+# 三处对得上账。培训/习惯任务没有科目, 与 build_daily_time_stats 一样
+# 不进这两张图 —— 训练线由周报的 training 块单独讲。
+
+def _last_day_of_month(d: date) -> date:
+    """d 所在月的最后一天。"""
+    nxt = date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def _ordered_subjects(subjects: dict[str, int]) -> dict[str, int]:
+    """固定 语文→数学→英语 顺序。
+
+    与 build_daily_time_stats 里的 _ordered 同一套规则 —— 那份是函数内
+    定义的局部闭包, 这里要单独有一份模块级的 (顺序错一次, 家长就再也
+    对不上"那个蓝色是数学")。
+    """
+    return {s: subjects[s] for s in config.SUBJECTS if s in subjects}
+
+
+def _add_months(d: date, n: int) -> date:
+    """把日期挪 n 个月; day 夹到目标月的最后一天 (1/31 减一个月 → 2/28)。"""
+    total = d.month - 1 + n
+    year = d.year + total // 12
+    month = total % 12 + 1
+    day = min(d.day, _last_day_of_month(date(year, month, 1)).day)
+    return date(year, month, day)
+
+
+def _month_range_rows(conn, family_id: int, start: date, end: date) -> list:
+    """区间内的作业行。月聚合一次查完, 不按天循环查库。"""
+    return conn.execute(
+        """
+        SELECT due_date, subject, status, est_minutes, actual_minutes,
+               is_optional, task_type
+        FROM assignments
+        WHERE family_id = %s AND due_date BETWEEN %s AND %s
+        ORDER BY due_date, id
+        """,
+        (family_id, start, end),
+    ).fetchall()
+
+
+def _month_time_rows(rows: list) -> tuple[dict, dict]:
+    """从作业行里拆出 (逐日各科用时, 各科合计用时)。
+
+    只保留 SUBJECTS 里的学科 —— 与 build_daily_time_stats 的 _ordered
+    同规则 (它把 subject 为空的训练/习惯任务归到"其他"后又整个丢掉,
+    这里直接不收, 结果一致)。
+    """
+    per_day: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    by_subject: dict[str, int] = defaultdict(int)
+    for r in rows:
+        if r["status"] != "done":
+            continue
+        if r["task_type"] == "observation":
+            continue
+        subj = r["subject"]
+        if subj not in config.SUBJECTS:
+            continue
+        minutes = int(r["actual_minutes"] if r["actual_minutes"] is not None
+                      else r["est_minutes"]) or 0
+        due = r["due_date"]
+        if not isinstance(due, str):
+            due = due.isoformat()
+        per_day[due][subj] += minutes
+        by_subject[subj] += minutes
+    return per_day, by_subject
+
+
+def _month_completion(rows: list) -> dict:
+    """完成情况。与周报同口径: 分母用必做 (不含选做), done+skipped 算收尾。"""
+    total = len(rows)
+    optional = sum(1 for r in rows if r["is_optional"])
+    required = total - optional
+    settled = sum(1 for r in rows
+                  if not r["is_optional"] and r["status"] in ("done", "skipped"))
+    if required > 0:
+        rate = min(100, round(settled * 100 / required))
+    else:
+        rate = 100 if rows else 0
+    return {
+        "total": total,
+        "optional": optional,
+        "required": required,
+        "settled": settled,
+        "rate": rate,
+    }
+
+
+def build_month_analytics(anchor: date, today: date) -> dict:
+    """anchor 所在月份的月度聚合 (月内按周切分 + 环比上月同期)。
+
+    anchor 取该月任意一天; month_start = anchor 所在月 1 日, month_end = 该月
+    最后一天。
+
+    数据区间是 **本月 1 日至今天** (month-to-date), 不是整月: 本月尚未到来
+    的日子没有数据, 算进分母会把"日均"稀释成假的。与 _period_range('month')
+    同一理由。
+
+    环比上月用 **同期对齐**: 上个月同期 (上月 1 日 ~ 上月同一天), 不是上月
+    整月。本月才过了 2 天却拿上月整月比, 会得出"少用了 95%"这种假结论。
+    """
+    month_start = anchor.replace(day=1)
+    month_end = _last_day_of_month(month_start)
+    # 过去的月份 (month_end < today) 整月都是数据; 当月只到今天。
+    data_end = min(today, month_end)
+    elapsed_days = (data_end - month_start).days + 1 if data_end >= month_start else 0
+    is_partial = today < month_end
+
+    holidays = _calendar_holidays()
+    makeup = _calendar_makeup()
+    family_id = default_family_id()
+
+    with get_conn() as conn:
+        rows = _month_range_rows(conn, family_id, month_start, data_end)
+        prev_start = _add_months(month_start, -1)
+        prev_end = min(
+            prev_start + timedelta(days=max(elapsed_days - 1, 0)),
+            _last_day_of_month(prev_start),
+        )
+        prev_rows = (_month_range_rows(conn, family_id, prev_start, prev_end)
+                     if elapsed_days > 0 else [])
+
+    per_day, by_subject = _month_time_rows(rows)
+    total_minutes = sum(by_subject.values())
+    ordered_subject = _ordered_subjects(dict(by_subject))
+
+    # 上学日: 与 build_daily_time_stats 同一套日档判定。
+    school_days = sum(
+        1 for i in range(elapsed_days)
+        if classify_day(month_start + timedelta(days=i), holidays, makeup)[0]
+        in ("plain", "friday", "makeup")
+    )
+    denom = school_days or elapsed_days or 1
+
+    # 各科占比与日均。
+    subjects = [
+        {
+            "subject": s,
+            "minutes": m,
+            "pct": round(m * 100 / total_minutes, 1) if total_minutes else 0,
+            "avg_per_day": round(m / denom, 1),
+        }
+        for s, m in ordered_subject.items()
+    ]
+
+    # 月内按自然周切分。落在月外的部分不计入 (只算本月内的日子)。
+    #
+    # 逐日的完成数先一次性算好, 再按周汇总 —— 不要在按天的循环里扫全部
+    # 作业行, 那是 O(天数 × 行数), 月末能跑到几千次比较。
+    per_day_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"done": 0, "required": 0, "settled": 0})
+    for r in rows:
+        due = r["due_date"]
+        if not isinstance(due, str):
+            due = due.isoformat()
+        c = per_day_counts[due]
+        if r["status"] == "done":
+            c["done"] += 1
+        if not r["is_optional"]:
+            c["required"] += 1
+            if r["status"] in ("done", "skipped"):
+                c["settled"] += 1
+
+    weeks: list[dict] = []
+    for i in range(elapsed_days):
+        d = month_start + timedelta(days=i)
+        monday = d - timedelta(days=d.weekday())
+        if not weeks or weeks[-1]["_monday"] != monday:
+            weeks.append({
+                "_monday": monday,
+                "label": f"第{len(weeks) + 1}周",
+                "start": d.isoformat(),
+                "end": d.isoformat(),
+                "days": 0,
+                "minutes": 0,
+                "done": 0,
+                "required": 0,
+                "settled": 0,
+            })
+        w = weeks[-1]
+        w["end"] = d.isoformat()
+        w["days"] += 1
+        ds = d.isoformat()
+        w["minutes"] += sum(per_day.get(ds, {}).values())
+        c = per_day_counts.get(ds)
+        if c:
+            w["done"] += c["done"]
+            w["required"] += c["required"]
+            w["settled"] += c["settled"]
+    for w in weeks:
+        w.pop("_monday", None)
+        w["avg_minutes"] = round(w["minutes"] / w["days"], 1) if w["days"] else 0
+        w["rate"] = (min(100, round(w["settled"] * 100 / w["required"]))
+                     if w["required"] else (100 if w["days"] else 0))
+
+    # 环比上月同期。
+    _, prev_by_subject = _month_time_rows(prev_rows)
+    prev_total = sum(prev_by_subject.values())
+    prev_school_days = sum(
+        1 for i in range((prev_end - prev_start).days + 1)
+        if classify_day(prev_start + timedelta(days=i), holidays, makeup)[0]
+        in ("plain", "friday", "makeup")
+    )
+    prev_completion = _month_completion(prev_rows)
+    prev_denom = prev_school_days or ((prev_end - prev_start).days + 1) or 1
+    prev_avg = round(prev_total / prev_denom, 1)
+    cur_avg = round(total_minutes / denom, 1)
+
+    completion = _month_completion(rows)
+
+    return {
+        "month": f"{month_start.year:04d}-{month_start.month:02d}",
+        "month_start": month_start.isoformat(),
+        "month_end": month_end.isoformat(),
+        "data_end": data_end.isoformat(),
+        "elapsed_days": elapsed_days,
+        "is_partial": is_partial,
+        "school_days": school_days,
+        "completion": completion,
+        "time": {
+            "total_minutes": total_minutes,
+            "avg_daily_minutes": cur_avg,
+            "school_days": school_days,
+            "by_subject": ordered_subject,
+        },
+        "subjects": subjects,
+        "weeks": weeks,
+        "prev_month": {
+            "month": f"{prev_start.year:04d}-{prev_start.month:02d}",
+            "start": prev_start.isoformat(),
+            "end": prev_end.isoformat(),
+            "days": (prev_end - prev_start).days + 1,
+            "total_minutes": prev_total,
+            "avg_daily_minutes": prev_avg,
+            "school_days": prev_school_days,
+            "done": prev_completion["settled"],
+            "rate": prev_completion["rate"],
+        },
+        # 环比基准是"上月同期", 不是上月整月 —— 前端文案必须照着说。
+        "prev_month_basis": "same_period",
+        "delta": {
+            "minutes": total_minutes - prev_total,
+            "minutes_pct": (round((total_minutes - prev_total) * 100 / prev_total, 1)
+                            if prev_total else None),
+            "rate": completion["rate"] - prev_completion["rate"],
+            "avg_daily_minutes": round(cur_avg - prev_avg, 1),
         },
     }

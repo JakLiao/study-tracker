@@ -430,6 +430,12 @@ function switchTab(name, opts) {
     b.setAttribute('aria-selected', active ? 'true' : 'false');
   });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
+  // 离开复盘页要把图表实例销毁掉。复盘页的视图虽然还在 DOM 里 (display
+  // 切换), 但 ECharts 实例会一直挂着 resize 监听 —— 切走不销毁, 累积
+  // 几十个实例, 切回来时画布也会因为尺寸为 0 而画错。
+  if (tab !== 'review' && typeof disposeCharts === 'function') {
+    disposeCharts(ChartRegistry);
+  }
   if (tab === 'board') {
     // 回到看板时重置到最新一天, 否则家长会停在几天前的那天上,
     // 以为"今天的作业怎么不见了"。
@@ -3518,7 +3524,15 @@ if (weekendBox) {
   });
 }
 
+// 复盘页的请求序号。
+//
+// 快速连点「本周 / 上周 / 本月」时, 早发的请求可能后到, 把新周期的内容
+// 覆盖掉 —— 表现是"按钮亮着本月, 页面画的是上周"。每次 loadReview 自增
+// 一个序号, 回来时比对, 对不上就整段丢弃。(2026-11-02 顺手修掉的竞态)
+let _reviewSeq = 0;
+
 async function loadReview(period) {
+  const seq = ++_reviewSeq;
   _reviewPeriod = period;
   const root = document.getElementById('review-content');
   // 必须清空: 下面几块是 appendChild 进去的, 不会自动顶掉旧内容。
@@ -3526,6 +3540,11 @@ async function loadReview(period) {
   // 这里不用 innerHTML 塞「加载中…」占位 —— 两条接口并发返回后追加,
   // 那个占位会一直留在最上面 (appendChild 顶不掉它), 曾因此在页面上
   // 留着一行永远不消失的"加载中…"。
+  //
+  // 清 DOM 之前**必须先销毁 ECharts 实例**: innerHTML='' 只摘 DOM,
+  // 不会 dispose —— canvas 与它挂的 resize 监听都留着, 切十次周期就泄漏
+  // 十个实例。见 charts.js 的 ChartRegistry。
+  if (typeof disposeCharts === 'function') disposeCharts(ChartRegistry);
   root.innerHTML = '';
   // 孩子端是另一页东西: 我的成绩单 (勋章墙 + 成长报告), 家长端的
   // 环形图/折线/偏差表对他没有意义。
@@ -3552,23 +3571,65 @@ async function loadReview(period) {
   // 两条接口并发, 谁先回来谁先渲染。用时统计不受偏差表"样本不足"的影响
   // (见 /analytics/review-time 的说明), 所以顺序不能反过来等 —— 先 await
   // 偏差表的话, 4011 一抛就把整个 await 链带走, 上面这块也渲染不出来。
-  const timeP = loadReviewTime(period).catch(
-    e => el(`<div class="error-banner">用时统计加载失败: ${e.message}</div>`));
+  const timeP = loadReviewTime(period).then(
+    d => ({ ok: true, data: d }),
+    e => ({ ok: false, error: e.message }));
   const devP = loadReviewDeviation(period);
-  const report = await reportP;
+  // 月报只在「本月」周期拉 —— 其余周期的统计区间不是整月, 月报回答不了
+  // "这个月怎么样"。失败不影响别的块, 单独兜底。
+  const monthP = period === 'month'
+    ? loadMonthlyReport().then(
+      d => ({ ok: true, data: d }),
+      e => ({ ok: false, error: e.message }))
+    : Promise.resolve({ ok: false, skipped: true });
+  const [report, time, dev, month] = await Promise.all([reportP, timeP, devP, monthP]);
+  // 期间用户又切了周期 —— 这一轮的结果已经过时, 整段丢掉, 让新一轮画。
+  if (seq !== _reviewSeq) return;
   if (report) root.appendChild(report);
-  root.appendChild(await timeP);
-  root.appendChild(await devP);
-  // 家长端新增的复盘可视化 (环形占比 / 每日折线 / 薄弱项 / 挪到下周)。
-  // 渲染在 dual.js 里 —— 它要额外发几次请求取按天的用时与小结标签。
-  //
-  // 放在最前面而不是追加在末尾: 旧的周报块内容很长 (负荷表 / 偏差表 / 口径说明
-  // 都在里面), 追加的话这三张图要滚过三屏才看得到, 家长根本等不到。
-  // 「先看结论再看明细」和用户在复盘页的诉求是一致的 —— 环形图就是结论。
-  if (typeof renderParentReviewExtras === 'function') {
-    const extras = await renderParentReviewExtras(period);
-    root.insertBefore(extras, root.firstChild);
+  // 周末过滤只做一次, 图表与统计块共用同一个 view ——
+  // 之前两处各拿一份, 一处过滤一处没过滤, 于是"已剔除"里会冒出周末。
+  const view = time.ok ? reviewWeekendView(time.data) : null;
+  if (view) {
+    root.appendChild(renderReviewTimeBlock(view, period));
+  } else {
+    root.appendChild(el(`<div class="error-banner">用时统计加载失败: ${time.error}</div>`));
   }
+  root.appendChild(dev.node);
+
+  // ===== 结论区: 两张图 + 薄弱项 (+ 本月周期的月报与按周对比) =====
+  //
+  // 放在最前面而不是追加在末尾: 周报块内容很长 (负荷表 / 偏差表 / 口径说明
+  // 都在里面), 追加的话这两张图要滚过三屏才看得到, 家长根本等不到。
+  // 「先看结论再看明细」和用户在复盘页的诉求是一致的 —— 图就是结论。
+  //
+  // 2026-11-02 去重: 这里原来有 4 张图 (堆叠柱 + 双饼 + 环图 + 折线),
+  // 但只有 2 份独立数据 (环图 = 实际占比饼, 折线 = 柱状图的数据)。
+  // 现在只剩两张: 每日用时柱状 + 学科占比环 (可切预估/实际)。
+  const extras = el('<div class="p-review-extras"></div>');
+  if (view) {
+    // 整段没有用时就不画图 —— 空坐标系对家长没有任何信息, 而下面统计块里
+    // 已经有一句"该区间没有已完成的作业, 暂无用时数据"说明白了。
+    // (环图有自己的零值判断, 这里管的是柱状图。)
+    if (view.days.some(d => (d.total_minutes || 0) > 0)) {
+      extras.appendChild(renderTimeChart(view));
+    }
+    const share = renderSubjectShare(view);
+    if (share) extras.appendChild(share);
+  }
+  // 本月周期: 月报卡 + 月内按周对比。
+  if (month.ok) {
+    extras.appendChild(renderMonthReport(month.data));
+    const weeks = renderMonthWeeksChart(month.data);
+    if (weeks) extras.appendChild(weeks);
+  } else if (month.error) {
+    extras.appendChild(el(`<div class="error-banner">月报加载失败: ${escapeAttr(month.error)}</div>`));
+  }
+  // 薄弱项卡在 dual.js 里 —— 它要读晚间小结的标签 (家长端的措辞)。
+  if (typeof renderParentReviewExtras === 'function') {
+    const weak = await renderParentReviewExtras(period, { deviation: dev.data });
+    if (weak) extras.appendChild(weak);
+  }
+  root.insertBefore(extras, root.firstChild);
 }
 
 // ====== 本周课后周报 (M6) ======
@@ -3740,6 +3801,9 @@ function renderWeeklyReport(r) {
 // 偏差表单独包一层: 它有"样本不足"这个正常分支, 不该把异常抛到调用方,
 // 否则上面已经渲染好的用时统计会被一起清掉。
 async function loadReviewDeviation(period) {
+  // 返回 { node, data }: node 是给页面拼的偏差表, data 是原始响应。
+  // 薄弱项卡要用 data —— 它得知道**当前周期**的低估任务 (top_underestimate),
+  // 而不是另拉一份本周的数据 (那会让"上周"周期分析到本周的作业)。
   try {
     const r = await api('GET', `/analytics/review?period=${period}`);
     const box = el(`<div class="review-deviation">
@@ -3753,13 +3817,25 @@ async function loadReviewDeviation(period) {
     } else {
       renderDeviationTable(box, r);
     }
-    return box;
+    return { node: box, data: r };
   } catch (e) {
     if (e.message.includes('4011')) {
-      return el(`<div class="card muted">样本不足 (需 ≥ 5 条已完成), 暂不生成偏差表</div>`);
+      return {
+        node: el(`<div class="card muted">样本不足 (需 ≥ 5 条已完成), 暂不生成偏差表</div>`),
+        data: null,
+      };
     }
-    return el(`<div class="error-banner">复盘失败: ${e.message}</div>`);
+    return {
+      node: el(`<div class="error-banner">复盘失败: ${e.message}</div>`),
+      data: null,
+    };
   }
+}
+
+// 本月课后月报 (2026-11-02)。只在本月周期拉, 失败由调用方单独兜底 ——
+// 月报挂掉不该把图表与偏差表一起带走。
+async function loadMonthlyReport() {
+  return await api('GET', '/monthly-report');
 }
 
 // ====== 每日各科作业用时 (2026-10-15) ======
@@ -3791,28 +3867,65 @@ const DAY_KIND_META = {
   holiday:{ label: '假期',   hint: '法定假日, 不计入平均' },
 };
 
+// 拉复盘页的用时统计。**只返回原始数据**, 不顺手渲染 ——
+// 图表要跟"结论区"画在一起 (dual.js 的 renderParentReviewExtras),
+// 数据得先交到那里去。
 async function loadReviewTime(period) {
   const r = await api('GET', `/analytics/review-time?period=${period}`);
+  // 在数据边界上校验形状, 别让畸形响应漏到渲染层:
+  // 下面 reviewWeekendView / renderReviewTimeBlock 都直接摸 r.days、
+  // r.period_start, 少了就会抛 TypeError —— 而那个 throw 发生在
+  // promise 链**之外**, 没人接, 整页静默死掉 (2026-11-02 实测:
+  // tests/test_routing.py 的 harness 把所有接口都 mock 成 {items:[]},
+  // 复盘页直接抛未捕获异常, 整个路由测试挂掉)。
+  // 在这里 throw 就还在 promise 链里, 会被 loadReview 的错误分支接住,
+  // 变成一条"用时统计加载失败"的横幅。
+  if (!r || !Array.isArray(r.days) || !Array.isArray(r.excluded_days || [])) {
+    throw new Error('用时统计返回的数据格式不正确');
+  }
+  return r;
+}
+
+// 周末 (kind='off', 不上学的普通休息日) 在实际使用中几乎没有作业:
+// 作业都在上学最后一天 (通常周五) 布置, 所以周末那两天往往既没数据
+// 也没"上了学却没写"的情况 —— 画出来只是两根空柱 + 一张 0 分钟的卡。
+//
+// 只按 kind 精确过滤, 不按星期几过滤: 调休上班的周六 (kind='makeup')
+// 与法定假期 (kind='holiday') 都落在周六周日, 但它们是有真实作业的上
+// 学日, 藏起来等于丢数据。
+//
+// 统计口径一律不动: 平日日均、占比饼图、偏差表都是后端算好的, 原样用。
+// 这里只决定"哪些天要画出来"。
+function reviewWeekendView(r) {
+  if (showWeekend()) return r;
+  const days = (r.days || []).filter(d => d.kind !== 'off');
+  const view = {
+    ...r,
+    days,
+    excluded_days: (r.excluded_days || []).filter(e => e.kind !== 'off'),
+  };
+  // 占比图跟着一起过滤 —— 两张图在同一个视口里, 合计必须对得上账。
+  //
+  // 后端 subject_share 是整段的合计 (含周末), 而柱状图已经按开关把周末
+  // 藏了。周末虽然不上学, 但孩子可能写了作业: 2026-11-02 实测 10/31 与
+  // 11/01 各有 10 分钟语文, 于是柱状图合计 685、环图合计 705, 家长只会
+  // 以为图画错了。所以这里按**看得见的那几天**重算一份占比
+  // (预估用逐日 est_by_subject, 实际用逐日 by_subject)。
+  //
+  // 数据里没有逐日预估时 (老 payload) 保留后端那份整段合计 —— 总比显示
+  // 一个空环强。
+  const share = typeof shareOfDays === 'function' ? shareOfDays(days) : null;
+  if (share) view.subject_share = share;
+  return view;
+}
+
+// 用时统计块里**除图表以外**的部分: 概览卡 / 分档对照 / 口径说明。
+// 图表 (每日用时 + 学科占比) 归结论区, 见 renderParentReviewExtras。
+function renderReviewTimeBlock(r, period) {
   const wrap = el('<div class="wt-block"></div>');
   const isMonth = r.period === 'month';
   const label = PERIOD_LABEL[period] || '本周';
   const withWeekend = showWeekend();
-
-  // 周末 (kind='off', 不上学的普通休息日) 在实际使用中几乎没有作业:
-  // 作业都在上学最后一天 (通常周五) 布置, 所以周末那两天往往既没数据
-  // 也没"上了学却没写"的情况 —— 画出来只是两根空柱 + 一张 0 分钟的卡。
-  //
-  // 只按 kind 精确过滤, 不按星期几过滤: 调休上班的周六 (kind='makeup')
-  // 与法定假期 (kind='holiday') 都落在周六周日, 但它们是有真实作业的上
-  // 学日, 藏起来等于丢数据。
-  //
-  // 统计口径一律不动: 平日日均、占比饼图、偏差表都是后端算好的, 原样用。
-  // 这里只决定"哪些天要画出来"。
-  const view = withWeekend ? r : {
-    ...r,
-    days: r.days.filter(d => d.kind !== 'off'),
-    excluded_days: (r.excluded_days || []).filter(e => e.kind !== 'off'),
-  };
 
   // ===== 概览卡 =====
   const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
@@ -3843,39 +3956,33 @@ async function loadReviewTime(period) {
     </div>`));
   }
 
-  // ===== 柱状图: 每天各科堆叠 =====
-  wrap.appendChild(renderTimeChart(view));
-
-  // ===== 饼图: 各科时间占比 (预计 / 实际) =====
-  const pies = renderSubjectShare(view);
-  if (pies) wrap.appendChild(pies);
-
   // ===== 分档卡片: 平日 / 周五 / 周末 / 调休 =====
-  wrap.appendChild(renderBuckets(view, withWeekend));
+  wrap.appendChild(renderBuckets(r, withWeekend));
 
   // ===== 图例 =====
   wrap.appendChild(renderLegend(withWeekend));
 
   // 被剔除的日子要显式说出来。国庆那周若无提示, 家长会以为少统计了 4 天。
-  if (view.excluded_days && view.excluded_days.length) {
+  const excluded = (r.excluded_days || []);
+  if (excluded.length) {
     let txt;
     if (isMonth) {
       // 一个月里有十来个不上学的日子, 逐日列出来是噪音 —— 按类型汇总,
       // 具体是哪几天看上面的柱状图 (虚线柱) 就够了。
       const byKind = {};
-      view.excluded_days.forEach(e => {
+      excluded.forEach(e => {
         byKind[e.kind_label] = (byKind[e.kind_label] || 0) + 1;
       });
       txt = Object.entries(byKind).map(([k, v]) => `${k} ${v} 天`).join(' · ');
     } else {
-      txt = view.excluded_days
+      txt = excluded
         .map(e => `${e.date.slice(5)} ${e.kind_label}`)
         .join(' · ');
     }
     wrap.appendChild(el(`<p class="muted wt-excluded">已剔除 (不上学): ${txt}</p>`));
   }
 
-  const noData = view.days.every(d => d.total_minutes === 0);
+  const noData = r.days.every(d => d.total_minutes === 0);
   if (noData) {
     wrap.appendChild(el(`<div class="empty">
       <div class="empty-icon">📊</div>
@@ -3885,143 +3992,73 @@ async function loadReviewTime(period) {
   return wrap;
 }
 
-// 每天一根柱子, 柱内按科目堆叠。假期/休息日不画实心柱, 只画一个虚线
-// 轮廓 + 斜纹 —— 让"这天没统计"和"这天用时是 0"在视觉上可区分。
+// ====== 每日各科作业用时 (ECharts, 2026-11-02 重写) ======
+//
+// 这张图以前是手写 SVG (viewBox + 手算坐标), 2026-11-02 换成 ECharts:
+//   - 标签互相压的问题交给 ECharts 的 labelLayout.hideOverlap;
+//   - 月视图三十来天挤在一屏, 加了 dataZoom 让家长能拖;
+//   - 图表 option 的构造在 charts.js 里 (纯函数, 可在 node 里直接测)。
+//
+// 假期/休息日不画实心柱, 只画一个虚线轮廓 —— 让"这天没统计"和
+// "这天用时是 0"在视觉上可区分。
+
 function renderTimeChart(r) {
-  const W = 700, H = 260;
-  const padL = 34, padR = 10, padT = 16, padB = 42;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-  const days = r.days;
-  const n = days.length;
-  // 视图密度决定能画多少东西。一周 7 天每格近 94px, 什么都能写;
-  // 本月三十来天每格只有 21px —— 星期名、柱内数字、柱顶总数都塞不下,
-  // 硬画出来是互相压字, 比不画更难读。所以密集时只留"哪几天高"这个信息。
-  const dense = n > 10;
-  const labelEvery = dense ? Math.ceil(n / 7) : 1;  // 密集时每隔几天标一个日期
-  const maxMin = Math.max(...days.map(d => d.total_minutes), 1);
-  // 纵轴上限取"好看的整数", 再由它均分 2 段 —— 直接对 maxMin 取整到 10
-  // 会得到 190 这种刻度, 均分后是 190/95/0, 中间那档不是整数, 家长读图
-  // 时得自己在脑子里换算。按 1/2/5 阶梯向上取, 两档都落在整数上。
-  const step = maxMin <= 50 ? 50 : maxMin <= 100 ? 50 : maxMin <= 200 ? 100
-             : maxMin <= 400 ? 200 : Math.ceil(maxMin / 200) * 200;
-  const niceMax = Math.max(step, Math.ceil(maxMin / step) * step);
-  const slot = plotW / n;
-  const barW = Math.min(56, slot * 0.6);
-
-  let g = '';
-  // 横向网格线 + y 轴刻度
-  for (let i = 0; i <= 2; i++) {
-    const val = Math.round(niceMax * (1 - i / 2));
-    const y = padT + (plotH * i / 2);
-    g += `<line class="wt-grid" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"/>`;
-    g += `<text class="wt-axis" x="${padL - 6}" y="${y + 3}" text-anchor="end">${val}</text>`;
-  }
-
-  days.forEach((d, i) => {
-    const cx = padL + slot * i + slot / 2;
-    const x = cx - barW / 2;
-    if (!d.is_school_day) {
-      // 不上学: 虚线轮廓 + 斜纹, 不给任何"用时"暗示
-      const h = Math.max(6, plotH * 0.06);
-      g += `<rect class="wt-bar-off" x="${x}" y="${padT + plotH - h}" width="${barW}" height="${h}" rx="4"/>`;
-    } else if (d.total_minutes > 0) {
-      // 自下而上堆叠。顺序固定 语->数->英 (与后端一致), 而不是按当天
-      // 的出现顺序 —— 否则周一黄在底、周二蓝在底, 家长没法把颜色
-      // 稳定地对应到科目, 堆叠图就白画了。
-      let acc = 0;
-      orderedSubjects(d.by_subject).forEach(name => {
-        const mins = d.by_subject[name] || 0;
-        const h = plotH * (mins / niceMax);
-        const y = padT + plotH - (plotH * (acc + mins) / niceMax);
-        g += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h, 1)}" rx="2"
-                 fill="${subjectColor(name)}"><title>${name} ${mins} 分钟</title></rect>`;
-        // 段内数字紧贴色块上沿。只在该段够高时画 —— 太窄的段塞数字会
-        // 压到相邻段上, 三个数字叠在一起比不画更难读。
-        if (h >= 13) {
-          // 柱子本身也要够宽: 本月每根柱只有 12px, 写进去的数字会溢出
-          // 柱子、盖到隔壁那根上。宽度不够就只留色块 (悬停仍能看到分钟数)。
-          if (barW >= 24) {
-            g += `<text class="wt-seg" x="${cx}" y="${y + h / 2 + 3.5}"
-                   text-anchor="middle">${mins}</text>`;
-          }
-        }
-        acc += mins;
-      });
-      // 柱顶标总数: 家长最先想看的是"今天总共多少"
-      if (!dense) {
-        const totalY = padT + plotH - (plotH * acc / niceMax) - 5;
-        g += `<text class="wt-total" x="${cx}" y="${Math.max(totalY, 10)}" text-anchor="middle">${d.total_minutes}</text>`;
-      }
-    } else if (!dense) {
-      g += `<text class="wt-zero" x="${cx}" y="${padT + plotH - 6}" text-anchor="middle">0</text>`;
-    }
-    // x 轴标签: 星期 + 日期。假期额外标出节日名。
-    if (!dense) {
-      g += `<text class="wt-xlabel" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${d.weekday_label}</text>`;
-      g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 30}" text-anchor="middle">${d.date.slice(5)}</text>`;
-      if (!d.is_school_day) {
-        g += `<text class="wt-xkind" x="${cx}" y="${H - padB + 42}" text-anchor="middle">${escapeAttr(d.kind_label)}</text>`;
-      }
-    } else if (i % labelEvery === 0) {
-      // 密集时只标日号 (每 labelEvery 天一个), 星期名与完整日期都留白 ——
-      // 否则 30 个 "周一/周二" 连成一片, 反而看不出哪天是哪天; 完整日期
-      // "10-05" 在 21px 宽的格子里也要溢出到隔壁去。
-      g += `<text class="wt-xdate ${d.is_school_day ? '' : 'is-off'}" x="${cx}" y="${H - padB + 16}" text-anchor="middle">${Number(d.date.slice(8, 10))}</text>`;
-    }
-  });
+  const days = r.days || [];
+  const card = el(`<div class="card wt-chart-card">
+    <div class="card-title">每日作业用时<span class="count">分钟</span></div>
+    <div class="wt-chart-canvas" role="img" aria-label="每日各科作业用时堆叠柱状图"></div>
+    <div class="wt-chart-fallback"></div>
+    <div class="wt-chart-note muted"></div>
+    <div class="wt-legend wt-subjects"></div>
+  </div>`);
+  const canvasBox = card.querySelector('.wt-chart-canvas');
+  const fallbackBox = card.querySelector('.wt-chart-fallback');
+  const noteBox = card.querySelector('.wt-chart-note');
+  const legendBox = card.querySelector('.wt-legend');
 
   // 科目图例: 堆叠图的颜色必须能对上名字, 否则"橙色那一段是多少"
   // 只能靠猜。顺序与柱内堆叠一致 (语->数->英)。
   const allSubs = orderedSubjects(
     days.reduce((acc, d) => Object.assign(acc, d.by_subject), {}));
-  const legend = allSubs.map(s =>
+  legendBox.innerHTML = allSubs.map(s =>
     `<span class="wt-lg"><i class="wt-lg-dot" style="background:${subjectColor(s)}"></i>${escapeAttr(s)}</span>`
   ).join('');
 
-  return el(`<div class="card">
-    <div class="card-title">每日作业用时<span class="count">分钟</span></div>
-    <svg class="wt-chart" viewBox="0 0 ${W} ${H}" role="img"
-         aria-label="每日各科作业用时堆叠柱状图">${g}</svg>
-    ${legend ? `<div class="wt-legend wt-subjects">${legend}</div>` : ''}
-  </div>`);
+  const note = buildDailyTimeNote(r);
+  if (note) noteBox.textContent = note;
+
+  // 没有 canvas 的环境 (jsdom 测试) 建不了图 —— 退化成表格, 不白屏。
+  if (!canRenderCharts()) {
+    canvasBox.remove();
+    fallbackBox.innerHTML = dailyTimeTableHtml(r);
+    return card;
+  }
+  const option = buildDailyTimeOption(r, { withWeekend: showWeekend() });
+  if (!option) {
+    canvasBox.remove();
+    fallbackBox.innerHTML = dailyTimeTableHtml(r);
+    return card;
+  }
+  renderChart(canvasBox, option, ChartRegistry);
+  return card;
 }
 
-// ====== 各科时间占比饼图 (2026-10-29) ======
+// ====== 各科时间占比 (ECharts 环图, 2026-11-02 重写) ======
 //
-// 为什么预计与实际要分成两张图, 而不是合成一个环:
-//   合成的话每个科目占两段, 一眼看过去全是"语文语文语文", 想比较
-//   "当初估的分布"与"实际发生的分布"完全无从下手。分开两张, 形状
-//   可比, 差在哪一眼就看出来 —— 这才是家长翻这页想看的东西。
+// 为什么预计与实际**合成一个环 + 一个切换**, 而不是并排两张:
+//   并排两张环时, "实际"那张和别处那张"实际占比"图长得一模一样, 家长会
+//   以为是同一张图出了 bug (2026-11-01 就撞过这个: 复盘页一度有 4 张图,
+//   其实只有 2 份独立数据)。给一个环 + 切换, 想比的时候切一下, 不比的时候
+//   只占一张图的位置 —— 页面上的图不再互相盖。
 //
 // 口径与上面逐日用时完全一致 (只算 done、实耗为空按预估计、选做计入、
-// 观察作业不计), 所以两个环的合计就是柱状图的总用时, 三处对得上账。
-// 统计区间是**整周**: 周末真写了作业的那部分时间也是家长付出的,
-// 从占比里抹掉会让"这周时间都去哪了"答非所问。
-
-const PIE_CX = 95, PIE_CY = 95, PIE_R = 68;
-
-function piePoint(cx, cy, r, rad) {
-  return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
-}
-
-// 一块扇形。整圆 (只有一个科目且占满 100%) 必须单独画: 起止点重合时
-// SVG 的 A 命令画出来是一条退化直线, 整块饼会凭空消失。
-function pieSlice(cx, cy, r, a0, a1, fill, label) {
-  const title = `<title>${label}</title>`;
-  if (a1 - a0 >= Math.PI * 2 - 1e-6) {
-    return `<circle class="wt-pie-slice" cx="${cx}" cy="${cy}" r="${r}" fill="${fill}">${title}</circle>`;
-  }
-  const [x0, y0] = piePoint(cx, cy, r, a0);
-  const [x1, y1] = piePoint(cx, cy, r, a1);
-  const large = (a1 - a0) > Math.PI ? 1 : 0;
-  const d = `M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} `
-          + `A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
-  return `<path class="wt-pie-slice" d="${d}" fill="${fill}">${title}</path>`;
-}
+// 观察作业不计), 所以这个环的合计与柱状图的总用时对得上账。
 
 // 百分比用最大余数法取整, 保证几个数加起来正好 100%。
 // 各自四舍五入会得到 33% + 33% + 33% = 99%, 家长会怀疑图画错了。
+//
+// 这个函数留在 app.js (charts.js 通过全局取用): 它是"占比"这件事的
+// 唯一算法来源, 搬来搬去迟早出现两份不一致的实现。
 function sharePercents(mins) {
   const total = mins.reduce((s, m) => s + m, 0);
   if (!total) return mins.map(() => 0);
@@ -4035,94 +4072,17 @@ function sharePercents(mins) {
   return out;
 }
 
-// 扇形上能放下几行字?
-//
-// 文字是横排的矩形, 会不会压到相邻扇形, 取决于它在标签半径上张开的
-// 角度。张角最大的不是外侧角, 而是**靠圆心那一侧的角** —— 同样的横
-// 竖偏移, 离圆心越近张角越大。所以两个方向各算一次取大的:
-//   标签在左右两侧时: atan2(半高, 标签半径 - 半宽)
-//   标签在上下一侧时: atan2(半宽, 标签半径 - 半高)
-// 扇形超过半圈时它已经包住大半张图, 一定放得下。
-//
-// 分两档是有意的: 科目名是主角, 哪怕放不下百分比也要把名字放上去;
-// 实在放不下才只留给图例 —— 挤在一起的字比没有字更难读。
-const PIE_LABEL_R = PIE_R * 0.72;   // 标签离圆心的距离
-const PIE_LABEL_HALF_W = 12;        // "语文"两字 @12px 的半宽
-
-function pieLabelHalfAngle(halfH) {
-  return Math.max(
-    Math.atan2(halfH, PIE_LABEL_R - PIE_LABEL_HALF_W),
-    Math.atan2(PIE_LABEL_HALF_W, PIE_LABEL_R - halfH)
-  );
-}
-// 单行 (只有科目名) 与双行 (名字 + 百分比) 的门槛
-const PIE_ANGLE_ONE = pieLabelHalfAngle(6);    // 单行半高 6
-const PIE_ANGLE_TWO = pieLabelHalfAngle(12);   // 双行合起来半高 12
-
-// 返回 0 (放不下) / 1 (只放科目名) / 2 (科目名 + 百分比)
-function pieLabelTier(frac) {
-  if (frac > 0.5) return 2;
-  const half = (frac * Math.PI) / 2;
-  if (half >= PIE_ANGLE_TWO) return 2;
-  if (half >= PIE_ANGLE_ONE) return 1;
-  return 0;
-}
-
-// 一张饼。by_subject 为空或合计为 0 时给出空态, 不画空饼 ——
-// 一个只有灰色底的圆会被误读成"占比为 0"。
-function renderPie(bySubject, total, ariaLabel) {
-  const subs = orderedSubjects(bySubject).filter(s => (bySubject[s] || 0) > 0);
-  if (!subs.length || !total) {
-    return el(`<div class="wt-pie-empty muted">该区间没有已完成的作业</div>`);
-  }
-  const mins = subs.map(s => bySubject[s] || 0);
-  const pcts = sharePercents(mins);
-
-  let slices = '';
-  let labels = '';
-  let a = -Math.PI / 2;   // 从 12 点方向起画, 顺时针
-  subs.forEach((name, i) => {
-    const frac = mins[i] / total;
-    const a0 = a;
-    const a1 = a + frac * Math.PI * 2;
-    slices += pieSlice(PIE_CX, PIE_CY, PIE_R, a0, a1, subjectColor(name),
-      `${name} ${mins[i]} 分钟 (${pcts[i]}%)`);
-    // 扇形里直接写科目名 (+ 百分比), 不用在图例和色块之间来回对照。
-    // 放不下就退一档只写名字, 再放不下才只留给图例。
-    const tier = pieLabelTier(frac);
-    if (tier >= 1) {
-      const [lx, ly] = piePoint(PIE_CX, PIE_CY, PIE_LABEL_R, (a0 + a1) / 2);
-      const nameY = tier >= 2 ? ly - 6 : ly;
-      labels += `<text class="wt-pie-label" x="${lx.toFixed(1)}" y="${nameY.toFixed(1)}"
-                 text-anchor="middle" dominant-baseline="middle">${escapeAttr(name)}</text>`;
-      if (tier >= 2) {
-        labels += `<text class="wt-pie-pct" x="${lx.toFixed(1)}" y="${(ly + 7).toFixed(1)}"
-                   text-anchor="middle" dominant-baseline="middle">${pcts[i]}%</text>`;
-      }
-    }
-    a = a1;
-  });
-
-  const legend = subs.map((name, i) => `<li>
+// 环图的图例。分钟数与占比两列用 tabular-nums 对齐 (规范 §9 坑 1)。
+function subjectShareLegendHtml(subs, mins, pcts) {
+  return subs.map((name, i) => `<li>
       <i style="background:${subjectColor(name)}"></i>
       <span class="wt-pie-name">${escapeAttr(name)}</span>
       <b>${mins[i]} 分</b>
       <em>${pcts[i]}%</em>
     </li>`).join('');
-
-  return el(`<div class="wt-pie-body">
-    <svg class="wt-pie-chart" viewBox="0 0 190 190" role="img"
-         aria-label="${escapeAttr(ariaLabel)}">${slices}${labels}</svg>
-    <ul class="wt-pie-legend">${legend}</ul>
-  </div>`);
 }
 
-// 预计 / 实际 两张饼并排。放在柱状图正下方: 柱状图回答"哪天写了多久",
-// 饼图回答"时间都花在哪个科目上", 两张图连着看才是完整的用时画像。
 function renderSubjectShare(r) {
-  // subject_share 缺失时按空处理, 下面会因合计为 0 而整块不画 —— 不能
-  // 在这里返回 el(''): 那是 null, appendChild(null) 会在页面上留下一个
-  // 字面量 "null"。
   const share = r.subject_share || {};
   const est = share.est || { by_subject: {}, total_minutes: 0 };
   const act = share.actual || { by_subject: {}, total_minutes: 0 };
@@ -4130,45 +4090,165 @@ function renderSubjectShare(r) {
   const actTotal = act.total_minutes || 0;
   // 整段零用时: 整块不画。调用方据此跳过, 页面里只留那一处空态。
   if (!estTotal && !actTotal) return null;
-  // "整周" / "整月" —— 统计口径的名字要跟着周期走。
+  // 口径跟着「显示周末」开关走:
+  //   开着 → 整段 (整周 / 整月), 含周末;
+  //   关着 → 只看上学的日子, 周末那两天的用时不进这个环。
   //
-  // 饼图统计的是**整个区间** (后端算好的 subject_share), 不跟着柱状图
-  // 一起藏周末: 周末的用时是真花掉的, 抹掉就等于少算了家长的付出。
-  // 两者对得上账的前提是周末本来就没作业 —— 实测确实如此 (作业都在上学
-  // 最后一天布置), 所以隐藏周末不会让饼图比柱子多出时间。
-  const scope = r.period === 'month' ? '整月' : '整周';
+  // 两种情况下这个环的合计都与旁边那张柱状图对得上账 —— 两张图摆在同一屏,
+  // 合计不一致家长只会以为图画错了 (2026-11-02 实测踩过: 柱状图 685、
+  // 环图 705, 差的是周末那 20 分钟)。
+  const wholePeriod = showWeekend();
+  const scope = wholePeriod ? (r.period === 'month' ? '整月' : '整周') : '上学日';
+  const scopeLine = wholePeriod
+    ? `统计区间为${scope} (含周末)。`
+    : '统计区间为上学日 (已剔除周末), 与上面那张柱状图是同一批天数。';
 
-  // 实际与预估的差额。一句话说明两个环差在哪, 不用家长自己对表。
-  let delta = '';
-  if (estTotal > 0 && actTotal > 0) {
-    const diff = actTotal - estTotal;
-    delta = diff === 0
-      ? `实际与预估一致, 合计 ${actTotal} 分钟`
-      : `实际比预估${diff > 0 ? '多' : '少'} ${Math.abs(diff)} 分钟 `
-        + `(预估 ${estTotal} · 实际 ${actTotal})`;
-  }
-
-  const card = el(`<div class="card">
+  const card = el(`<div class="card wt-share-card">
     <div class="card-title">各科时间占比<span class="count">${scope}</span></div>
-    ${delta ? `<div class="muted wt-share-delta">${delta}</div>` : ''}
-    <div class="wt-pies"></div>
+    <div class="wt-share-toggle" role="group" aria-label="切换预估与实际">
+      <button type="button" class="wt-share-mode is-on" data-mode="est">预计时间占比</button>
+      <button type="button" class="wt-share-mode" data-mode="actual">实际时间占比</button>
+    </div>
+    <div class="wt-pies">
+      <div class="wt-share-chart">
+        <div class="wt-share-canvas" role="img" aria-label="各科时间占比环图"></div>
+        <div class="wt-share-center"><strong class="wt-share-total"></strong><span>分钟</span></div>
+        <div class="wt-share-fallback"></div>
+      </div>
+      <ul class="wt-pie-legend"></ul>
+    </div>
+    <div class="muted wt-scope">口径: 已完成作业 (跳过不计), 未填实际用时按预估计入; 选做计入, 观察作业不计; ${scopeLine}</div>
   </div>`);
 
-  const row = card.querySelector('.wt-pies');
-  const estCol = el(`<div class="wt-pie">
-    <div class="wt-pie-head">预计时间占比</div>
-    <div class="wt-pie-total">合计 ${estTotal} 分钟</div>
-  </div>`);
-  estCol.appendChild(renderPie(est.by_subject, estTotal, '各科预计时间占比饼图'));
-  const actCol = el(`<div class="wt-pie">
-    <div class="wt-pie-head">实际时间占比</div>
-    <div class="wt-pie-total">合计 ${actTotal} 分钟</div>
-  </div>`);
-  actCol.appendChild(renderPie(act.by_subject, actTotal, '各科实际时间占比饼图'));
-  row.appendChild(estCol);
-  row.appendChild(actCol);
+  const canvasBox = card.querySelector('.wt-share-canvas');
+  const centerBox = card.querySelector('.wt-share-center');
+  const totalEl = card.querySelector('.wt-share-total');
+  const legendEl = card.querySelector('.wt-pie-legend');
+  const fallbackBox = card.querySelector('.wt-share-fallback');
+  const canvasOk = canRenderCharts();
 
-  card.appendChild(el(`<div class="muted wt-scope">口径: 已完成作业 (跳过不计), 未填实际用时按预估计入; 选做计入, 观察作业不计; 统计区间为${scope}。</div>`));
+  // 一个环 + 一个切换。切换时 setOption 换数据, 不重建实例 ——
+  // 重建会把画布闪一下, 而且容易漏掉 dispose。
+  let current = 'actual';
+  const paint = (mode) => {
+    current = mode;
+    const src = mode === 'est' ? est : act;
+    const total = mode === 'est' ? estTotal : actTotal;
+    const subs = orderedSubjects(src.by_subject).filter(s => (src.by_subject[s] || 0) > 0);
+    const mins = subs.map(s => src.by_subject[s] || 0);
+    const pcts = sharePercents(mins);
+    legendEl.innerHTML = subjectShareLegendHtml(subs, mins, pcts);
+    totalEl.textContent = String(total);
+    centerBox.querySelector('span').textContent = '分钟';
+    canvasBox.setAttribute('aria-label',
+      mode === 'est' ? '各科预计时间占比环图' : '各科实际时间占比环图');
+    if (!canvasOk) {
+      fallbackBox.innerHTML = subjectShareTableHtml(src.by_subject, total, mode);
+      return;
+    }
+    const option = buildSubjectShareOption(src.by_subject, total, mode);
+    if (!option) {
+      fallbackBox.innerHTML = subjectShareTableHtml(src.by_subject, total, mode);
+      return;
+    }
+    const inst = ChartRegistry.get(canvasBox);
+    if (inst) {
+      // 同一个实例换数据 —— pie 的 series 结构不变, setOption 会正确替换。
+      inst.setOption(option, true);
+    } else {
+      renderChart(canvasBox, option, ChartRegistry);
+    }
+  };
+
+  card.querySelectorAll('.wt-share-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      card.querySelectorAll('.wt-share-mode').forEach(b => {
+        b.classList.toggle('is-on', b === btn);
+      });
+      paint(btn.dataset.mode);
+    });
+  });
+
+  // 默认先给"实际" —— 家长在复盘页先想知道的是真花了多少, 不是当初估了多少。
+  paint(current);
+  return card;
+}
+
+// 本月课后月报卡 (2026-11-02)。
+//
+// 关键数字 + 环比上月 + 建议。环比必须写明是"与上月同期比" ——
+// 月还没过完的时候, 不写清楚家长会以为跟整月比。
+function renderMonthReport(month) {
+  month = month || {};
+  const t = month.time || {};
+  const c = month.completion || {};
+  const delta = month.delta || {};
+  const prev = month.prev_month || {};
+  const weeks = month.weeks || [];
+  // 月报是后端算的, 但**不能假设字段一定在** —— 少一个字段就让整页
+  // 白屏, 代价太大。缺什么就显示什么, 不崩。
+  const scope = month.is_partial
+    ? `本月至今 ${month.elapsed_days != null ? month.elapsed_days : 0} 天`
+    : `整月 ${String(month.month_start || '').slice(5)} ~ ${String(month.month_end || '').slice(5)}`;
+
+  const deltaLine = (() => {
+    if (delta.minutes_pct == null) return '';
+    if (delta.minutes === 0) return '与上月同期相比用时持平';
+    const dir = delta.minutes > 0 ? '多用了' : '少用了';
+    const sign = delta.minutes > 0 ? `+${delta.minutes_pct}` : `${delta.minutes_pct}`;
+    return `与上月同期相比${dir} ${Math.abs(delta.minutes)} 分钟 (${sign}%)`;
+  })();
+
+  return el(`<div class="card report-card p-month-card">
+    <div class="report-head">
+      <div class="report-head-main">
+        <div class="report-kicker">本月课后月报</div>
+        <div class="report-range">${scope}</div>
+      </div>
+    </div>
+    <div class="report-stats">
+      <div class="report-stat"><strong>${c.rate != null ? c.rate + '%' : '—'}</strong><span>必做收尾率</span></div>
+      <div class="report-stat"><strong>${t.total_minutes || 0}</strong><span>作业分钟</span></div>
+      <div class="report-stat"><strong>${t.avg_daily_minutes != null ? t.avg_daily_minutes : 0}</strong><span>上学日日均</span></div>
+      <div class="report-stat"><strong>${weeks.length}</strong><span>本月周数</span></div>
+    </div>
+    ${deltaLine ? `<div class="muted p-month-delta">${escapeAttr(deltaLine)}</div>` : ''}
+    ${month.highlights && month.highlights.length
+      ? `<ul class="p-month-list">${month.highlights.map(h => `<li>${escapeAttr(h)}</li>`).join('')}</ul>`
+      : ''}
+    ${month.suggestions && month.suggestions.length
+      ? `<div class="p-month-sugg">
+           <div class="p-weak__title">下个月可以这样</div>
+           ${month.suggestions.map(s => `<div class="p-weak__line">${escapeAttr(s)}</div>`).join('')}
+         </div>`
+      : ''}
+    <div class="muted wt-scope">口径: 只算已完成作业, 未填实际用时按预估计入; 选做计入, 观察作业不计。环比基准为上月同期 (${prev.start || ''} ~ ${prev.end || ''})。</div>
+  </div>`);
+}
+
+// 月内按周对比图 (ECharts)。消费月报里的 weeks。
+function renderMonthWeeksChart(month) {
+  const weeks = (month && month.weeks) || [];
+  if (!weeks.length) return null;
+  const card = el(`<div class="card p-month-weeks-card">
+    <div class="card-title">月内按周对比<span class="count">分钟</span></div>
+    <div class="wt-chart-canvas p-month-weeks-canvas" role="img" aria-label="本月按周用时对比柱状图"></div>
+    <div class="wt-chart-fallback"></div>
+  </div>`);
+  const canvasBox = card.querySelector('.p-month-weeks-canvas');
+  const fallbackBox = card.querySelector('.wt-chart-fallback');
+  if (!canRenderCharts()) {
+    canvasBox.remove();
+    fallbackBox.innerHTML = monthWeeksTableHtml(month);
+    return card;
+  }
+  const option = buildMonthWeeksOption(month);
+  if (!option) {
+    canvasBox.remove();
+    fallbackBox.innerHTML = monthWeeksTableHtml(month);
+    return card;
+  }
+  renderChart(canvasBox, option, ChartRegistry);
   return card;
 }
 

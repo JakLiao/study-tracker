@@ -506,6 +506,10 @@ w.confirm = () => true; w.alert = () => {}; w.scrollTo = () => {};
 w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 w.eval(fs.readFileSync(fpPath, 'utf8'));
 w.eval(fs.readFileSync(zhPath, 'utf8'));
+// charts.js 必须先于 app.js 加载 (与 index.html 的顺序一致): 复盘页的图
+// 走 charts.js 的封装。jsdom 没有 canvas 包, 图表会走"退化成表格"那条
+// 降级路径 —— 这正是降级逻辑要守的行为, 所以这里**不**加载 echarts.min.js。
+w.eval(fs.readFileSync(require('path').join(require('path').dirname(appJsPath), 'charts.js'), 'utf8'));
 w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__e = () => switchTab("entry");');
 
 (async () => {

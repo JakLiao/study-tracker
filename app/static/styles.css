@@ -2446,42 +2446,45 @@ footer {
 /* 勾上后文字变深: 让"当前开着"一眼看得出来, 不必去数方框里那点对勾 */
 .weekend-toggle.is-on { color: var(--text-1); }
 
-/* --- 柱状图 --- */
-.wt-chart {
-  display: block;
+/* --- 图表容器 (ECharts, 2026-11-02) ---
+   ECharts 画在 canvas 上, 容器必须有**确定的高度** —— 给自适应高度它会
+   塌成 0, 图就整个不出现。高度定死 260px (与旧手写 SVG 的 H 一样),
+   月视图挤的时候靠 dataZoom 缩放, 不靠压高度。 */
+.wt-chart-canvas {
   width: 100%;
-  height: auto;
+  height: 260px;
   margin-top: var(--space-2);
-  overflow: visible;
 }
-.wt-grid { stroke: var(--border); stroke-width: 1; }
-.wt-axis { font-size: 10px; fill: var(--text-3); }
-.wt-xlabel { font-size: 12px; fill: var(--text-2); }
-.wt-xdate { font-size: 10px; fill: var(--text-3); }
-.wt-xdate.is-off { fill: var(--text-3); opacity: 0.75; }
-/* 假期名 ("国庆"/"周末") —— 让家长一眼知道那天为什么没统计 */
-.wt-xkind { font-size: 9px; fill: var(--text-3); }
-.wt-total { font-size: 11px; font-weight: 700; fill: var(--text-1); }
-.wt-zero { font-size: 11px; fill: var(--text-3); }
-/* 段内数字: 白字 + 描边。色块是深底实色 (见 .subject-tag 的 AA 选色),
-   白字在三种科目色上都够对比; 描边是为了在窄段上压住相邻色块的边。 */
-.wt-seg {
-  font-size: 10px;
+.p-month-weeks-canvas { height: 200px; }
+
+/* 图下的说明文字 (异常高点 / 最高的一天)。跟着数据走, 不写死。 */
+.wt-chart-note {
+  margin-top: var(--space-1);
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+}
+
+/* 没有 canvas 的环境 (jsdom 测试 / 极旧浏览器) 退化成的表格。
+   表格本身就是可读的 —— 无障碍不靠 canvas 的 aria。 */
+.chart-fallback-table {
+  width: 100%;
+  margin-top: var(--space-2);
+  border-collapse: collapse;
+  font-size: var(--fs-caption-sm);
+  font-variant-numeric: tabular-nums;
+}
+.chart-fallback-table th,
+.chart-fallback-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+}
+.chart-fallback-table th:first-child,
+.chart-fallback-table td:first-child { text-align: left; }
+.chart-fallback-table th {
+  color: var(--text-3);
   font-weight: 600;
-  fill: #fff;
-  paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.22);
-  stroke-width: 2px;
-  stroke-linejoin: round;
-}
-/* 不上学的日子: 虚线轮廓而非实心柱。必须与"用时 0"在视觉上分开 ——
-   前者是"没统计", 后者是"统计了, 确实没花时间"。 */
-.wt-bar-off {
-  fill: var(--surface-2);
-  stroke: var(--text-3);
-  stroke-width: 1;
-  stroke-dasharray: 3 2;
-  opacity: 0.7;
 }
 
 /* --- 分档对照 --- */
@@ -2593,22 +2596,77 @@ footer {
 }
 .wt-warn strong { color: var(--status-doing); }
 
-/* ===== 21c. 各科时间占比饼图 (2026-10-29) =====
-   预计与实际并排两张饼图。位置在每日用时柱状图正下方 —— 柱状图回答
-   "哪天写了多久", 饼图回答"时间都花在哪个科目上", 两张图连着看才是
-   完整的用时画像; 拆到别处会让家长在两个问题之间来回跳。 */
+/* ===== 21c. 各科时间占比环图 (2026-11-02 由双饼改为单环 + 切换) =====
+   2026-10-29 是并排两张饼 (预计 / 实际), 2026-11-01 双角色改造又加了一张
+   "实际占比"环图 —— 三张图里两张是同一份数据, 家长以为是同一张图出了
+   bug。现在合成**一个环 + 一个切换**: 想比的时候切一下, 不比的时候只占
+   一张图的位置。位置仍在每日用时柱状图正下方 —— 柱状图回答"哪天写了
+   多久", 环图回答"时间都花在哪个科目上", 两张图连着看才是完整的用时画像。 */
 .wt-pies {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--space-4);
   margin-top: var(--space-3);
 }
-.wt-pie { text-align: center; }
-.wt-pie-head { font-weight: 600; font-size: var(--fs-body-s); }
-.wt-pie-total {
+/* 预估 / 实际 切换。aria-pressed 之外还要有形状差异 (is-on 是实底),
+   不能只靠颜色 (规范 P8)。 */
+.wt-share-toggle {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.wt-share-mode {
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
   font-size: var(--fs-caption-sm);
-  color: var(--text-3);
+  font-family: inherit;
+  cursor: pointer;
+}
+.wt-share-mode.is-on {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-1);
+  font-weight: 600;
+}
+/* 环图 + 中心数字。中心数字用 HTML 叠层而不是画在 canvas 里 ——
+   这样它继续走 --font-num + tabular-nums, 竖列对不齐的问题不会回来。 */
+.wt-share-chart {
+  position: relative;
+  width: 100%;
+  max-width: 220px;
+  margin: var(--space-2) auto 0;
+}
+.wt-share-canvas {
+  width: 100%;
+  height: 220px;
+}
+.wt-share-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.wt-share-center strong {
+  font-family: var(--font-num);
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
+}
+.wt-share-center span {
+  font-size: var(--fs-cap);
+  color: var(--text-3);
 }
 /* 两个环的差额。一句话说清, 不用家长自己对着两张图减。 */
 .wt-share-delta {
@@ -2616,42 +2674,6 @@ footer {
   font-size: var(--fs-caption-sm);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
-}
-.wt-pie-chart {
-  display: block;
-  width: 100%;
-  max-width: 190px;
-  height: auto;
-  margin: var(--space-2) auto 0;
-}
-/* 扇形之间留一道底色描边: 两块颜色挨在一起时边界不清, 家长会以为
-   是同一科被切成了两块。 */
-.wt-pie-slice {
-  stroke: var(--surface);
-  stroke-width: 1.5;
-}
-/* 扇形里直接标的科目名: 白字 + 描边, 与柱状图段内数字 (.wt-seg) 同一套
-   做法, 在三种科目色上都够对比。字号比百分比大一号 —— 名字是主角,
-   百分比只是附注。 */
-.wt-pie-label {
-  font-size: 12px;
-  font-weight: 700;
-  fill: #fff;
-  paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.22);
-  stroke-width: 2px;
-  stroke-linejoin: round;
-}
-/* 扇形里的百分比: 白字 + 描边, 与柱状图段内数字 (.wt-seg) 同一套做法,
-   在三种科目色上都够对比。 */
-.wt-pie-pct {
-  font-size: 11px;
-  font-weight: 700;
-  fill: #fff;
-  paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.22);
-  stroke-width: 2px;
-  stroke-linejoin: round;
 }
 .wt-pie-empty {
   padding: var(--space-4) 0;
@@ -4471,100 +4493,36 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
   color: var(--ink);
 }
 
-/* ===== 27.7 家长端 · 复盘可视化 (规范 §4.6) ===== */
+/* ===== 27.7 家长端 · 复盘可视化 (规范 §4.6, 2026-11-02 重写) =====
+   原来这里有 .p-donut* (环形图) 与 .p-line-chart* (折线图) 两套样式 ——
+   那两张图与 app.js 的柱状图 / 饼图**内容重复**, 已于 2026-11-02 删掉:
+     环图  = 各科"实际时间占比"饼图 (同一份 subject_share.actual)
+     折线  = 每日用时柱状图的同一批 days
+   四张图只剩两份独立数据, 家长滚两屏看到的是同一件事的四种画法。
+   现在复盘页只有两张图 (每日用时柱状 + 学科占比环), 样式由 .wt-* 承担。 */
 .p-review-extras { display: flex; flex-direction: column; gap: var(--space-2); }
-.p-donut-card,
-.p-line-card-box { margin-bottom: var(--space-2); }
-.p-donut-body {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-.p-donut { width: 160px; height: 160px; flex: none; }
-.p-donut__seg { transition: opacity .15s ease; }
-.p-donut__num {
-  font-family: var(--font-num);
-  font-size: var(--fs-h1);
-  font-weight: 700;
-  fill: var(--text-1);
+
+/* --- 本月课后月报 (2026-11-02) --- */
+.p-month-card { margin-bottom: var(--space-2); }
+.p-month-delta {
+  margin-top: var(--space-2);
+  font-size: var(--fs-body-s);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-.p-donut__unit {
-  font-size: var(--fs-cap);
-  fill: var(--text-3);
-}
-.p-donut-legend {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  flex: 1 1 160px;
-  min-width: 0;
-}
-.p-donut-legend li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 3px 0;
-  font-size: var(--fs-caption);
+.p-month-list {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2em;
+  font-size: var(--fs-body-s);
   color: var(--text-2);
 }
-.p-donut-legend i {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  flex: none;
+.p-month-list li { margin-bottom: 2px; }
+.p-month-sugg {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
 }
-.p-donut-legend b {
-  margin-left: auto;
-  font-family: var(--font-num);
-  color: var(--text-1);
-  font-variant-numeric: tabular-nums;
-}
-.p-donut-legend em {
-  font-style: normal;
-  width: 40px;
-  text-align: right;
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-.p-donut-empty { padding: var(--space-3); font-size: var(--fs-sm); }
-.p-line-chart-wrap { width: 100%; }
-.p-line-chart { width: 100%; height: auto; display: block; }
-.p-line-chart__line { stroke-linejoin: round; stroke-linecap: round; }
-.p-line-chart__dot { fill: var(--accent); }
-.p-line-chart__dot.is-hot { fill: var(--st-late-c); }
-/* 逐点数值: 折线的意义全在这个数上, 藏进 tooltip 等于没有 */
-.p-line-chart__v {
-  font-size: 10px;
-  font-weight: 600;
-  fill: var(--text-2);
-  text-anchor: middle;
-  font-variant-numeric: tabular-nums;
-}
-.p-line-chart__v.is-hot { fill: var(--st-late-c); }
-/* 最高点的虚线参照 + 右上角刻度值 */
-.p-line-chart__grid {
-  stroke: var(--rule);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-}
-.p-line-chart__axis {
-  font-size: 10px;
-  fill: var(--text-3);
-  text-anchor: end;
-  font-variant-numeric: tabular-nums;
-}
-.p-line-chart__x {
-  font-size: 10px;
-  fill: var(--text-3);
-  text-anchor: middle;
-}
-.p-line-chart__note {
-  margin-top: var(--space-1);
-  font-size: var(--fs-caption-sm);
-  color: var(--text-3);
-}
+.p-month-weeks-card { margin-bottom: var(--space-2); }
 .p-weak {
   padding: var(--space-3);
   background: var(--surface-2);

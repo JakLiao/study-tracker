@@ -113,23 +113,48 @@ def test_filter_uses_kind_off_not_weekday():
 
 
 def test_filter_does_not_touch_backend_statistics():
-    """开关只改"画什么", 不改数字。
+    """开关不能改后端算出来的统计口径。
 
-    平日日均 / 占比饼图 / 偏差表都是后端算好的, 前端不能自己重算 ——
+    平日日均 / 分档 / 偏差表都是后端算好的, 前端不能自己重算 ——
     一旦前端复制一遍口径, 两边迟早漂移。
+
+    **subject_share 是唯一的例外** (2026-11-02 改): 后端给的是**整段**
+    的合计, 而柱状图按开关把周末藏了。周末不上学但可能真写了作业
+    (实测 10/31 与 11/01 各 10 分钟语文), 于是柱状图 685、环图 705,
+    同一屏上两个数对不上, 家长只会以为图画错了。
+
+    所以占比改由"看得见的那几天"重算 —— 但重算只能**加总后端给的逐日
+    字段** (by_subject / est_by_subject), 不能在前端另立一套"预算是
+    怎么算的"规则。这条断言守的就是这个区别。
     """
     code = _code(_app_js())
-    m = re.search(r"const view = withWeekend \? r : \{(.*?)\n  \};", code, re.S)
-    assert m, "缺少 view (展示用数据)"
+    m = re.search(r"function reviewWeekendView\(r\) \{(.*?)\n\}", code, re.S)
+    assert m, "缺少 reviewWeekendView (展示用数据)"
     body = m.group(1)
     # 只允许覆盖 days 与 excluded_days 两个"要画出来"的字段
     overrides = re.findall(r"^\s*(\w+):", body, re.M)
     for field in overrides:
-        assert field in ("days", "excluded_days"), \
+        assert field in ("days", "excluded_days", "subject_share"), \
             f"不能改 {field} —— 后端统计口径不许前端重算"
     # 数字字段不能被覆盖
-    for field in ("plain_avg", "friday", "weekend", "makeup", "school_avg", "subject_share"):
+    for field in ("plain_avg", "friday", "weekend", "makeup", "school_avg"):
         assert f"{field}:" not in body, f"{field} 是后端算的统计口径, 不能被前端改写"
+    # 占比的重算必须走 shareOfDays (加总后端逐日字段), 不能自己写一套
+    assert "shareOfDays(" in body, \
+        "占比重算必须用 charts.js 的 shareOfDays (加总后端逐日字段)"
+
+
+def test_share_reconciliation_uses_backend_per_day_fields():
+    """重算只能加总后端给的逐日字段, 不能在前端另立口径。"""
+    charts = (ROOT / "app/static/charts.js").read_text(encoding="utf-8")
+    body = re.search(r"function shareOfDays\(days\) \{(.*?)\n\}", charts, re.S)
+    assert body, "charts.js 缺少 shareOfDays"
+    inner = body.group(1)
+    assert "by_subject" in inner, "实际合计必须来自后端的逐日 by_subject"
+    assert "est_by_subject" in inner, "预估合计必须来自后端的逐日 est_by_subject"
+    # 不能出现"把实际当成预估"这种前端自造口径的写法
+    assert "est_by_subject" in inner and "est_minutes" not in inner, \
+        "前端不能自己去推预估值"
 
 
 def test_weekend_bucket_hidden_when_off():
@@ -188,21 +213,24 @@ const [htmlPath, appJsPath, fpPath, zhPath] = process.argv.slice(2);
 // 一周的七天: 周一~周五有作业, 周六周日是"不上学的普通休息日"。
 // 10/10 (周六) 特意做成 makeup (调休上班, 有真实作业) —— 它也落在周六,
 // 但绝不能被当成周末藏掉。
+// 周末那两天也给了 10 分钟语文: 真实数据里周末确实可能有作业
+// (2026-11-02 实测: 10/31 与 11/01 各 10 分钟语文)。这样才能验住
+// "柱状图与占比环必须对得上账" —— 周末藏起来时两张图都要少这 20 分钟。
 const DAYS = [
   { date: '2026-10-19', weekday: 0, weekday_label: '周一', kind: 'plain', kind_label: '周一',
-    is_school_day: true, by_subject: { '语文': 55 }, total_minutes: 55 },
+    is_school_day: true, by_subject: { '语文': 55 }, est_by_subject: { '语文': 60 }, total_minutes: 55 },
   { date: '2026-10-20', weekday: 1, weekday_label: '周二', kind: 'plain', kind_label: '周二',
-    is_school_day: true, by_subject: { '数学': 40 }, total_minutes: 40 },
+    is_school_day: true, by_subject: { '数学': 40 }, est_by_subject: { '数学': 40 }, total_minutes: 40 },
   { date: '2026-10-21', weekday: 2, weekday_label: '周三', kind: 'friday', kind_label: '周五',
-    is_school_day: true, by_subject: { '语文': 50 }, total_minutes: 50 },
+    is_school_day: true, by_subject: { '语文': 50 }, est_by_subject: { '语文': 50 }, total_minutes: 50 },
   { date: '2026-10-22', weekday: 3, weekday_label: '周四', kind: 'makeup', kind_label: '国庆调休',
-    is_school_day: true, by_subject: { '英语': 60 }, total_minutes: 60 },
+    is_school_day: true, by_subject: { '英语': 60 }, est_by_subject: { '英语': 60 }, total_minutes: 60 },
   { date: '2026-10-23', weekday: 4, weekday_label: '周五', kind: 'plain', kind_label: '周五',
-    is_school_day: true, by_subject: { '语文': 30 }, total_minutes: 30 },
+    is_school_day: true, by_subject: { '语文': 30 }, est_by_subject: { '语文': 35 }, total_minutes: 30 },
   { date: '2026-10-24', weekday: 5, weekday_label: '周六', kind: 'off', kind_label: '周末',
-    is_school_day: false, by_subject: {}, total_minutes: 0 },
+    is_school_day: false, by_subject: { '语文': 10 }, est_by_subject: { '语文': 10 }, total_minutes: 10 },
   { date: '2026-10-25', weekday: 6, weekday_label: '周日', kind: 'off', kind_label: '周末',
-    is_school_day: false, by_subject: {}, total_minutes: 0 },
+    is_school_day: false, by_subject: { '语文': 10 }, est_by_subject: { '语文': 10 }, total_minutes: 10 },
 ];
 
 const TIME_STATS = {
@@ -210,7 +238,7 @@ const TIME_STATS = {
   days: DAYS,
   plain_avg: { days: 3, by_subject: { '语文': 28.3, '数学': 13.3 }, total_minutes: 41.7 },
   friday: { days: 1, total_minutes: 50, avg_minutes: 50 },
-  weekend: { days: 2, total_minutes: 0, avg_minutes: 0 },
+  weekend: { days: 2, total_minutes: 20, avg_minutes: 10 },
   makeup: { days: 1, total_minutes: 60, avg_minutes: 60 },
   school_day_count: 5,
   excluded_days: [
@@ -218,9 +246,10 @@ const TIME_STATS = {
     { date: '2026-10-25', kind: 'off', kind_label: '周末' },
   ],
   school_avg: { days: 5, by_subject: {}, total_minutes: 47 },
+  // 后端给的是**整段**的合计 (含周末那 20 分钟)
   subject_share: {
-    est: { by_subject: { '语文': 85, '数学': 40, '英语': 60 }, total_minutes: 185 },
-    actual: { by_subject: { '语文': 85, '数学': 40, '英语': 60 }, total_minutes: 185 },
+    est: { by_subject: { '语文': 155, '数学': 40, '英语': 60 }, total_minutes: 255 },
+    actual: { by_subject: { '语文': 155, '数学': 40, '英语': 60 }, total_minutes: 255 },
   },
 };
 
@@ -241,16 +270,37 @@ w.confirm = () => true; w.alert = () => {}; w.scrollTo = () => {};
 w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 w.eval(fs.readFileSync(fpPath, 'utf8'));
 w.eval(fs.readFileSync(zhPath, 'utf8'));
-w.eval(fs.readFileSync(appJsPath, 'utf8'));
+// charts.js 必须先于 app.js 加载 (与 index.html 的顺序一致): 复盘页的图
+// 走 charts.js 的封装。jsdom 没有 canvas 包, 图表会走"退化成表格"那条
+// 降级路径 —— 这正是降级逻辑要守的行为, 所以这里**不**加载 echarts.min.js。
+w.eval(fs.readFileSync(require('path').join(require('path').dirname(appJsPath), 'charts.js'), 'utf8'));
+w.eval(fs.readFileSync(appJsPath, 'utf8') +
+  // eval 里的顶层函数声明不会变成 window 的属性 (它们落在 eval 自己的
+  // 作用域里), 所以要用同一个 eval 里的裸名把它们导出来 —— 与
+  // test_edit_assignment.py 的 __b / __setBaseline 同一套路。
+  '\n;globalThis.__reviewWeekendView = reviewWeekendView;');
 
 const snapshot = () => {
   const c = doc.querySelector('#view-review');
-  const bars = [...c.querySelectorAll('.wt-chart rect')];
-  const offBars = bars.filter(b => b.getAttribute('class') === 'wt-bar-off');
+  // 2026-11-02: 柱状图从手写 SVG 换成了 ECharts (canvas), DOM 里不再有
+  // <rect>。所以直接读**图表 option** —— 走的是页面自己的
+  // reviewWeekendView() + buildDailyTimeOption(), 与真实渲染同一条路径。
+  // jsdom 没有 canvas, 页面走的是"退化成表格"那条路, 但 option 一样算得出来。
+  const view = w.__reviewWeekendView(TIME_STATS);
+  const opt = w.StudyCharts.buildDailyTimeOption(view, {});
+  const offSeries = (opt.series || []).find(s => s.name === '不上学');
+  // 两张图的合计必须是同一个数: 柱状图各学科堆叠加起来 === 占比环的合计。
+  // 周末藏起来时两张图都要少那 20 分钟 —— 藏一半就等于告诉家长图画错了。
+  const barTotal = (opt.series || [])
+    .filter(s => s.name !== '不上学')
+    .reduce((a, s) => a + (s.data || []).reduce((x, y) => x + (y || 0), 0), 0);
+  const shareTotal = (view.subject_share && view.subject_share.actual.total_minutes) || 0;
   return {
-    xdates: [...c.querySelectorAll('.wt-xdate')].map(t => t.textContent.trim()),
-    offBarCount: offBars.length,
-    barCount: bars.length,
+    xdates: (opt.xAxis && opt.xAxis.data) || [],
+    offBarCount: offSeries ? offSeries.data.filter(v => v != null).length : 0,
+    barCount: (opt.series || []).filter(s => s.name !== '不上学').length,
+    barTotal,
+    shareTotal,
     bucketTitles: [...c.querySelectorAll('.wt-bucket-title')].map(t => t.textContent.trim()),
     legendLabels: [...c.querySelectorAll('.wt-legend .wt-lg')].map(t => t.textContent.trim()),
     excluded: (c.querySelector('.wt-excluded') || {}).textContent || '',
@@ -388,3 +438,37 @@ def test_unchecking_restores_hidden(live):
     """取消勾选后回到"不展示周末"。"""
     assert live["uncheckedState"]["offBarCount"] == 0
     assert "周末" not in live["uncheckedState"]["bucketTitles"]
+
+
+# ====== 5. 两张图必须对得上账 (2026-11-02) ======
+
+@needs_jsdom
+@pytest.mark.parametrize("state", ["defaultState", "checkedState", "uncheckedState"])
+def test_share_total_equals_bar_total(live, state):
+    """占比环的合计 === 柱状图的合计, 两种开关状态下都得成立。
+
+    2026-11-02 实测踩过: 默认视图 (周末藏着) 下柱状图合计 685、环图 705,
+    差的是周末那 20 分钟 —— 同一屏上两个数对不上, 家长只会以为图画错了。
+    """
+    s = live[state]
+    assert s["shareTotal"] == s["barTotal"], \
+        f"{state}: 占比环 {s['shareTotal']} != 柱状图 {s['barTotal']}"
+
+
+@needs_jsdom
+def test_hidden_weekend_minutes_leave_both_charts(live):
+    """周末藏起来时, 那 20 分钟两张图都要没有。
+
+    上学的五天是 55+40+50+60+30 = 235; 周末那两天各 10 分钟。
+    """
+    s = live["defaultState"]
+    assert s["barTotal"] == 235, s
+    assert s["shareTotal"] == 235, s
+
+
+@needs_jsdom
+def test_shown_weekend_minutes_enter_both_charts(live):
+    """勾上「显示周末」后, 两张图都要把这 20 分钟算进去 (235 + 20 = 255)。"""
+    s = live["checkedState"]
+    assert s["barTotal"] == 255, s
+    assert s["shareTotal"] == 255, s

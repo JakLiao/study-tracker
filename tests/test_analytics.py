@@ -513,6 +513,52 @@ def test_subject_share_empty_week_is_zero():
     assert share["actual"]["total_minutes"] == 0
 
 
+def test_each_day_carries_its_own_est_breakdown():
+    """每一天要带上**它自己的**预估用时。
+
+    为什么加这个字段 (2026-11-02): 复盘页的「显示周末」开关会把周末那
+    两天从逐日柱状图里藏掉, 但周末可能真有作业 —— 实测 10/31 与 11/01
+    各有 10 分钟语文。柱状图藏了周末, 占比环却仍按整段算, 于是同一屏上
+    一个 685 一个 705, 家长只会以为图画错了。
+
+    前端要按"看得见的那几天"重算占比, 就必须能拿到每一天的预估值 ——
+    只有整段的 subject_share 是不够的。
+    """
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")   # 实耗 > 预估
+    _seed_done_record("数学", "计算", 20, None, "2026-10-13")  # 未填 -> 按预估
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    by_date = {d["date"]: d for d in r["days"]}
+    d12 = by_date["2026-10-12"]
+    d13 = by_date["2026-10-13"]
+    assert d12["est_by_subject"] == {"语文": 30}, d12
+    assert d12["by_subject"] == {"语文": 50}, d12
+    assert d13["est_by_subject"] == {"数学": 20}, d13
+    assert d13["by_subject"] == {"数学": 20}, d13
+
+
+def test_per_day_est_sums_to_whole_period_est():
+    """逐日预估加起来 === 整段预估 —— 两个口径必须对得上账。"""
+    _seed_done_record("语文", "阅读", 30, 50, "2026-10-12")
+    _seed_done_record("数学", "计算", 20, 10, "2026-10-13")
+    _seed_done_record("英语", "背诵", 15, 15, "2026-10-18")  # 周日, 也算整段
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    per_day = {}
+    for d in r["days"]:
+        for s, m in (d["est_by_subject"] or {}).items():
+            per_day[s] = per_day.get(s, 0) + m
+    assert per_day == r["subject_share"]["est"]["by_subject"]
+
+
+def test_per_day_est_follows_subject_order():
+    """逐日预估的科目顺序与整段一致 (语→数→英), 不受插入顺序影响。"""
+    from app import config
+    for subj in ("英语", "数学", "语文"):
+        _seed_done_record(subj, "阅读", 10, 10, "2026-10-12")
+    r = build_daily_time_stats("current", date(2026, 10, 15))
+    d12 = next(d for d in r["days"] if d["date"] == "2026-10-12")
+    assert list(d12["est_by_subject"].keys()) == list(config.SUBJECTS)
+
+
 def test_subject_share_order_follows_config_subjects():
     """饼图扇形顺序必须固定 (语->数->英), 颜色才对得上科目。"""
     for subj in ("英语", "数学", "语文"):
@@ -684,6 +730,17 @@ def _app_js() -> str:
     return (root / "app/static/app.js").read_text(encoding="utf-8")
 
 
+def _charts_js() -> str:
+    """图表封装层 (2026-11-02 新增)。
+
+    复盘页的图从手写 SVG 换成了 ECharts, 画法搬到了 charts.js:
+    option 的构造是纯函数, 可以直接对源码做断言 (不必起浏览器)。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    return (root / "app/static/charts.js").read_text(encoding="utf-8")
+
+
 def _code(js: str) -> str:
     """去掉注释行, 避免注释里的文字被当成实现 (同 test_row_actions 的约定)."""
     return "\n".join(l for l in js.splitlines() if not l.strip().startswith("//"))
@@ -723,23 +780,30 @@ def test_deviation_table_still_renders():
     assert '<th>偏差</th>' in js
 
 
-# ====== 各科时间占比饼图 (前端接线) ======
+# ====== 各科时间占比图 (前端接线) ======
 
-def test_subject_share_pies_are_rendered():
-    """饼图必须有, 且是两张 (预计 / 实际) —— 合成一张就看不出差异。"""
+def test_subject_share_chart_offers_both_modes():
+    """占比图必须同时给「预估」与「实际」两种口径。
+
+    2026-11-02 从"并排两张饼"改成了"一个环 + 一个切换" —— 改的是**画法**,
+    不是**口径**: 家长仍然要能一键切到当初估的分布, 并且一眼看出两者的差。
+    """
     js = _app_js()
     assert "function renderSubjectShare(" in js
-    assert "function renderPie(" in js
     body = _code(js).split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
     assert "预计时间占比" in body
     assert "实际时间占比" in body
-    assert body.count("renderPie(") >= 2, "预计与实际必须各画一张饼"
+    # 两种口径共用**一个**环: 切模式是 setOption 换数据, 不是再建一张图。
+    # 两张并排的环 = 同一份数据画两遍, 那正是这次要去掉的重复。
+    assert body.count("buildSubjectShareOption(") == 1, \
+        "预估与实际必须共用一个环 (切换换数据), 不能各画一张"
+    assert "setOption(option, true)" in body, "切换要复用同一个实例"
 
 
 def test_subject_share_is_wired_into_review_block():
-    """用时统计块里必须真的调了饼图, 否则后端给了数据界面上没有。"""
-    body = _code(_app_js()).split("async function loadReviewTime(period) {")[1] \
-        .split("\nfunction ")[0]
+    """结论区里必须真的调了占比图, 否则后端给了数据界面上没有。"""
+    body = _code(_app_js()).split("async function loadReview(period) {")[1] \
+        .split("\n}")[0]
     assert "renderSubjectShare(view)" in body
 
 
@@ -792,11 +856,14 @@ def test_chart_adapts_to_many_days():
     回归风险: 沿用 7 天那套画法 (每格都写星期名 + 柱内数字 + 柱顶总数),
     30 格每格才 21px, 文字会互相压, 整张图糊成一片。
     """
-    code = _code(_app_js())
-    body = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
+    code = _code(_charts_js())
+    body = code.split("function buildDailyTimeOption(r, opts) {")[1].split("\nfunction ")[0]
     assert "const n = days.length;" in body, "柱子数必须按实际天数算, 不能写死 7"
     assert "const dense = n > 10;" in body, "必须有密集视图的分支"
     assert "plotW / 7" not in body, "格子宽度不能写死 7 天"
+    # 密集时要有缩放把手 —— 三十来天挤在一屏, 不给把手根本看不清某一周。
+    assert "dataZoom" in body, "月视图必须能缩放"
+    assert "interval: dense ? 'auto' : 0" in body, "日期标签的间隔要按密度让给 ECharts 挑"
 
 
 def test_month_view_shows_daily_average_per_bucket():
@@ -834,7 +901,7 @@ def test_review_page_path_renamed_to_review():
 
 
 def test_subject_share_skipped_when_week_has_no_time():
-    """整周零用时不画饼图 —— 页面里只留一处空态, 不塞两个空饼。
+    """整周零用时不画占比图 —— 页面里只留一处空态, 不塞空环。
 
     调用方必须判空再 appendChild: 直接 appendChild(null) 会在页面上
     留下一个字面量 "null"。
@@ -842,28 +909,30 @@ def test_subject_share_skipped_when_week_has_no_time():
     code = _code(_app_js())
     body = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
     assert "if (!estTotal && !actTotal) return null;" in body
-    call = code.split("async function loadReviewTime(period) {")[1].split("\nfunction ")[0]
-    assert "if (pies) wrap.appendChild(pies);" in call
+    call = code.split("async function loadReview(period) {")[1].split("\n}")[0]
+    assert "if (share) extras.appendChild(share);" in call
 
 
 def test_pie_uses_fixed_subject_order():
-    """扇形顺序必须走 orderedSubjects, 不能用 Object.entries (键序不定)。"""
-    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
-    assert "orderedSubjects(bySubject)" in body
+    """扇形顺序必须走固定科目顺序, 不能用 Object.entries (键序不定)。"""
+    body = _code(_charts_js()).split("function buildSubjectShareOption(")[1].split("\nfunction ")[0]
+    assert "subjectsInOrder(bySubject)" in body
     assert "Object.entries(bySubject)" not in body
 
 
 def test_pie_labels_subject_name_on_slice():
     """科目名必须直接标在扇形上, 不用在图例和色块之间来回对照。"""
-    body = _code(_app_js()).split("function renderPie(")[1].split("\nfunction ")[0]
-    assert 'class="wt-pie-label"' in body
-    assert "${escapeAttr(name)}</text>" in body
-    # 放不下时要退一档只留名字, 而不是把字挤到相邻扇形上
-    assert "pieLabelTier(frac)" in body
+    body = _code(_charts_js()).split("function buildSubjectShareOption(")[1].split("\nfunction ")[0]
+    assert "label: {" in body
+    assert "show: true" in body
+    assert "position: 'inside'" in body, "标签要落在扇形里面"
+    # 放不下时由 ECharts 的 labelLayout.hideOverlap 藏掉, 而不是把字挤到
+    # 相邻扇形上 (旧手写 SVG 里的 pieLabelTier 三档手工判断由它接手)。
+    assert "labelLayout: { hideOverlap: true }" in body
 
 
-def test_pie_grid_places_two_charts_side_by_side():
-    """两张饼并排。窄屏靠 grid 的 auto-fit 自动换行, 不另写断点。"""
+def test_pie_grid_keeps_its_layout_rule():
+    """占比区的栅格规则不能丢 —— 环图与图例要并排, 窄屏才折行。"""
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     css = (root / "app/static/styles.css").read_text(encoding="utf-8")
@@ -949,31 +1018,42 @@ def test_plain_avg_order_and_chart_order_agree():
     两处各排一次的话, 有一天缺了数学就会错位: 柱子里英语上移到了
     中间, chips 里英语还在最前, 家长按 chips 找颜色就找错段。
     """
-    code = _code(_app_js())
-    chart = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
-    buckets = code.split("function renderBuckets(r, withWeekend) {")[1].split("\nfunction ")[0]
-    assert "orderedSubjects(d.by_subject)" in chart
+    chart = _code(_charts_js()).split("function buildDailyTimeOption(r, opts) {")[1] \
+        .split("\nfunction ")[0]
+    buckets = _code(_app_js()).split("function renderBuckets(r, withWeekend) {")[1] \
+        .split("\nfunction ")[0]
+    assert "subjectsInOrder(" in chart
     assert "orderedSubjects(pa.by_subject)" in buckets
 
 
 # ====== 图表渲染 ======
 
 def test_chart_uses_fixed_subject_order():
-    """柱状图必须走 orderedSubjects, 不能用 Object.entries (键序不定)。"""
-    code = _code(_app_js())
-    body = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
-    assert "orderedSubjects(d.by_subject)" in body, "堆叠顺序必须走固定科目顺序"
+    """柱状图必须走固定科目顺序, 不能用 Object.entries (键序不定)。"""
+    body = _code(_charts_js()).split("function buildDailyTimeOption(r, opts) {")[1] \
+        .split("\nfunction ")[0]
+    assert "subjectsInOrder(allBySubject)" in body, "堆叠顺序必须走固定科目顺序"
     assert "Object.entries(d.by_subject)" not in body, \
         "Object.entries 的键序来自入库顺序, 不能用来定堆叠顺序"
 
 
 def test_chart_labels_each_segment():
-    """每个够高的色块都要标出分钟数。"""
-    code = _code(_app_js())
-    body = code.split("function renderTimeChart(r) {")[1].split("\nfunction ")[0]
-    assert 'class="wt-seg"' in body, "段内分钟数标签缺失"
+    """每个够大的色块都要标出分钟数。"""
+    body = _code(_charts_js()).split("function buildDailyTimeOption(r, opts) {")[1] \
+        .split("\nfunction ")[0]
+    assert "SEG_LABEL_MIN_RATIO" in body, "段内分钟数标签缺失"
     # 太窄的段不能塞数字, 否则会压到相邻段上
-    assert "if (h >= 13)" in body, "需要按段高决定是否标注"
+    assert "labelLayout: { hideOverlap: true }" in body, "标签互相压住时要能自动藏掉"
+
+
+def test_segment_label_threshold_is_a_ratio():
+    """段内标签的门槛必须是**比例**, 不是像素高度。
+
+    旧手写 SVG 用的是 'h >= 13' 这样的像素高度 —— 像素高度随画布尺寸变,
+    换个屏幕宽度结论就变了 (同一个 8% 的段在窄屏算"够高"、在宽屏算
+    "不够高")。比例不随尺寸变, 稳。
+    """
+    assert "var SEG_LABEL_MIN_RATIO = 0.06;" in _charts_js()
 
 
 def test_chart_has_subject_legend():

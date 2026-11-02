@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from .. import config
 from ..db import get_conn
-from . import settings_service, week_plan_service
+from . import analytics_service, settings_service, week_plan_service
 from .analytics_service import WEEKDAY_NAMES, classify_day
 from .daily_wrap_service import grade_mode
 from .tenant import default_child_id, default_family_id
@@ -452,4 +452,125 @@ def build_weekly_report(anchor: date, today: date | None = None) -> dict:
         "praise": _praise(completion, time_stats, training, trend, mode),
         "coach_note": _coach_note(training),
         "suggestions": _suggestions(completion, blockers, training, load, mode),
+    }
+
+
+# ====== 本月课后月报 (2026-11-02) ======
+#
+# 月报是周报的月度版本, 但多两件事:
+#   1. **月内按周对比** —— 这个月分成几个周, 哪一周最重;
+#   2. **环比上月同期** —— 与上个月同期比, 而不是与上个月整月比。
+#      本月才过了 2 天, 拿上月整月 (28~31 天) 来比, 会得出"少用了 95%"
+#      这种把"月还没过完"当成"孩子变懒了"的假结论。
+#
+# 文案口径与周报一致: 只跟孩子自己的历史比, 不评价天赋、不排名。
+
+
+def _month_highlights(analytics: dict, mode: str) -> list[str]:
+    """只陈述事实的亮点。最多 3 条 (lite 模式 2 条)。"""
+    out: list[str] = []
+    time_stats = analytics["time"]
+    completion = analytics["completion"]
+    delta = analytics["delta"]
+
+    if time_stats["total_minutes"] > 0:
+        # 月没过完才叫"至今" —— 已经过去的整月说"至今"是错的。
+        prefix = "本月至今" if analytics["is_partial"] else "本月"
+        out.append(f"{prefix}作业用时 {time_stats['total_minutes']} 分钟, "
+                   f"上学日日均 {time_stats['avg_daily_minutes']} 分钟")
+    if completion["required"] > 0:
+        out.append(f"必做收尾率 {completion['rate']}% ({completion['settled']}/"
+                   f"{completion['required']} 项)")
+    if delta.get("minutes_pct") is not None and time_stats["total_minutes"] > 0:
+        # 必须写明是"与上月同期比" —— 不写清楚, 家长会以为跟整月比。
+        # 月还没过完时还要带上"至今 N 天": 只过了两天就报一个百分比,
+        # 家长会当成"这个月整体变差了"。
+        head = (f"本月至今 {analytics['elapsed_days']} 天, " if analytics["is_partial"] else "")
+        if delta["minutes"] == 0:
+            out.append(head + "与上月同期相比用时持平")
+        elif delta["minutes"] > 0:
+            out.append(head + f"与上月同期相比多用了 {delta['minutes']} 分钟 "
+                       f"(+{delta['minutes_pct']}%)")
+        else:
+            out.append(head + f"与上月同期相比少用了 {abs(delta['minutes'])} 分钟 "
+                       f"({delta['minutes_pct']}%)")
+    return out[:2 if mode == "lite" else 3]
+
+
+def _month_suggestions(analytics: dict, blockers: dict, mode: str) -> list[str]:
+    """规则建议, 最多 3 条 (lite 模式 2 条)。先当下有事, 再下次能改。"""
+    out: list[str] = []
+    completion = analytics["completion"]
+    weeks = analytics["weeks"]
+
+    if completion["total"] == 0:
+        out.append("本月还没有作业记录, 先把老师通知登记进来, 月报才有内容")
+    # "哪周最重"这件事至少要过了一周才说得出来 —— 月才过了两天的时候,
+    # "第1周最重"是拿两天跟一天比, 没有参考价值。
+    if analytics["elapsed_days"] >= 7 and weeks:
+        heaviest = max(weeks, key=lambda w: w["avg_minutes"])
+        if heaviest["avg_minutes"] > 0:
+            out.append(f"{heaviest['label']}最重, 日均 {heaviest['avg_minutes']} 分钟, "
+                       f"下个月可以把这周的量往轻的周挪")
+    if blockers["bad_mood_days"]:
+        out.append(f"有 {len(blockers['bad_mood_days'])} 天孩子情绪不好, "
+                   f"先聊两句再收尾, 睡前不批评")
+    if blockers["slow_tasks"]:
+        s = blockers["slow_tasks"][0]
+        out.append(f"「{s['task_name']}」实际 {s['actual_minutes']} 分钟, "
+                   f"是预估的 {s['ratio']} 倍, 下次直接按 {s['actual_minutes']} 分钟排")
+    if not out:
+        out.append("本月节奏平稳, 保持这个安排就好")
+    return out[:2 if mode == "lite" else 3]
+
+
+def build_monthly_report(anchor: date, today: date | None = None) -> dict:
+    """anchor 所在月份的课后月报。
+
+    聚合本体在 analytics_service.build_month_analytics (与复盘页的图共用
+    一份口径), 这里只负责把它包装成带结论的报告。
+    """
+    today = today or _today()
+    child_id = default_child_id()
+    family_id = default_family_id()
+
+    analytics = analytics_service.build_month_analytics(anchor, today)
+    month_start = date.fromisoformat(analytics["month_start"])
+    data_end = date.fromisoformat(analytics["data_end"])
+
+    holidays, makeup = _calendar()
+    with get_conn() as conn:
+        reflections = conn.execute(
+            "SELECT reflect_date, difficulty, focus, mood, note FROM daily_reflections "
+            "WHERE family_id = %s AND child_id = %s AND reflect_date BETWEEN %s AND %s "
+            "ORDER BY reflect_date",
+            (family_id, child_id, month_start, data_end),
+        ).fetchall()
+        rows = _fetch_assignments(conn, family_id, month_start, data_end)
+
+    blockers = _blockers(rows, reflections)
+    grade = settings_service.get_setting("grade")
+    mode = grade_mode(grade)
+
+    return {
+        "month": analytics["month"],
+        "month_start": analytics["month_start"],
+        "month_end": analytics["month_end"],
+        "data_end": analytics["data_end"],
+        "today": today.isoformat(),
+        "elapsed_days": analytics["elapsed_days"],
+        "is_partial": analytics["is_partial"],
+        "grade": grade,
+        "mode": mode,
+        "has_data": bool(rows),
+        "completion": analytics["completion"],
+        "time": analytics["time"],
+        "subjects": analytics["subjects"],
+        "weeks": analytics["weeks"],
+        "prev_month": analytics["prev_month"],
+        "prev_month_basis": analytics["prev_month_basis"],
+        "delta": analytics["delta"],
+        "blockers": blockers,
+        "highlights": _month_highlights(analytics, mode),
+        "suggestions": _month_suggestions(analytics, blockers, mode),
     }

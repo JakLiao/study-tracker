@@ -599,108 +599,68 @@ function kidStarReason(reason) {
 }
 
 // ====== 家长端 · 复盘增强 (规范 §4.6) ======
-
-// 科目用时环形占比图。stroke-dasharray 画环, 中心显示总分钟数。
-function renderPDonut(bySubject, total) {
-  const subs = orderedSubjects(bySubject).filter(s => (bySubject[s] || 0) > 0);
-  if (!subs.length || !total) {
-    return el('<div class="p-donut-empty muted">该区间没有已完成的作业</div>');
-  }
-  const R = 60, C = 2 * Math.PI * R;
-  let offset = 0;
-  let arcs = '';
-  subs.forEach(name => {
-    const mins = bySubject[name] || 0;
-    const len = C * (mins / total);
-    arcs += `<circle class="p-donut__seg" cx="80" cy="80" r="${R}" fill="none"
-      stroke="${subjectColor(name)}" stroke-width="18"
-      stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}"
-      stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 80 80)">
-      <title>${escapeAttr(name)} ${mins} 分钟</title></circle>`;
-    offset += len;
-  });
-  const legend = subs.map(name => {
-    const mins = bySubject[name] || 0;
-    const pct = Math.round(mins / total * 100);
-    return `<li><i style="background:${subjectColor(name)}"></i><span>${escapeAttr(name)}</span>`
-      + `<b>${mins} 分</b><em>${pct}%</em></li>`;
-  }).join('');
-  const box = el(`<div class="p-donut-body">
-    <svg class="p-donut" viewBox="0 0 160 160" role="img" aria-label="各科用时占比">
-      <circle cx="80" cy="80" r="${R}" fill="none" stroke="var(--rule)" stroke-width="18" />
-      ${arcs}
-      <text class="p-donut__num" x="80" y="78" text-anchor="middle">${total}</text>
-      <text class="p-donut__unit" x="80" y="96" text-anchor="middle">分钟</text>
-    </svg>
-    <ul class="p-donut-legend">${legend}</ul>
-  </div>`);
-  return box;
-}
-
-// 每日用时折线 (7 个点)。超过中位数 1.5 倍的点标红。
 //
-// 数值直接印在点上方, 不用 hover 才看得到 —— 家长扫一眼要的是"哪天高、"
-// 多少分钟, 藏在 tooltip 里等于没有。说明文字也跟着数据走: 没有异常点时
-// 不能再写"标红的点明显高于平时"(写了这句却一个红点都没有, 家长会以为
-// 页面没加载全)。
-function renderPLineChart(days) {
-  const pts = (days || []).slice(-7);
-  if (!pts.length) return null;
-  const vals = pts.map(d => d.total_minutes || 0);
-  const sorted = vals.slice().sort((a, b) => a - b);
-  const median = sorted.length % 2
-    ? sorted[(sorted.length - 1) / 2]
-    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
-  const maxV = Math.max(...vals, 1);
-  const W = 320, H = 132, padX = 18, padY = 24;
-  const step = pts.length > 1 ? (W - padX * 2) / (pts.length - 1) : 0;
-  const xAt = i => padX + i * step;
-  const yAt = v => H - padY - (v / maxV) * (H - padY * 2);
-  const isHot = v => median > 0 && v > median * 1.5;
-  let path = '';
-  pts.forEach((d, i) => {
-    path += `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(d.total_minutes || 0).toFixed(1)} `;
-  });
-  let dots = '';
-  let valueLabels = '';
-  pts.forEach((d, i) => {
-    const v = d.total_minutes || 0;
-    const hot = isHot(v);
-    dots += `<circle class="p-line-chart__dot ${hot ? 'is-hot' : ''}" cx="${xAt(i).toFixed(1)}" cy="${yAt(v).toFixed(1)}" r="4">
-      <title>${escapeAttr(String(d.date || '').slice(5))} ${v} 分钟</title></circle>`;
-    valueLabels += `<text class="p-line-chart__v ${hot ? 'is-hot' : ''}" x="${xAt(i).toFixed(1)}" y="${(yAt(v) - 9).toFixed(1)}" text-anchor="middle">${v}</text>`;
-  });
-  const labels = pts.map((d, i) =>
-    `<text class="p-line-chart__x" x="${xAt(i).toFixed(1)}" y="${H - 2}" text-anchor="middle">${escapeAttr(String(d.weekday_label || '').slice(-1))}</text>`
-  ).join('');
-  // 最高的一条虚线 + 右侧刻度值, 让"多高"有个参照。
-  const grid = `<line class="p-line-chart__grid" x1="${padX}" y1="${yAt(maxV).toFixed(1)}" x2="${W - padX}" y2="${yAt(maxV).toFixed(1)}" />
-    <text class="p-line-chart__axis" x="${W - padX}" y="${(yAt(maxV) - 5).toFixed(1)}" text-anchor="end">${maxV}</text>`;
-  // 说明文字: 有异常点就说异常点, 没有就说最高的哪天 —— 不说空话。
-  // 这里用完整星期名 (周三), 轴标签才用末字 (三) —— 折线图空间窄, 轴上放不下全名。
-  const hotIdx = vals.map((v, i) => (isHot(v) ? i : -1)).filter(i => i >= 0);
-  let note = '';
-  if (median > 0) {
-    if (hotIdx.length) {
-      const who = hotIdx.map(i => `${escapeAttr(String(pts[i].weekday_label || ''))} ${vals[i]} 分钟`).join('、');
-      note = `中位数 ${Math.round(median)} 分钟, ${who} 明显高于平时`;
+// 2026-11-02 重写。这里的三张图 (环形图 / 折线图 / 柱状图) 在此之前
+// 散在这两个文件里, 而且**内容重复**:
+//
+//   app.js 的「各科时间占比」(预计/实际两张饼)
+//     ≡ dual.js 的「学科用时分配」(一张环, 实际占比)
+//   app.js 的「每日作业用时」(堆叠柱状)
+//     ≡ dual.js 的「每日用时趋势」(折线, 最近 7 天)
+//
+// 四张图只有两份独立数据, 家长滚两屏看到的是同一件事的四种画法。
+// 现在收敛成**两张图**: 每日用时 (ECharts 堆叠柱) + 学科占比 (ECharts 环,
+// 可切预估/实际)。画法交给 charts.js, 这里只负责组装与叙述。
+
+// 晚间小结的标签 -> 中文。跟后端 daily_wrap_service 的标签口径一致。
+const DW_TAG_TEXT = {
+  slow_writing: '写字慢', reread: '读题走神', many_errors: '错题多',
+  unfamiliar: '内容不熟', good_pace: '速度正好', focused: '很专心',
+};
+
+// 薄弱项: 从当前周期的估时偏差 + 晚间小结的标签里推出结论。
+//
+// **必须跟着当前周期走** (2026-11-02 修的缺陷):
+//   原来这里读的是 /weekly-report, 而那个接口永远算的是**本周** ——
+//   选「上周」时, 薄弱项分析的是本周的作业。实测: 上周有 705 分钟数据,
+//   薄弱项却显示"这一段还没有足够的记录"。现在改读当前周期的
+//   /api/analytics/review 返回值 (deviation), 周期对了结论才对。
+function renderPWeak(deviation, tagCounts) {
+  const lines = [];
+  const under = (deviation && deviation.top_underestimate) || [];
+  const over = (deviation && deviation.top_overestimate) || [];
+  if (under.length) {
+    const top = under[0];
+    lines.push(`这个区间${top.subject}${top.task_type || '作业'}平均多花 ${top.diff_minutes} 分钟, 是最该盯的一项。`);
+  } else if (over.length) {
+    const top = over[0];
+    lines.push(`这个区间${top.subject}${top.task_type || '作业'}平均少花 ${Math.abs(top.diff_minutes)} 分钟, 估得偏保守。`);
+  }
+  const tagKeys = Object.keys(tagCounts || {}).sort((a, b) => tagCounts[b] - tagCounts[a]);
+  if (tagKeys.length) {
+    const t = tagKeys[0];
+    lines.push(`晚间小结里出现最多的是「${DW_TAG_TEXT[t] || t}」(${tagCounts[t]} 次)。`);
+  }
+  if (!lines.length) {
+    // 样本够但估时与实耗完全吻合, 和"记录还不够"是两回事:
+    // 后者劝家长"多记几天", 前者根本没那个问题。混成一句话会让家长
+    // 以为还欠着记录, 其实该夸的是估得准 (2026-11-02 实测: 上周 41 条
+    // 记录偏差全为 0, 却被说成"还没有足够的记录")。
+    const sample = (deviation && deviation.sample_size) || 0;
+    if (sample >= 5) {
+      lines.push(`这段时间估的时长和实际用时基本吻合 (${sample} 条记录), 没看出明显偏差。`);
     } else {
-      const top = vals.indexOf(maxV);
-      note = `中位数 ${Math.round(median)} 分钟, 最高的一天是 ${escapeAttr(String(pts[top].weekday_label || ''))} ${maxV} 分钟, 这周比较平稳`;
+      lines.push('这一段还没有足够的记录, 多记几天就能看出薄弱项。');
     }
   }
-  return el(`<div class="p-line-chart-wrap">
-    <svg class="p-line-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="每日作业用时折线">
-      ${grid}
-      <path class="p-line-chart__line" d="${path.trim()}" fill="none" stroke="var(--accent)" stroke-width="2"
-            stroke-linejoin="round" stroke-linecap="round" />
-      ${dots}${valueLabels}${labels}
-    </svg>
-    ${note ? `<div class="muted p-line-chart__note">${note}</div>` : ''}
+  return el(`<div class="p-weak">
+    <div class="p-weak__title">薄弱项</div>
+    ${lines.map(t => `<div class="p-weak__line">${escapeAttr(t)}</div>`).join('')}
   </div>`);
 }
 
-// 薄弱项: 从晚间小结的标签 + 估时偏差里推出结论。
+// 晚间小结里出现过的标签, 统计各出现几次。
+// 最多 7 次请求, 只在复盘页发生。
 async function collectReflectionTags(dates) {
   const counts = {};
   const results = await Promise.all(dates.map(d =>
@@ -712,38 +672,6 @@ async function collectReflectionTags(dates) {
     list.forEach(t => { counts[t] = (counts[t] || 0) + 1; });
   });
   return counts;
-}
-
-const DW_TAG_TEXT = {
-  slow_writing: '写字慢', reread: '读题走神', many_errors: '错题多',
-  unfamiliar: '内容不熟', good_pace: '速度正好', focused: '很专心',
-};
-
-function renderPWeak(report, tagCounts) {
-  const lines = [];
-  const dev = report && report.deviation ? report.deviation : null;
-  const under = dev && dev.top_underestimate ? dev.top_underestimate : [];
-  if (under.length) {
-    const top = under[0];
-    lines.push(`本周${top.subject}${top.task_type || '作业'}平均多花 ${top.diff_minutes} 分钟, 是最该盯的一项。`);
-  }
-  const blockers = report && report.blockers ? report.blockers : {};
-  if (blockers.slow_tasks && blockers.slow_tasks.length) {
-    const s = blockers.slow_tasks[0];
-    lines.push(`「${s.task_name}」实际 ${s.actual_minutes} 分, 估的是 ${s.est_minutes} 分。`);
-  }
-  const tagKeys = Object.keys(tagCounts || {}).sort((a, b) => tagCounts[b] - tagCounts[a]);
-  if (tagKeys.length) {
-    const t = tagKeys[0];
-    lines.push(`晚间小结里出现最多的是「${DW_TAG_TEXT[t] || t}」(${tagCounts[t]} 次)。`);
-  }
-  if (!lines.length) {
-    lines.push('这一段还没有足够的记录, 多记几天就能看出薄弱项。');
-  }
-  return el(`<div class="p-weak">
-    <div class="p-weak__title">薄弱项</div>
-    ${lines.map(t => `<div class="p-weak__line">${escapeAttr(t)}</div>`).join('')}
-  </div>`);
 }
 
 // 「挪到下周」: 把 due_date 改到下周一 (走既有的 PATCH /api/assignments/{id})。
@@ -798,44 +726,37 @@ async function attachDeferButtons() {
   }
 }
 
-// 家长端复盘的追加块: 环形图 / 折线 / 薄弱项。
-async function renderParentReviewExtras(period) {
-  const wrap = el('<div class="p-review-extras"></div>');
-  const [time, report] = await Promise.all([
-    api('GET', `/analytics/review-time?period=${period}`).catch(() => null),
-    api('GET', '/weekly-report').catch(() => null),
-  ]);
-
-  if (time) {
-    const share = time.subject_share || {};
-    const act = share.actual || { by_subject: {}, total_minutes: 0 };
-    const donut = renderPDonut(act.by_subject || {}, act.total_minutes || 0);
-    if (donut) {
-      // 标题不叫「各科用时占比」—— 旧周报块里已经有一张同名的饼图 (预计 vs 实际),
-      // 两张同名卡片挨着出现只会让家长以为是同一张图出了 bug。
-      wrap.appendChild(el(`<div class="card p-donut-card">
-        <div class="card-title">学科用时分配<span class="count">实际用时占比</span></div>
-      </div>`));
-      wrap.lastChild.appendChild(donut);
-    }
-    const line = renderPLineChart(time.days || []);
-    if (line) {
-      const card = el(`<div class="card p-line-card-box">
-        <div class="card-title">每日用时趋势<span class="count">最近 7 天</span></div>
-      </div>`);
-      card.appendChild(line);
-      wrap.appendChild(card);
-    }
-  }
-
+// 家长端复盘的**薄弱项卡**。
+//
+// 数据**由调用方传进来** (app.js 的 loadReview 已经拉过了):
+// 之前这里自己又打一遍 /analytics/review-time, 同一个接口每次切周期
+// 被请求两次 —— 一次请求回来的数据, 拿两次没有意义。
+//
+// 只返回薄弱项这一块: 两张图与月报由 app.js 自己拼 (复盘页的结构归
+// app.js 管, 这里只出"角色专属"的那一块)。
+async function renderParentReviewExtras(period, ctx) {
+  ctx = ctx || {};
   // 薄弱项要读晚间小结的标签: 最多 7 次请求, 只在复盘页发生。
-  const dates = [];
-  for (let i = 6; i >= 0; i--) dates.push(addDays(todayStr(), -i));
+  // 日期范围跟着当前周期走 —— 上周周期就该看上周的小结。
+  const dates = reflectionTagDates(period);
   const tagCounts = await collectReflectionTags(dates);
-  wrap.appendChild(renderPWeak(report, tagCounts));
-
+  const card = renderPWeak(ctx.deviation, tagCounts);
   attachDeferButtons();
-  return wrap;
+  return card;
+}
+
+// 薄弱项要读哪些天的晚间小结。跟着当前周期走 ——
+// 上周周期就该看上周的小结, 而不是永远看最近七天。
+function reflectionTagDates(period) {
+  const dates = [];
+  if (period === 'last') {
+    for (let i = 7; i >= 1; i--) dates.push(addDays(todayStr(), -i));
+  } else if (period === 'month') {
+    for (let i = 30; i >= 0; i--) dates.push(addDays(todayStr(), -i));
+  } else {
+    for (let i = 6; i >= 0; i--) dates.push(addDays(todayStr(), -i));
+  }
+  return dates;
 }
 
 // ====== 家长端 · 日历悬停详情卡 ======

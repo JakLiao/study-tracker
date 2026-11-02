@@ -432,6 +432,17 @@
 
   <script src="/static/vendor/flatpickr.min.js"></script>
   <script src="/static/vendor/flatpickr.zh.js"></script>
+  <!-- ECharts 5.5.1 本地 vendor (Apache-2.0, 见 vendor/README.md)。
+       不引 CDN: 项目有「离线可用」的硬红线 (docs/08 §2.5), 且
+       test_datepicker.py::test_no_cdn_dependency 钉死了这一点。 -->
+  <script src="/static/vendor/echarts.min.js"></script>
+  <!-- charts.js 必须排在 dual.js / app.js **之前** (2026-11-02):
+       app.js 的启动块在解析时就会调 switchTab() -> loadReview(), 而
+       loadReview() 会立刻建图, 那时 charts.js 与 ECharts 都得已经在场。
+       charts.js 顶层只有函数/常量声明, 不在解析期碰 app.js 的全局量
+       (subjectColor / orderedSubjects / sharePercents 都在**函数体内**
+       引用, 调用期才解析), 把它提前是安全的。 -->
+  <script src="/static/charts.js"></script>
   <!-- dual.js 必须排在 app.js **之前** (2026-11-01 修的一个顺序竞态):
        app.js 的启动块在解析时就会调 switchTab() -> loadReview(), 而
        loadReview() 靠 `typeof renderKidReport === 'function'` 判断
