@@ -4537,23 +4537,84 @@ function weekDayCard(d) {
   return card;
 }
 
+// 「生成本周任务」之前先给一张预览 (2026-11-02)。
+// 原来一点就直接写库: 模板写错了、周几选错了, 都是任务已经进池子
+// 之后才发现, 清理起来比看一眼麻烦得多。
+// 待生成的口径与后端 generate_week 一致: 只算今天及以后, 且不重复
+// 已经生成过的 (days[].plans[].generated 是后端算好的)。
+function showGeneratePreview(w, onConfirm) {
+  const items = [];
+  w.days.forEach(d => {
+    if (d.date < w.today) return;
+    d.plans.forEach(p => {
+      if (p.generated) return;
+      items.push({
+        date: d.date,
+        name: p.task_name,
+        minutes: p.est_minutes || 0,
+        kind: p.subject || p.project_name || '',
+      });
+    });
+  });
+  if (!items.length) return false;
+
+  const total = items.reduce((s, it) => s + it.minutes, 0);
+  const byDay = {};
+  items.forEach(it => {
+    if (!byDay[it.date]) byDay[it.date] = [];
+    byDay[it.date].push(it);
+  });
+
+  const m = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = `将生成 ${items.length} 项任务`;
+  const content = document.getElementById('modal-content');
+  content.innerHTML = `<p class="muted">合计 ${total} 分钟 · 只生成今天及以后的日子</p>
+    <div class="gen-preview">${Object.keys(byDay).sort().map(ds => `
+      <div class="gen-preview-day">
+        <strong>${md(ds)}</strong>
+        ${byDay[ds].map(it => `
+          <div class="gen-preview-item">
+            <span>${escapeAttr(it.name)}</span>
+            <span class="muted">${it.minutes} 分${it.kind ? ' · ' + escapeAttr(it.kind) : ''}</span>
+          </div>`).join('')}
+      </div>`).join('')}
+    </div>`;
+  m.classList.remove('hidden');
+  m.classList.remove('confirm-modal');
+  setModalActions({
+    mode: 'confirm',
+    okText: '确认生成',
+    onOk: () => {
+      closeModal();
+      onConfirm();
+    },
+  });
+  return true;
+}
+
 async function generateWeekTasks(w) {
-  const btn = document.getElementById('week-generate');
-  if (btn) btn.disabled = true;
-  try {
-    const anchor = _weekAnchor || w.today;
-    const r = await api('POST', `/week-plan/generate?date=${anchor}`);
-    if (r.created_count) {
-      toast(`已生成 ${r.created_count} 项任务${r.skipped_count ? `, 跳过 ${r.skipped_count} 项重复` : ''}`);
-    } else if (r.skipped_count) {
-      toast('这些任务都已经在任务池里了');
-    } else {
-      toast('还没有周计划项, 先在第 1 步添加模板');
+  // 先给预览, 家长确认了才写库。没有待生成项时直接 toast, 不弹空层。
+  const opened = showGeneratePreview(w, async () => {
+    const btn = document.getElementById('week-generate');
+    if (btn) btn.disabled = true;
+    try {
+      const anchor = _weekAnchor || w.today;
+      const r = await api('POST', `/week-plan/generate?date=${anchor}`);
+      if (r.created_count) {
+        toast(`已生成 ${r.created_count} 项任务${r.skipped_count ? `, 跳过 ${r.skipped_count} 项重复` : ''}`);
+      } else if (r.skipped_count) {
+        toast('这些任务都已经在任务池里了');
+      } else {
+        toast('还没有周计划项, 先在第 1 步添加模板');
+      }
+      await loadWeekPlan();
+    } catch (e) {
+      toast('生成失败: ' + e.message);
+      if (btn) btn.disabled = false;
     }
-    await loadWeekPlan();
-  } catch (e) {
-    toast('生成失败: ' + e.message);
-    if (btn) btn.disabled = false;
+  });
+  if (!opened) {
+    toast('没有待生成的任务');
   }
 }
 

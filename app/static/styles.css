@@ -3685,6 +3685,31 @@ body[data-view="week"] main { max-width: 1240px; }
   font-size: var(--fs-caption-sm);
 }
 
+/* ---- 生成预览 (2026-11-02) ----
+   「生成本周任务」之前给家长看一眼要写什么。 */
+.gen-preview {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-top: var(--space-2);
+}
+.gen-preview-day {
+  margin-bottom: var(--space-2);
+}
+.gen-preview-day strong {
+  display: block;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin-bottom: 2px;
+}
+.gen-preview-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: var(--fs-body-s);
+}
+
 /* ---- 课表时间轴分区 (2026-11-02) ----
    课表从「弹窗里的平铺列表」搬到了页面里, 变成一张真正的课表纸:
    左边时间刻度, 7 天是 7 列, 课按时段画成色块。 */
