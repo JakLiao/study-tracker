@@ -293,7 +293,13 @@
       <div class="view-head">
         <h2 class="view-title">作业日历</h2>
         <div class="view-actions">
-          <button type="button" class="ghost view-parent-only" id="btn-week-plan">周计划</button>
+          <!-- 视图切换器 (2026-11-02): 日历页与周计划页是「同一个地方
+               的两种看法」, 所以用分段控件, 不是孤零零一个按钮。
+               id=btn-week-plan 不能改 —— test_header_ui 钉着。 -->
+          <div class="view-switch view-parent-only" id="btn-week-plan" role="group" aria-label="视图切换">
+            <button type="button" class="view-switch__btn is-active" data-view="calendar" aria-pressed="true">月历</button>
+            <button type="button" class="view-switch__btn" data-view="week" aria-pressed="false">周计划</button>
+          </div>
         </div>
       </div>
       <div class="cal-head">
@@ -356,6 +362,17 @@
          这一页回答的是"这周哪天最满、有没有时间段撞车",
          而不是再列一遍作业 —— 作业在「看板」里。 -->
     <section id="view-week" class="view" role="tabpanel">
+      <!-- 标题行 (2026-11-02): 之前这页直接是内容, 深链进来不知道
+           在哪。现在有标题 + 同一个视图切换器, 能直接切回日历。 -->
+      <div class="view-head">
+        <h2 class="view-title">周计划</h2>
+        <div class="view-actions">
+          <div class="view-switch view-parent-only" id="btn-calendar-view" role="group" aria-label="视图切换">
+            <button type="button" class="view-switch__btn" data-view="calendar" aria-pressed="false">月历</button>
+            <button type="button" class="view-switch__btn is-active" data-view="week" aria-pressed="true">周计划</button>
+          </div>
+        </div>
+      </div>
       <div id="week-content"></div>
     </section>
 

@@ -395,6 +395,20 @@ function tabFromHash() {
   return TABS.includes(raw) ? raw : DEFAULT_TAB;
 }
 
+// 两个页面各有一个「月历 | 周计划」切换器 (日历页 id=btn-week-plan,
+// 周计划页 id=btn-calendar-view)。选中态必须两边同步 —— 从日历切到
+// 周计划后, 周计划页顶上的那个也得显示「周计划」是亮的。
+function syncViewSwitch(tab) {
+  const target = tab === 'week' ? 'week' : 'calendar';
+  document.querySelectorAll('.view-switch').forEach(g => {
+    g.querySelectorAll('.view-switch__btn').forEach(b => {
+      const on = b.dataset.view === target;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  });
+}
+
 function switchTab(name, opts) {
   const tab = TABS.includes(name) ? name : DEFAULT_TAB;
   // 孩子端不许进家长页: 强行访问 #/entry / #/week / #/settings 时
@@ -430,6 +444,12 @@ function switchTab(name, opts) {
     b.setAttribute('aria-selected', active ? 'true' : 'false');
   });
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + tab));
+  // 当前视图记在 body 上, 供 CSS 用。CSS 不用 :has() —— 老浏览器不认,
+  // 而且这里只是切一个属性。
+  // 2026-11-02: 周计划页靠 body[data-view="week"] 单独放宽容器
+  // (7 列周视图 + 课表时间轴在 688px 里放不下)。
+  document.body.dataset.view = tab;
+  syncViewSwitch(tab);
   // 离开复盘页要把图表实例销毁掉。复盘页的视图虽然还在 DOM 里 (display
   // 切换), 但 ECharts 实例会一直挂着 resize 监听 —— 切走不销毁, 累积
   // 几十个实例, 切回来时画布也会因为尺寸为 0 而画错。
@@ -5063,8 +5083,13 @@ if (eyecareBox) {
 // 家长端专属页的入口 (孩子端看不到这两个按钮 —— applyRoleNav 负责隐藏)
 const entryTodayBtn = document.getElementById('btn-entry-today');
 if (entryTodayBtn) entryTodayBtn.addEventListener('click', () => switchTab('entry'));
-const weekPlanBtn = document.getElementById('btn-week-plan');
-if (weekPlanBtn) weekPlanBtn.addEventListener('click', () => switchTab('week'));
+// 视图切换: 日历页 <-> 周计划页。两个页面各有自己的切换器, 按钮靠
+// data-view 声明自己是哪个视图, 所以这里用委托而不是逐个绑。
+document.querySelectorAll('.view-switch__btn').forEach(b => {
+  b.addEventListener('click', () => {
+    switchTab(b.dataset.view === 'week' ? 'week' : 'list');
+  });
+});
 
 // ====== 启动 ======
 // 角色与护眼模式必须先落到 <html> 上再渲染任何页面, 否则会闪一帧旧皮肤。

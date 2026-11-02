@@ -3520,6 +3520,45 @@ button.week-stat span { color: var(--text-2); }
   color: var(--text-2);
 }
 
+/* ===== 视图切换器 (2026-11-02) =====
+   日历页与周计划页各放一个, 内容相同、互为镜像。它表达的是
+   「月历和周计划是同一个地方的不同看法」, 所以用分段控件, 而不是
+   一个孤零零的按钮 —— 之前的 ghost 灰色小字看着像普通文字, 家长
+   根本认不出那是能点的。 */
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface);
+}
+.view-switch__btn {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  color: var(--text-2);
+  padding: 6px var(--space-4);
+  min-height: 36px;
+  cursor: pointer;
+}
+.view-switch__btn:hover { background: var(--surface-2); }
+.view-switch__btn.is-active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* 周计划页单独放宽容器 (2026-11-02)。
+   基础 main 的 max-width: 720px 是给「阅读型」页面准备的 —— 一行的
+   字数不该太长。但周计划是仪表盘: 7 列周视图 + 课表时间轴在 688px
+   里每格只剩 90px, 中文任务名会折成竖排。
+   基础规则一个字不动 (tests/test_desktop_layout.py 要求 main 的
+   max-width 在 640~820 之间), 只给这一页开豁免。
+   1240px 下每格 (1240-32-6*12)/7 ≈ 156px, 与原来 4 列的 163px 同宽,
+   当年那条「7 列每格只剩 130px」的反对意见自动消解。 */
+body[data-view="week"] main { max-width: 1240px; }
+
 /* 窄屏 (375px 实测):
    1. 负荷卡四宫格每格只剩 ~77px, 「课表(分) · 管理」被迫折成两行, 底边
       比另外三格低一截, 四宫格参差不齐。改 2×2, 每格 ~162px, 题注单行
