@@ -3551,6 +3551,49 @@ function isMonthPeriod(period) {
 // 但画的是「本周」)。
 let _reviewPeriod = 'current';
 
+// 复盘页当前这一轮加载到的**原始**数据 (后端返回的 days 本来就含周末,
+// 周末的过滤在前端做, 见 reviewWeekendView)。
+//
+// 留着它是为了切「显示周末」时能**就地重画**: 同一批数据换个看法而已,
+// 没有新数据可拉, 不该为此发请求、更不该把整个模块清空重来。
+let _reviewData = null;
+
+// 结论区两张图的重画入口。每张需要就地重画的卡把自己的重画函数注册
+// 在这里, 切换开关时逐个调用。
+//
+// 对**同一个** ECharts 实例 setOption 换数据, 不重建卡片 —— 重建 = 把
+// 画布从 DOM 上摘掉再插回去, 中间那一帧是空的, 家长看到的是"图闪了
+// 一下"。setOption 由 ECharts 自己把柱子/扇形动画过去, 哪几天冒出来、
+// 哪几天消失了一眼就看清。
+let _reviewChartRepaints = [];
+
+// 切「显示周末」时的重画。
+//
+// 只重画**受开关影响**的那几块:
+//   1. 每日用时柱状图 (周末那两根柱进出);
+//   2. 各科时间占比环 (合计跟着变 —— 周末写过的作业也要算进去);
+//   3. 用时统计块里的「周末 / 长档」两张卡、图例、已剔除说明。
+//
+// 其余的 (周报 / 偏差表 / 月报卡 / 按周对比 / 薄弱项) **一律不动** ——
+// 它们是后端算的整段统计, 跟周末显不显示没关系。重新拉一遍既白费,
+// 又会让家长看到整个模块消失一下 (2026-11-03 用户反馈)。
+function refreshReviewWeekend() {
+  const d = _reviewData;
+  if (!d || !d.time) return;
+  // 周末过滤在前端做: 同一批数据, 换个看法。
+  const view = reviewWeekendView(d.time);
+  const root = document.getElementById('review-content');
+  // 受开关影响的「分档卡 / 图例 / 已剔除 / 空态」: 纯 DOM, 里面没有图,
+  // 直接换掉。同步替换, 浏览器不会画出中间态 —— 家长看到的是"内容变了",
+  // 不是"闪了一下"。
+  const oldDetail = root.querySelector('.wt-slot-time');
+  if (oldDetail) oldDetail.replaceWith(renderReviewTimeDetail(view));
+  // 两张图: 同一个实例换数据, ECharts 自己动画过去。
+  _reviewChartRepaints.forEach(fn => {
+    try { fn(view); } catch (e) { /* 单张图画失败不该连累另一张 */ }
+  });
+}
+
 // 「上月」周期里正在看的月份 ('YYYY-MM')。
 //
 // 记下来是为了两件事:
@@ -3701,7 +3744,17 @@ if (reviewMonthBack) {
   });
 }
 
-// 周末开关: 勾上 = 画出周末那两天。切换后按当前周期重画。
+// 周末开关: 勾上 = 画出周末那两天。
+//
+// 切换后**就地重画**, 不重新请求 (2026-11-03)。
+//
+// 为什么能不重新请求: 后端返回的 days 本来就含周末那两天, 周末的过滤
+// 完全在前端做 (reviewWeekendView)。所以切开关只是"同一批数据换个看法",
+// 没有新数据可拉。以前的做法是切一次就 loadReview(_reviewPeriod) ——
+// 清空整个模块 + 发四个请求 + 全量重画, 家长看到的是整个模块消失一下。
+//
+// 缓存还没有时 (页面刚进来、数据还在路上) 才退回完整重画, 但仍然是按
+// 当前周期, 不能跳回本周。
 const weekendBox = document.getElementById('chk-weekend');
 if (weekendBox) {
   const syncWeekendToggle = () => {
@@ -3713,7 +3766,12 @@ if (weekendBox) {
   weekendBox.addEventListener('change', () => {
     setShowWeekend(weekendBox.checked);
     syncWeekendToggle();
-    loadReview(_reviewPeriod);
+    // 孩子端是成绩单 (勋章墙 + 成长报告), 没有用时统计块 —— 这个开关对
+    // 它没有意义。存下偏好 (家长下次进复盘页时生效) 就走, 别把成绩单
+    // 整个重画一遍。
+    if (isKidRole()) return;
+    if (!_reviewData) { loadReview(_reviewPeriod); return; }
+    refreshReviewWeekend();
   });
 }
 
@@ -3747,6 +3805,11 @@ async function loadReview(period) {
   // 否则会静默走家长分支, 孩子端成绩单页下整段渲染出家长的周报和偏差表
   // (2026-11-01 实测踩过: 顺序竞态, 不是逻辑错)。
   if (isKidRole()) {
+    // 家长端的图表重画入口在这里用不上了 —— 孩子端是成绩单, 没有用时统计块。
+    // 留着的话, 孩子端切「显示周末」会对**已经销毁**的卡片再画一次, 白建一个
+    // ECharts 实例 (对不上 DOM 的孤儿实例)。
+    _reviewData = null;
+    _reviewChartRepaints = [];
     if (typeof renderKidReport !== 'function') {
       await new Promise(resolve =>
         document.addEventListener('dual-ready', resolve, { once: true }));
@@ -3805,15 +3868,26 @@ async function loadReview(period) {
   // 但只有 2 份独立数据 (环图 = 实际占比饼, 折线 = 柱状图的数据)。
   // 现在只剩两张: 每日用时柱状 + 学科占比环 (可切预估/实际)。
   const extras = el('<div class="p-review-extras"></div>');
+  // 记住这一轮的原始数据 + 两张图的重画入口:
+  // 切「显示周末」时靠它们就地重画 (不重新请求、不重建卡片)。
+  _reviewData = time.ok ? { period, time: time.data } : null;
+  _reviewChartRepaints = [];
   if (view) {
     // 整段没有用时就不画图 —— 空坐标系对家长没有任何信息, 而下面统计块里
     // 已经有一句"该区间没有已完成的作业, 暂无用时数据"说明白了。
     // (环图有自己的零值判断, 这里管的是柱状图。)
     if (view.days.some(d => (d.total_minutes || 0) > 0)) {
-      extras.appendChild(renderTimeChart(view));
+      const chartCard = renderTimeChart(view);
+      extras.appendChild(chartCard);
+      // 同一个实例换数据, 不重建卡片 (重建 = 画布被摘掉再插, 中间那帧是空的)。
+      _reviewChartRepaints.push(next => paintTimeChart(chartCard, next));
     }
     const share = renderSubjectShare(view);
     if (share) extras.appendChild(share);
+    // 占比环的重画入口 (切「显示周末」时换数据, 不重建卡片)。
+    if (share && typeof share.__repaintShare === 'function') {
+      _reviewChartRepaints.push(next => share.__repaintShare(next));
+    }
   }
   // 月视图周期: 月报卡 + 月内按周对比。
   if (month.ok) {
@@ -4147,7 +4221,10 @@ function renderReviewTimeBlock(r, period) {
   const label = PERIOD_LABEL[period] || '本周';
   const withWeekend = showWeekend();
 
-  // ===== 概览卡 =====
+  // ===== 概览卡 (与周末开关无关) =====
+  // 平日日均 / 上学日天数 / 统计区间 —— 周末显不显示都不影响这三个数,
+  // 所以它们**不放在**下面那个可替换的槽里: 切开关时这一块不重建,
+  // 页面上最大的那个数字不会跟着闪。
   const pa = r.plain_avg || { days: 0, total_minutes: 0, by_subject: {} };
   wrap.appendChild(el(`
     <div class="card wt-head">
@@ -4176,11 +4253,29 @@ function renderReviewTimeBlock(r, period) {
     </div>`));
   }
 
+  // ===== 受周末开关影响的部分 =====
+  //
+  // 「周末 / 长档」两张卡、图例、已剔除说明、空态 —— 这四样都要跟着
+  // 开关进出, 所以单独装一个槽: 切开关时只换这个槽, 概览卡与偏差表
+  // 原地不动 (2026-11-03 用户反馈: 切开关时整个模块消失一下)。
+  wrap.appendChild(renderReviewTimeDetail(r));
+  return wrap;
+}
+
+// 受「显示周末」影响的那部分: 分档卡 / 图例 / 已剔除说明 / 空态。
+//
+// 单独成函数, 是为了切开关时能只换这一块 —— 概览卡 (平日日均那个大数字)
+// 与周末无关, 不该跟着重建。
+function renderReviewTimeDetail(r) {
+  const detail = el('<div class="wt-slot-time"></div>');
+  const isMonth = isMonthPeriod(r.period);
+  const withWeekend = showWeekend();
+
   // ===== 分档卡片: 平日 / 周五 / 周末 / 调休 =====
-  wrap.appendChild(renderBuckets(r, withWeekend));
+  detail.appendChild(renderBuckets(r, withWeekend));
 
   // ===== 图例 =====
-  wrap.appendChild(renderLegend(withWeekend));
+  detail.appendChild(renderLegend(withWeekend));
 
   // 被剔除的日子要显式说出来。国庆那周若无提示, 家长会以为少统计了 4 天。
   const excluded = (r.excluded_days || []);
@@ -4199,17 +4294,19 @@ function renderReviewTimeBlock(r, period) {
         .map(e => `${e.date.slice(5)} ${e.kind_label}`)
         .join(' · ');
     }
-    wrap.appendChild(el(`<p class="muted wt-excluded">已剔除 (不上学): ${txt}</p>`));
+    detail.appendChild(el(`<p class="muted wt-excluded">已剔除 (不上学): ${txt}</p>`));
   }
 
-  const noData = r.days.every(d => d.total_minutes === 0);
+  // 空态也跟着开关走: 周末藏着时如果只有周末写了作业, 看得见的那几天
+  // 就全是 0 —— 这时该说"没有数据", 而不是留一张空图。
+  const noData = (r.days || []).every(d => d.total_minutes === 0);
   if (noData) {
-    wrap.appendChild(el(`<div class="empty">
+    detail.appendChild(el(`<div class="empty">
       <div class="empty-icon">📊</div>
       <p>该区间没有已完成的作业, 暂无用时数据</p>
     </div>`));
   }
-  return wrap;
+  return detail;
 }
 
 // ====== 每日各科作业用时 (ECharts, 2026-11-02 重写) ======
@@ -4231,6 +4328,17 @@ function renderTimeChart(r) {
     <div class="wt-chart-note muted"></div>
     <div class="wt-legend wt-subjects"></div>
   </div>`);
+  paintTimeChart(card, r);
+  return card;
+}
+
+// 重画一张已经建好的「每日作业用时」卡 (切「显示周末」时用)。
+//
+// 与建卡分开是有原因的: 重建 = 把画布从 DOM 上摘掉再插回去, 中间那一帧
+// 是空的 —— 家长看到的是"图闪了一下"。同一个 ECharts 实例 setOption
+// 换数据, 周末那两根柱是**动画**冒出来/消失的, 一眼就看清变了什么。
+function paintTimeChart(card, r) {
+  const days = r.days || [];
   const canvasBox = card.querySelector('.wt-chart-canvas');
   const fallbackBox = card.querySelector('.wt-chart-fallback');
   const noteBox = card.querySelector('.wt-chart-note');
@@ -4248,19 +4356,28 @@ function renderTimeChart(r) {
   if (note) noteBox.textContent = note;
 
   // 没有 canvas 的环境 (jsdom 测试) 建不了图 —— 退化成表格, 不白屏。
+  //
+  // canvasBox 可能是 null: 第一次重画时已经把它从卡上摘掉了 (退化成表格
+  // 那条路)。所以这里要判空, 别再 remove 一次。
   if (!canRenderCharts()) {
-    canvasBox.remove();
+    if (canvasBox) canvasBox.remove();
     fallbackBox.innerHTML = dailyTimeTableHtml(r);
-    return card;
+    return;
   }
   const option = buildDailyTimeOption(r, { withWeekend: showWeekend() });
   if (!option) {
-    canvasBox.remove();
+    if (canvasBox) canvasBox.remove();
     fallbackBox.innerHTML = dailyTimeTableHtml(r);
-    return card;
+    return;
   }
-  renderChart(canvasBox, option, ChartRegistry);
-  return card;
+  if (!canvasBox) return;
+  // 同一个实例换数据: 已有实例就 setOption (带过渡动画), 没有才新建。
+  const inst = ChartRegistry.get(canvasBox);
+  if (inst) {
+    inst.setOption(option, true);
+  } else {
+    renderChart(canvasBox, option, ChartRegistry);
+  }
 }
 
 // ====== 各科时间占比 (ECharts 环图, 2026-11-02 重写) ======
@@ -4304,12 +4421,19 @@ function subjectShareLegendHtml(subs, mins, pcts) {
 
 function renderSubjectShare(r) {
   const share = r.subject_share || {};
-  const est = share.est || { by_subject: {}, total_minutes: 0 };
-  const act = share.actual || { by_subject: {}, total_minutes: 0 };
-  const estTotal = est.total_minutes || 0;
-  const actTotal = act.total_minutes || 0;
+  // 预估/实际两份数据各存一份**自己的副本**。
+  //
+  // 为什么不能直接用 share.est / share.actual: 它们可能是后端原对象 ——
+  // 开着周末时 reviewWeekendView 原样返回 r, 它的 subject_share 就是
+  // 后端那份。切「显示周末」要换新数据, 若是就地改这个对象, 就把
+  // **缓存的原始数据**弄脏了: 关掉再打开, 看到的会是上一次过滤后的
+  // 数字 (整段少掉周末那 20 分钟), 而不是整段的数。
+  const src = share.est || { by_subject: {}, total_minutes: 0 };
+  const srcAct = share.actual || { by_subject: {}, total_minutes: 0 };
+  let estData = { by_subject: src.by_subject, total_minutes: src.total_minutes || 0 };
+  let actData = { by_subject: srcAct.by_subject, total_minutes: srcAct.total_minutes || 0 };
   // 整段零用时: 整块不画。调用方据此跳过, 页面里只留那一处空态。
-  if (!estTotal && !actTotal) return null;
+  if (!estData.total_minutes && !actData.total_minutes) return null;
   // 口径跟着「显示周末」开关走:
   //   开着 → 整段 (整周 / 整月), 含周末;
   //   关着 → 只看上学的日子, 周末那两天的用时不进这个环。
@@ -4352,10 +4476,10 @@ function renderSubjectShare(r) {
   let current = 'actual';
   const paint = (mode) => {
     current = mode;
-    const src = mode === 'est' ? est : act;
-    const total = mode === 'est' ? estTotal : actTotal;
-    const subs = orderedSubjects(src.by_subject).filter(s => (src.by_subject[s] || 0) > 0);
-    const mins = subs.map(s => src.by_subject[s] || 0);
+    const src2 = mode === 'est' ? estData : actData;
+    const total = src2.total_minutes || 0;
+    const subs = orderedSubjects(src2.by_subject).filter(s => (src2.by_subject[s] || 0) > 0);
+    const mins = subs.map(s => src2.by_subject[s] || 0);
     const pcts = sharePercents(mins);
     legendEl.innerHTML = subjectShareLegendHtml(subs, mins, pcts);
     totalEl.textContent = String(total);
@@ -4363,12 +4487,12 @@ function renderSubjectShare(r) {
     canvasBox.setAttribute('aria-label',
       mode === 'est' ? '各科预计时间占比环图' : '各科实际时间占比环图');
     if (!canvasOk) {
-      fallbackBox.innerHTML = subjectShareTableHtml(src.by_subject, total, mode);
+      fallbackBox.innerHTML = subjectShareTableHtml(src2.by_subject, total, mode);
       return;
     }
-    const option = buildSubjectShareOption(src.by_subject, total, mode);
+    const option = buildSubjectShareOption(src2.by_subject, total, mode);
     if (!option) {
-      fallbackBox.innerHTML = subjectShareTableHtml(src.by_subject, total, mode);
+      fallbackBox.innerHTML = subjectShareTableHtml(src2.by_subject, total, mode);
       return;
     }
     const inst = ChartRegistry.get(canvasBox);
@@ -4391,6 +4515,27 @@ function renderSubjectShare(r) {
 
   // 默认先给"实际" —— 家长在复盘页先想知道的是真花了多少, 不是当初估了多少。
   paint(current);
+
+  // 切「显示周末」时重画这张卡 (不重建)。口径文字也跟着换:
+  // 开着周末是"整周/整月 (含周末)", 关着是"上学日 (已剔除周末)"。
+  card.__repaintShare = (nextR) => {
+    const next = nextR.subject_share || {};
+    const nEst = next.est || {};
+    const nAct = next.actual || {};
+    // 换成本地副本, 不写回后端那份 (见函数头的说明)。
+    estData = { by_subject: nEst.by_subject || {}, total_minutes: nEst.total_minutes || 0 };
+    actData = { by_subject: nAct.by_subject || {}, total_minutes: nAct.total_minutes || 0 };
+    const whole = showWeekend();
+    const sc = whole ? (isMonthPeriod(nextR.period) ? '整月' : '整周') : '上学日';
+    const line = whole
+      ? `统计区间为${sc} (含周末)。`
+      : '统计区间为上学日 (已剔除周末), 与上面那张柱状图是同一批天数。';
+    card.querySelector('.card-title .count').textContent = sc;
+    card.querySelector('.wt-scope').textContent =
+      '口径: 已完成作业 (跳过不计), 未填实际用时按预估计入; 选做计入, 观察作业不计; ' + line;
+    // 环图跟着新数据走 (保留当前的预估/实际模式)。
+    paint(current);
+  };
   return card;
 }
 

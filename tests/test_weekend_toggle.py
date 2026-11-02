@@ -198,9 +198,71 @@ def test_period_highlight_and_data_stay_in_sync():
 
 
 def test_toggle_redraws_current_period():
-    """切换开关后按当前周期重画, 不能跳回本周。"""
+    """切换开关后重画的是**当前周期**的数据, 不能跳回本周。
+
+    2026-11-03 改成了**就地重画** (不重新请求) —— 后端返回的 days 本来
+    就含周末, 周末的过滤完全在前端做, 同一批数据换个看法而已, 没有新
+    数据可拉。所以这里守的是:
+      1. 重画用的是缓存下来的**当前周期**数据, 不是硬编码 'current';
+      2. 缓存还没有时 (页面刚进来、数据还在路上) 兜底仍是按当前周期重画。
+    """
     code = _code(_app_js())
-    assert "loadReview(_reviewPeriod)" in code, "切换开关后要按当前周期重画"
+    assert "function refreshReviewWeekend()" in code, "缺少 refreshReviewWeekend"
+    body = re.search(r"function refreshReviewWeekend\(\) \{(.*?)\n\}", code, re.S)
+    assert body, "缺少 refreshReviewWeekend"
+    inner = body.group(1)
+    assert "_reviewData" in inner, "就地重画要用缓存的当前周期数据"
+    assert "reviewWeekendView(" in inner, "周末的过滤在前端做, 不该重新请求"
+    # 缓存还没有时的兜底: 按当前周期重画, 不能写死 'current'
+    assert "loadReview(_reviewPeriod)" in code, "兜底重画也必须按当前周期"
+
+
+def test_toggle_does_not_refetch():
+    """切开关**不能发请求** —— 同一批数据换个看法, 没有新数据可拉。
+
+    以前切一次就 loadReview(_reviewPeriod): 清空整个模块 + 发四个请求 +
+    全量重画。家长看到的是整个模块消失一下 (2026-11-03 用户反馈)。
+    """
+    code = _code(_app_js())
+    handler = re.search(
+        r"weekendBox\.addEventListener\('change', \(\) => \{(.*?)\n  \}\);", code, re.S)
+    assert handler, "找不到周末开关的 change 处理"
+    inner = handler.group(1)
+    # 兜底那一支允许有 loadReview, 但主路径必须是就地重画
+    assert "refreshReviewWeekend()" in inner, "切开关必须走就地重画"
+    assert inner.count("loadReview(") <= 1, \
+        "切开关不该无条件重新加载整个复盘页"
+
+
+def test_unchanged_blocks_are_not_rerendered():
+    """切开关时, 与周末无关的块 (周报 / 偏差表 / 月报 / 薄弱项) 不许重画。
+
+    它们是后端算的整段统计, 周末显不显示跟它们无关 —— 重新拉一遍既白费,
+    又会让家长看到整个模块消失一下。
+    """
+    code = _code(_app_js())
+    inner = re.search(r"function refreshReviewWeekend\(\) \{(.*?)\n\}", code, re.S).group(1)
+    for touched in ("loadWeeklyReport", "loadReviewDeviation", "loadMonthlyReport",
+                    "renderParentReviewExtras"):
+        assert touched not in inner, \
+            f"refreshReviewWeekend 不该碰 {touched} —— 那些块跟周末开关无关"
+
+
+def test_kid_role_toggle_is_a_noop():
+    """孩子端切这个开关不该重画成绩单。
+
+    孩子端是成绩单 (勋章墙 + 成长报告), 没有用时统计块 —— 这个开关对它
+    没有意义。重画一遍只是让成绩单闪一下。
+    """
+    code = _code(_app_js())
+    handler = re.search(
+        r"weekendBox\.addEventListener\('change', \(\) => \{(.*?)\n  \}\);", code, re.S)
+    assert handler, "找不到周末开关的 change 处理"
+    inner = handler.group(1)
+    assert "isKidRole()" in inner, "孩子端要早退 (只存偏好, 不重画)"
+    # 早退必须在重画之前
+    assert inner.index("isKidRole()") < inner.index("refreshReviewWeekend()"), \
+        "孩子端的早退要排在重画之前"
 
 
 # ====== 4. 运行时 (jsdom) ======
@@ -258,8 +320,10 @@ const dom = new JSDOM(fs.readFileSync(htmlPath, 'utf8'), {
   runScripts: 'outside-only', pretendToBeVisual: true,
 });
 const w = dom.window, doc = w.document;
+const calls = [];
 w.fetch = async (u) => {
   const s = String(u);
+  calls.push(s);
   const ok = (d) => ({ ok: true, status: 200, text: async () => JSON.stringify(d) });
   if (s.includes('/analytics/review-time')) return ok(TIME_STATS);
   if (s.includes('/analytics/review')) return ok({ period: 'current', by_type: [], sample_size: 0 });
@@ -318,16 +382,28 @@ const snapshot = () => {
   // 勾上 -> 周末那两天要画出来
   const box = doc.getElementById('chk-weekend');
   box.checked = true;
+  // 记下切之前的请求数与关键节点 —— 用来验证"切开关不重新请求"。
+  calls.length = 0;
+  const devNodeBefore = doc.querySelector('.review-deviation');
+  const headNodeBefore = doc.querySelector('.wt-head');
   box.dispatchEvent(new w.Event('change', { bubbles: true }));
   await new Promise(r => setTimeout(r, 400));
   out.checkedState = snapshot();
   out.stored = w.localStorage.getItem('review_show_weekend');
+  // 切开关期间发了几个请求? 应该是 0 —— 同一批数据换个看法而已。
+  out.callsWhileToggling = calls.length;
+  out.callList = calls.slice();
+  // 与周末无关的块必须是**同一个 DOM 节点** (没被重建)。
+  out.devNodeKept = devNodeBefore === doc.querySelector('.review-deviation');
+  out.headNodeKept = headNodeBefore === doc.querySelector('.wt-head');
 
   // 取消勾选 -> 周末又要藏起来
+  calls.length = 0;
   box.checked = false;
   box.dispatchEvent(new w.Event('change', { bubbles: true }));
   await new Promise(r => setTimeout(r, 400));
   out.uncheckedState = snapshot();
+  out.callsWhileUnchecking = calls.length;
 
   console.log(JSON.stringify(out));
   process.exit(0);
@@ -438,6 +514,33 @@ def test_unchecking_restores_hidden(live):
     """取消勾选后回到"不展示周末"。"""
     assert live["uncheckedState"]["offBarCount"] == 0
     assert "周末" not in live["uncheckedState"]["bucketTitles"]
+
+
+# ====== 4b. 切开关不再重新请求 (2026-11-03) ======
+
+@needs_jsdom
+def test_toggling_sends_no_request(live):
+    """切开关**一个请求都不该发**。
+
+    周末的过滤在前端做 (reviewWeekendView), 后端返回的 days 本来就含
+    周末那两天 —— 同一批数据换个看法, 没有新数据可拉。以前切一次就
+    loadReview(): 清空整个模块 + 发四个请求 + 全量重画, 家长看到的是
+    整个模块消失一下。
+    """
+    assert live["callsWhileToggling"] == 0, \
+        f"切开关时不该发请求, 实际发了: {live['callList']}"
+    assert live["callsWhileUnchecking"] == 0, "取消勾选同样不该发请求"
+
+
+@needs_jsdom
+def test_unrelated_blocks_are_not_rebuilt(live):
+    """与周末无关的块必须是**同一个 DOM 节点** —— 没被重建。
+
+    偏差表是后端算的整段统计, 周末显不显示跟它没关系。重建它 = 家长
+    看到整页闪一下, 正是这次要消掉的现象。
+    """
+    assert live["devNodeKept"] is True, "偏差表不该被重建"
+    assert live["headNodeKept"] is True, "概览卡不该被重建"
 
 
 # ====== 5. 两张图必须对得上账 (2026-11-02) ======

@@ -908,7 +908,11 @@ def test_subject_share_skipped_when_week_has_no_time():
     """
     code = _code(_app_js())
     body = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
-    assert "if (!estTotal && !actTotal) return null;" in body
+    # 整段零用时必须 return null —— 不画空环, 由调用方留一处空态。
+    # 写成正则而不是固定字面量: 2026-11-03 切「显示周末」改成就地重画时,
+    # 这里的数据变量换了名字 (est/act -> estData/actData), 行为没变。
+    assert re.search(r"if \(!\w+\.total_minutes && !\w+\.total_minutes\) return null;", body), \
+        "整段零用时必须 return null (不塞空环)"
     call = code.split("async function loadReview(period) {")[1].split("\n}")[0]
     assert "if (share) extras.appendChild(share);" in call
 
