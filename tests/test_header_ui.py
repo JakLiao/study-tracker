@@ -199,6 +199,72 @@ def test_parent_only_page_entries_exist(index_html):
     assert "设置" in index_html
 
 
+# ====== 1b. 「登记作业」核心入口 (2026-11-02) ======
+#
+# 用户反馈: 「右上角『登记作业』这个核心功能入口按键, 改为更加显眼的
+# 操作按键」。
+#
+# 改之前它是 ghost —— 透明底 + 透明边框 + 浅灰字, 渲染出来就是右上角
+# 一行灰字, 家长认不出那里有个能按的键。同款反馈在这个项目里出现过两次
+# (2026-10-30 弹窗「取消」键、2026-11-02 日历页视图切换器), 修法都是
+# 同一句: 提升为一眼能认出的实心按键。
+
+
+def _entry_btn(index_html: str) -> str:
+    m = re.search(r'<button[^>]*id="btn-entry-today"[^>]*>', index_html)
+    assert m, "找不到今日页的「登记作业」入口"
+    return m.group(0)
+
+
+def test_entry_cta_is_a_solid_button_not_ghost(index_html):
+    """入口必须是实心按键, 不能是 ghost。"""
+    tag = _entry_btn(index_html)
+    cls = re.search(r'class="([^"]*)"', tag)
+    assert cls, f"入口按钮没有 class: {tag}"
+    classes = cls.group(1).split()
+    assert "ghost" not in classes, f"入口不该再用 ghost (透明底透明边): {tag}"
+    assert "cta-entry" in classes, f"入口应带 cta-entry: {tag}"
+    assert "view-parent-only" in classes, "入口仍须是家长专属 (孩子端看不到)"
+
+
+def test_entry_cta_has_icon(index_html):
+    """入口配个加号图形, 与 Tab 图标同一套语言 (先认形再认字)。"""
+    m = re.search(r'<button[^>]*id="btn-entry-today"[^>]*>(.*?)</button>',
+                  index_html, re.S)
+    assert m, "找不到「登记作业」入口的内容"
+    inner = m.group(1)
+    assert 'href="#i-plus"' in inner, f"入口缺少加号图标: {inner}"
+    assert '<symbol id="i-plus"' in index_html, "i-plus 未在 svg-defs 中定义"
+    assert "登记作业" in inner, f"入口文案丢失: {inner}"
+
+
+def test_entry_cta_uses_role_accent(styles_css):
+    """底色走角色主操作色 (家长端=深靛蓝「教师用笔」), 不另造颜色。
+
+    --accent + --accent-ink 的实心按钮在日历页视图切换器里已有先例;
+    写死 hex 会让两端角色各走各的色板, 也和第 2 节的色板纪律冲突
+    (红/蓝/绿/紫都是学科色, 不能拿来当全局按钮底色)。
+    """
+    rule = _rule(styles_css, ".cta-entry")
+    assert rule, "缺少 .cta-entry 样式"
+    assert "var(--accent)" in rule, "底色应取角色主操作色 --accent"
+    assert "var(--accent-ink)" in rule, "字色应取 --accent-ink"
+    assert not re.search(r"#[0-9A-Fa-f]{3,6}\b", rule), "不该写死颜色"
+    assert "var(--radius-pill)" in rule, "入口应是药丸形"
+
+
+def test_entry_cta_does_not_pin_min_height(styles_css):
+    """不能在这里写死 min-height。
+
+    窄屏那组全局规则 (button { min-height: 44px }) 要把触控目标抬到
+    44px; 而 .cta-entry 是 (0,1,0), 压得过裸 button (0,0,1) —— 一旦
+    这里写死 min-height, 触控目标就再也抬不上去了。
+    """
+    rule = _rule(styles_css, ".cta-entry")
+    assert "min-height" not in rule, \
+        "min-height 交给全局触控目标规则, 别在 .cta-entry 里写死"
+
+
 def test_role_switch_control_exists(index_html):
     """角色切换按钮 (家长端「切到孩子」/ 孩子端「家长」)。"""
     assert 'class="role-switch"' in index_html

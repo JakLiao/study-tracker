@@ -3582,6 +3582,51 @@ button.week-stat span { color: var(--text-2); }
 }
 .view-head .view-title { margin-bottom: 0; }
 
+/* ===== 「登记作业」核心入口 (2026-11-02) =====
+   家长端最常做的一件事, 就是把老师今天布置的作业记进来 —— 这颗键是
+   今日页的入口, 却做得最不显眼: 之前它是 ghost, 透明底 + 透明边框 +
+   浅灰字, 渲染出来就是右上角一行灰字, 家长认不出那里有个能按的键。
+   同款反馈在这个项目里出现过两次 (2026-10-30 弹窗「取消」、
+   2026-11-02 日历页视图切换器), 修法都是同一句: 提升为一眼能认出的
+   实心按键。
+
+   底色用家长端**主操作色** (深靛蓝 = 教师用笔), 不套 button.primary 的
+   深墨 —— 页面级入口与弹窗确认键不是一回事: 后者是"确认这一步",
+   前者是"这是今天的正事"。accent + accent-ink 的实心按钮在这套设计里
+   已有先例 (日历页视图切换器的选中态), 不另造颜色。
+
+   尺寸只比普通按钮大一档: 大到一眼找得到, 又不至于把"完成率 100%"
+   那些数据挤下去。min-height 不在这里写 —— 窄屏那组全局规则要把它
+   抬到 44px 的触控下限, 这里写死反而会压过它。 */
+.cta-entry {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;          /* .view-head 是 baseline 对齐, 药丸键改居中 */
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(29, 78, 124, 0.26);
+}
+/* 悬停要连底色一起钉住: 通用规则 button:hover:not(:disabled) 会把底刷成
+   --surface-2 浅色, 而字仍是 --accent-ink 的白字, 整颗键看着"消失"。
+   (与 button.primary:hover 同一类问题, 见第 6 节说明。) */
+.cta-entry:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-ink);
+  opacity: 0.88;
+}
+.cta-entry__ico {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: block;
+}
+
 .view-switch {
   display: inline-flex;
   border: 1px solid var(--border);
