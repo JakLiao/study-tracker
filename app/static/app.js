@@ -766,12 +766,12 @@ function renderParentBoard(b, root) {    const titleEl = document.getElementById
     // 概览卡下面那句直白结论是同一套原则 (规范 §6.2): 家长端每个数字
     // 后面都要跟一句人话, 不能只丢一个百分比让人自己解读。
     root.appendChild(renderParentStatRow({
-      p, pct, pending, settledCount: settled.length, estRemaining, subjStats,
+      p, pct, pending: pending.length, settledCount: settled.length, estRemaining, subjStats,
     }));
     const estTotal = p.est_total || 0;
     const actTotal = p.actual_total || 0;
     root.appendChild(el(`<div class="p-insight">${escapeAttr(
-      buildBoardInsight({ pct, pending, estRemaining, estTotal, actTotal }))}</div>`));
+      buildBoardInsight({ pct, pending: pending.length, estRemaining, estTotal, actTotal }))}</div>`));
 
     root.appendChild(el(`
       <div class="progress-bar">
@@ -931,14 +931,21 @@ function renderTimerButton(item, opts) {
 // 不能只丢一个百分比让人自己解读。没有"平时"基准可比 (后端没给),
 // 所以拿实际用时与预估用时比 —— 这两个数同源, 对得上账。
 function buildBoardInsight({ pct, pending, estRemaining, estTotal, actTotal }) {
-  if (!pending) return '今天的必做全部完成, 收工。';
+  // pending 的契约是"还剩几项"(数字)。
+  // 2026-11-02 修: 调用处曾把整个任务数组直接传进来, 模板插值时数组被
+  // toString(), 每个元素变成 "[object Object]", 屏幕上就出现一串
+  // "[object Object],[object Object],..."。这里统一取项数: 数组取 length,
+  // 数字直接用 —— 顺带解决空数组是 JS 真值、`!pending` 判不出"没有待做",
+  // 导致"全部完成, 收工"那句永远不触发的问题。
+  const pendingN = Array.isArray(pending) ? pending.length : (pending || 0);
+  if (!pendingN) return '今天的必做全部完成, 收工。';
   if (actTotal > 0 && estTotal > 0) {
     const diff = actTotal - estTotal;
     if (diff < 0) return `实际用时比预估少 ${Math.abs(diff)} 分钟, 效率不错。`;
     if (diff > 0) return `实际用时比预估多 ${diff} 分钟, 今天偏慢一些。`;
     return '实际用时和预估一样, 节奏稳。';
   }
-  return `还有 ${pending} 项没做完, 大约还要 ${estRemaining} 分钟。`;
+  return `还有 ${pendingN} 项没做完, 大约还要 ${estRemaining} 分钟。`;
 }
 
 // 三张数据卡: 完成率 / 剩余用时 / 学科分布。
