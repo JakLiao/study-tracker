@@ -65,22 +65,42 @@ const CONFIDENCE_META = {
   low:    { short: '低', icon: '⚠', tip: 'AI 推断不完整, 建议点开原文核对' },
 };
 
+// 置信度只认三档, 别的写法一律落到 medium (2026-11-02)。
+//
+// 为什么要多这一层: 颜色是按档位 class 挂上去的 (conf-dot.high /
+// .medium / .low), 档位认不出来就没有颜色, 高置信度会退回中性灰 ——
+// 那正是这次要修的问题。另外原值是直接拼进 class 的, 一旦上游给出
+// 奇怪字符串(旧数据 / 换模型), 拼出来的是个既没颜色、也可能带空格引号的
+// class, 后面 collectRows 再从 class 上读档位就读不回来了。
+// 后端 ai_client 已做同样归一, 这里是前端侧的兜底。
+function normalizeConfidence(level) {
+  const s = String(level == null ? '' : level).trim().toLowerCase();
+  // hasOwnProperty 而不是 `CONFIDENCE_META[s]`: 后者会把 'constructor'
+  // 'toString' 这种原型上的键当成合法档位取出来, 渲染出一串 undefined。
+  if (Object.prototype.hasOwnProperty.call(CONFIDENCE_META, s)) return s;
+  // 顺手认一下中文档位: 有些模型/旧数据会直接回「高/中/低」
+  const zh = { '高': 'high', '中': 'medium', '低': 'low' };
+  return zh[s] || 'medium';
+}
+
 // 置信度标记 (设计文档 §5.4 + §9 坑 3)
 // 表格里的紧凑版: 只出图标, 文字移到 title 与 aria-label。
 // 原来用「⚠ 需核对」这样的多字标签, 在预览表窄列里必然折行
 // (「需核对」竖着排三行), 把整行撑高一大截 —— 图上 3 行预览
 // 高得离谱就是这个原因。图标 + 悬停提示信息量不减, 宽度省一大截。
 function confidenceDot(level) {
-  const conf = CONFIDENCE_META[level] || CONFIDENCE_META.medium;
-  return `<span class="conf-dot ${level}" title="${conf.tip}" aria-label="置信度${conf.short}">${conf.icon}</span>`;
+  const lv = normalizeConfidence(level);
+  const conf = CONFIDENCE_META[lv];
+  return `<span class="conf-dot ${lv}" title="${conf.tip}" aria-label="置信度${conf.short}">${conf.icon}</span>`;
 }
 
 // 带文字的置信度标签。给宽度充裕的地方用(看板行、原文弹窗)——
 // 那里的列不会被挤窄, 多几个字能省掉一次悬停。
 function confidencePill(level) {
-  const conf = CONFIDENCE_META[level] || CONFIDENCE_META.medium;
-  const label = { high: '高', medium: '推断', low: '需核对' }[level] || level;
-  return `<span class="confidence-pill ${level}" title="${conf.tip}">${label}</span>`;
+  const lv = normalizeConfidence(level);
+  const conf = CONFIDENCE_META[lv];
+  const label = { high: '高', medium: '推断', low: '需核对' }[lv] || lv;
+  return `<span class="confidence-pill ${lv}" title="${conf.tip}">${label}</span>`;
 }
 
 // ====== 看板提示语 (2026-09-29) ======
@@ -2799,13 +2819,17 @@ function renderPreviewTable(items, batchId) {
   const batchDate = document.getElementById('entry-date').value;
   items.forEach((it, idx) => {
     const tr = document.createElement('tr');
-    tr.classList.add(`confidence-${it.confidence}`); // 视觉差异化
+    // 档位先归一, 再拿去挂 class / 决定默认勾选:
+    // 上游给的不是 high/medium/low 时, 低置信度那行会被误当成"正常行"
+    // 默认勾上, "需核对"的提醒就丢了。
+    const conf = normalizeConfidence(it.confidence);
+    tr.classList.add(`confidence-${conf}`); // 视觉差异化
     tr.dataset.idx = idx;
     // AI 没识别出日期时留空并标红, 由家长确认 —— 不能静默填今天。
     // 静默填充会让家长以为"AI 说今天", 实际是系统替他猜的。
     const noAiDate = !it.due_date;
     // 设计 §9 坑 3: 低置信度默认不勾选, 强制家长过目
-    const checkedDefault = it.confidence !== 'low' && !noAiDate;
+    const checkedDefault = conf !== 'low' && !noAiDate;
     // 表格不再显示/编辑「截止」列, 但 AI 解析出的 deadline_time 不能丢 ——
     // 「周四早读 8:20 听写」这类信息只有 AI 能提取出来, 家长在表里点不出来的。
     // 存到 data- 属性, collectRows 原样带进入库请求。
@@ -2838,7 +2862,7 @@ function renderPreviewTable(items, batchId) {
       </td>
       <td data-label="选做"><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
       <td data-label="预计(分)"><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || estDefault(it)}" /></td>
-      <td class="col-conf" data-label="置信">${confidenceDot(it.confidence)}</td>
+      <td class="col-conf" data-label="置信">${confidenceDot(conf)}</td>
       <td class="col-src" data-label="原文"><small title="${escapeAttr(it.source_span || '')}">${escapeAttr(it.source_span || '')}</small></td>
       <td class="col-del"><button class="ghost row-del" aria-label="删除这一行">删</button></td>
     `;

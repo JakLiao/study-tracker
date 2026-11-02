@@ -392,6 +392,91 @@ def test_conf_dot_has_title_and_aria(app_js):
     assert "aria-label=" in b
 
 
+# ====== 3c. 置信度按档位标色 (2026-11-02) ======
+
+def test_confidence_tokens_defined(styles):
+    """三档各一套色令牌, 颜色只在 :root 定义一次。"""
+    for tok in ("--conf-high", "--conf-high-t", "--conf-medium", "--conf-medium-t",
+                "--conf-low", "--conf-low-t"):
+        assert f"{tok}:" in styles, f"缺少置信度色令牌 {tok}"
+
+
+def test_confidence_tokens_reuse_palette(styles):
+    """令牌必须是现有色板的别名, 不能新增色值。
+
+    新增色值就得重算 docs/07 §2 与 docs/08 的对比度表, 而置信度色
+    复用学科/状态色板的绿-琥珀-红三色, 对比度基线不用动。"""
+    for tok, alias in (("--conf-high", "--st-done-c"), ("--conf-high-t", "--st-done-t"),
+                       ("--conf-medium", "--st-doing-c"), ("--conf-medium-t", "--st-doing-t"),
+                       ("--conf-low", "--st-late-c"), ("--conf-low-t", "--st-late-t")):
+        m = re.search(re.escape(tok) + r":\s*([^;]+);", styles)
+        assert m, f"{tok} 未定义"
+        assert alias in m.group(1), f"{tok} 应指向 {alias}, 实际 {m.group(1)}"
+
+
+def test_confidence_high_is_not_neutral(styles):
+    """高置信度不能是中性灰。
+
+    之前 .conf-dot.high 用 --text-3, 在录入页那一列里和普通弱化文字
+    长得一模一样, 家长扫过去读不出置信度状态 (功能设计 §2.4 第 10 条
+    要求"明确标记置信度")。"""
+    for sel in (".conf-dot.high", ".confidence-pill.high"):
+        b = _block(styles, sel)
+        assert b, f"缺少 {sel} 规则"
+        assert "--text-3" not in b, f"{sel} 仍用中性灰, 读不出置信状态"
+        assert "var(--conf-high)" in b, f"{sel} 应使用 --conf-high"
+
+
+def test_confidence_levels_use_distinct_colors(styles):
+    """三档必须是三个不同的颜色 —— 共用一色等于没标色。"""
+    tokens = []
+    for lvl in ("high", "medium", "low"):
+        b = _block(styles, f".conf-dot.{lvl}")
+        m = re.search(r"color:\s*var\((--conf-[a-z-]+)\)", b)
+        assert m, f"{lvl} 档没有用置信度色令牌: {b.strip()}"
+        tokens.append(m.group(1))
+    assert len(set(tokens)) == 3, f"三档颜色必须互不相同: {tokens}"
+
+
+def test_dot_and_pill_share_same_colors(styles):
+    """圆点(录入页)与标签(看板/原文弹窗)必须同色 —— 一套颜色编码贯穿全站。"""
+    for lvl in ("high", "medium", "low"):
+        dot = re.search(r"color:\s*var\((--conf-[a-z-]+)\)",
+                         _block(styles, f".conf-dot.{lvl}"))
+        pill = re.search(r"color:\s*var\((--conf-[a-z-]+)\)",
+                         _block(styles, f".confidence-pill.{lvl}"))
+        assert dot and pill, f"{lvl} 档缺颜色规则"
+        assert dot.group(1) == pill.group(1), \
+            f"{lvl} 档两处颜色不一致: {dot.group(1)} vs {pill.group(1)}"
+
+
+def test_confidence_level_normalized(app_js):
+    """档位必须先归一再渲染。
+
+    颜色是按 class 挂上去的, 档位认不出来就没有颜色 (高置信度会退回
+    中性灰, 正是这次要修的问题); 原值直接拼进 class 还会把奇怪字符串
+    带进 DOM, 后面 collectRows 再从 class 上读档位就读不回来。"""
+    code = _code(app_js)
+    assert "function normalizeConfidence(" in code, "缺少档位归一函数"
+    body = code.split("function normalizeConfidence(")[1].split("\n}")[0]
+    assert "'medium'" in body, "未知档位应落到 medium"
+    for fn in ("confidenceDot", "confidencePill"):
+        blk = code.split(f"function {fn}(")[1].split("\n}")[0]
+        assert "normalizeConfidence(" in blk, f"{fn} 必须先归一档位"
+
+
+def test_preview_row_uses_normalized_level(app_js):
+    """预览表的行 class 与默认勾选也要用归一后的档位。
+
+    否则上游给的不是 low 时, 低置信度那行会被默认勾上, "需核对"的
+    提醒就静默丢了。"""
+    code = _code(app_js)
+    body = code.split("function renderPreviewTable(")[1]
+    assert "normalizeConfidence(" in body
+    assert "confidence-${it.confidence}" not in body, "行 class 仍直接用原始档位"
+    assert "it.confidence !== 'low'" not in body, "默认勾选仍直接比原始档位"
+
+
 # ====== 4. collectRows 必须同步 (关键回归) ======
 
 def test_collect_rows_uses_new_conf_class(app_js):
@@ -510,7 +595,7 @@ w.eval(fs.readFileSync(zhPath, 'utf8'));
 // 走 charts.js 的封装。jsdom 没有 canvas 包, 图表会走"退化成表格"那条
 // 降级路径 —— 这正是降级逻辑要守的行为, 所以这里**不**加载 echarts.min.js。
 w.eval(fs.readFileSync(require('path').join(require('path').dirname(appJsPath), 'charts.js'), 'utf8'));
-w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__e = () => switchTab("entry");');
+w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__e = () => switchTab("entry");globalThis.__cd = l => confidenceDot(l);');
 
 (async () => {
   const out = { tabs: [] };
@@ -539,6 +624,12 @@ w.eval(fs.readFileSync(appJsPath, 'utf8') + '\n;globalThis.__e = () => switchTab
   out.srcTitle = srcCell ? srcCell.getAttribute('title') : null;
   const del = doc.querySelector('.row-del');
   out.del = del ? { cls: del.getAttribute('class'), aria: del.getAttribute('aria-label') } : null;
+
+  // 档位归一: 未知/中文写法必须落到三档之一, 否则渲染出来没有颜色
+  out.oddLevels = ['低', 'LOW', '', null].map(l => {
+    const m = String(w.__cd(l)).match(/class="conf-dot ([a-z]+)"/);
+    return m ? m[1] : '?';
+  });
 
   // 提交: 验证 collectRows 读回正确
   doc.getElementById('btn-confirm').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
@@ -605,6 +696,15 @@ def test_live_dot_levels_correct(live):
 @needs_jsdom
 def test_live_source_has_title(live):
     assert live["srcTitle"] and "P18-19" in live["srcTitle"]
+
+
+@needs_jsdom
+def test_live_odd_confidence_levels_normalized(live):
+    """未知/中文档位必须归一到三档之一。
+
+    颜色是按 class 挂上去的, 档位认不出来就没有颜色 —— 高置信度会退回
+    中性灰, 正是 2026-11-02 要修的那个问题。"""
+    assert live["oddLevels"] == ["low", "low", "medium", "medium"], live["oddLevels"]
 
 
 @needs_jsdom

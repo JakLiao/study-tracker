@@ -73,6 +73,26 @@
   --status-overdue: var(--st-late-c);
   --status-overdue-soft: var(--st-late-t);
 
+  /* --- 置信度三档色 (2026-11-02) ---
+     置信度说的是"AI 读得准不准", 与作业状态(待做/收尾/逾期)是两条轴,
+     但沿用同一套色相做交通灯读法: 高=绿(照单全收) / 中=琥珀(留意) /
+     低=红(必须核对)。
+
+     不新增色值 —— 全是现有色板的别名, 所以 docs/07 §2、docs/08 的对比度表
+     不用重算, 改置信度色也不会动到学科色与状态色的验收基线。
+
+     之前高置信度用的是 --text-3 中性灰: 在录入页那一列里, 它和普通弱化
+     文字长得一模一样, 家长扫过去读不出置信度状态 (功能设计 §2.4 第 10 条
+     要求"明确标记置信度")。现在三档各有各的色, 一列扫下来就知道哪几条
+     要盯。形状(●◐⚠)与文字(高/推断/需核对)仍是第一信号, 颜色是第二信号,
+     色盲也能靠形状分辨 (规范 P8)。 */
+  --conf-high: var(--st-done-c);
+  --conf-high-t: var(--st-done-t);
+  --conf-medium: var(--st-doing-c);
+  --conf-medium-t: var(--st-doing-t);
+  --conf-low: var(--st-late-c);
+  --conf-low-t: var(--st-late-t);
+
   /* --- 主操作色 ---
      兜底用蜡笔黄 (孩子端主操作); 家长端在 [data-role="parent"] 内换成
      深靛蓝 #1D4E7C。--accent-soft 是选中态/焦点环的浅底, 必须与主色
@@ -622,21 +642,28 @@ tr:last-child td { border-bottom: none; }
   font-size: var(--fs-caption);
   font-weight: 500;
 }
-.confidence-pill.high { color: var(--text-3); }
+/* 置信度标签: 三档各一色, 与预览表的圆点用同一套令牌 (见 :root --conf-*)。
+   高置信度原来用中性灰, 与普通弱化文字无从区分, 看不出"这条 AI 有多确信"。 */
+.confidence-pill.high {
+  color: var(--conf-high);
+  background: var(--conf-high-t);
+}
 .confidence-pill.medium {
-  color: var(--status-doing);
-  background: rgba(217, 119, 6, 0.1);
+  color: var(--conf-medium);
+  background: var(--conf-medium-t);
 }
 .confidence-pill.low {
-  color: var(--status-overdue);
-  background: rgba(220, 38, 38, 0.12);
+  color: var(--conf-low);
+  background: var(--conf-low-t);
   font-weight: 600;
 }
 .confidence-pill.low::before { content: "⚠"; }
 
 /* 置信度圆点: 预览表专用 (2026-09-28)
    窄列里放「需核对」这种多字标签必然折行, 把整行撑高三四倍。
-   改成单字符图标 + title 悬停提示, 信息不减, 行高回到一行。 */
+   改成单字符图标 + title 悬停提示, 信息不减, 行高回到一行。
+   颜色按档位给 (2026-11-02): 高绿 / 中琥珀 / 低红, 三档一眼可分。
+   之前高置信度是中性灰, 和旁边普通弱化文字一个样, 读不出置信状态。 */
 .conf-dot {
   display: inline-flex;
   align-items: center;
@@ -648,21 +675,26 @@ tr:last-child td { border-bottom: none; }
   line-height: 1;
   cursor: help;
 }
-.conf-dot.high { color: var(--text-3); }
+.conf-dot.high {
+  color: var(--conf-high);
+  background: var(--conf-high-t);
+}
 .conf-dot.medium {
-  color: var(--status-doing);
-  background: rgba(217, 119, 6, 0.1);
+  color: var(--conf-medium);
+  background: var(--conf-medium-t);
 }
 .conf-dot.low {
-  color: var(--status-overdue);
-  background: rgba(220, 38, 38, 0.12);
+  color: var(--conf-low);
+  background: var(--conf-low-t);
   font-weight: 700;
 }
 
-/* 旧兼容 class (test_ai_parsing 等后端字段仍 confidence-{high,medium,low}) */
-.confidence-high { color: var(--status-done); }
-.confidence-medium { color: var(--status-doing); }
-.confidence-low { color: var(--status-overdue); font-weight: 600; }
+/* 旧兼容 class (test_ai_parsing 等后端字段仍 confidence-{high,medium,low})。
+   2026-11-02: 也改用 --conf-* 令牌 —— 置信度的颜色只在 :root 那组令牌里
+   定义一次, 圆点/标签/整行三处不会再各写各的, 也不会漂成状态色。 */
+.confidence-high { color: var(--conf-high); }
+.confidence-medium { color: var(--conf-medium); }
+.confidence-low { color: var(--conf-low); font-weight: 600; }
 
 /* ===== 11.7 看板日期 Tab (2026-10-12 分段控件) =====
    原先是三张 84px 宽的竖排方块(标题在上、进度在下), 整条占约 90px。
