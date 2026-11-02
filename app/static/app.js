@@ -4491,6 +4491,9 @@ function renderWeekPlan(root, w) {
   const days = el('<div class="week-days"></div>');
   w.days.forEach(d => days.appendChild(weekDayCard(d)));
   root.appendChild(days);
+
+  // 课表分区 (2026-11-02): 从弹窗里搬出来, 直接摆在页面下方。
+  root.appendChild(renderScheduleSection(w));
 }
 
 function weekDayCard(d) {
@@ -4554,55 +4557,137 @@ async function generateWeekTasks(w) {
   }
 }
 
-// ---- 课表时段管理 ----
-function openScheduleManager() {
-  const w = _weekData;
-  if (!w) return;
-  const m = document.getElementById('modal');
-  document.getElementById('modal-title').textContent = '固定课表';
-  const content = document.getElementById('modal-content');
-  content.innerHTML = '<div class="manage-list"></div>' +
-    '<div class="row"><button type="button" class="secondary" id="slot-add">+ 新增上课时段</button></div>';
-  m.classList.remove('hidden');
-  m.classList.remove('confirm-modal');
-  setModalActions({ mode: 'close' });
+// 课表时间轴的刻度范围 (2026-11-02)。
+// 按本周实际的最早开始到最晚结束, 向下/向上取整到小时。写死
+// 15:00-21:00 的话, 有早上 8 点的课就会画到框外, 有晚上 9 点半的
+// 课就会被切掉。没有课返回 null —— 不画空坐标系。
+function scheduleTimeRange(slots) {
+  if (!slots || !slots.length) return null;
+  let min = 24 * 60;
+  let max = 0;
+  slots.forEach(s => {
+    const a = hhmmToMinutes(s.start_time);
+    const b = hhmmToMinutes(s.end_time);
+    if (a < min) min = a;
+    if (b > max) max = b;
+  });
+  const start = Math.floor(min / 60) * 60;
+  let end = Math.ceil(max / 60) * 60;
+  // 最小跨度 3 小时: 只有一节 30 分钟的课时, 轴塌成一格看不出早晚
+  if (end - start < 180) end = start + 180;
+  return { start: start, end: end };
+}
 
-  const list = content.querySelector('.manage-list');
-  if (!w.slots.length) {
-    list.appendChild(el('<p class="muted">还没有固定课表。加上「钢琴周三 16:30-18:00」后, 周计划会把它算进当天负荷。</p>'));
+function hhmmToMinutes(t) {
+  const parts = String(t).split(':');
+  const h = parseInt(parts[0], 10) || 0;
+  const m = parseInt(parts[1], 10) || 0;
+  return h * 60 + m;
+}
+
+// 课表时间轴分区 (2026-11-02)。
+//
+// 之前课表是「弹窗里的平铺列表」: 要先点「管理」才看得见, 看到的是
+// 一行行文字, 脑补不出「周三下午几点到几点有课」。现在它是周计划页
+// 里的一个分区, 纵向时间轴 x 7 列, 一眼看到一周七天的分布。
+//
+// 撞车的两段错开叠放 (像 Google 日历), 并用红色标出 —— 红色在本项目
+// 里是「冲突/逾期」专用, 超载是琥珀色, 两者不混。
+function renderScheduleSection(w) {
+  const sec = el(`<section class="week-sched" id="week-sched">
+    <div class="week-sched-head">
+      <h3 class="card-title">固定课表</h3>
+      <button type="button" class="secondary" id="slot-add">＋ 新增时段</button>
+    </div>
+    <div class="week-sched-body"></div>
+  </section>`);
+
+  const body = sec.querySelector('.week-sched-body');
+  const range = scheduleTimeRange(w.slots);
+  if (!range) {
+    body.appendChild(el('<p class="muted">这周还没有固定课表。加上「钢琴 周三 16:30-18:00」后, 周计划会把它算进当天负荷。</p>'));
+    sec.querySelector('#slot-add').addEventListener('click', () => openScheduleSlotModal(null));
+    return sec;
   }
+
+  const rows = Math.round((range.end - range.start) / 60);
+  const grid = el(`<div class="week-tl" style="grid-template-rows: 26px repeat(${rows}, 44px)"></div>`);
+
+  // 表头: 周一 ~ 周日
+  WEEKDAY_LABELS.forEach((label, i) => {
+    grid.appendChild(el(`<div class="week-tl-hd${i === 2 ? ' is-today' : ''}" style="grid-column:${i + 2};grid-row:1">${label}</div>`));
+  });
+  // 刻度列 + 格子底
+  for (let r = 0; r < rows; r++) {
+    const hh = Math.floor(range.start / 60) + r;
+    const label = (hh < 24 ? String(hh).padStart(2, '0') : '24') + ':00';
+    grid.appendChild(el(`<div class="week-tl-tick" style="grid-column:1;grid-row:${r + 2}">${label}</div>`));
+    for (let c = 0; c < 7; c++) {
+      grid.appendChild(el(`<div class="week-tl-cell" style="grid-column:${c + 2};grid-row:${r + 2}"></div>`));
+    }
+  }
+
+  // 同一天里撞车的两段: 后一段右移 30%, 视觉上叠着放
+  const byDay = {};
   w.slots.forEach(s => {
-    const row = el(`<div class="manage-row">
-      <div class="manage-main">
-        <strong>${escapeAttr(s.project_name)}</strong>
-        <span class="manage-meta">${WEEKDAY_LABELS[s.weekday]} ${s.start_time}-${s.end_time}${s.note ? ' · ' + escapeAttr(s.note) : ''}</span>
-      </div>
-      <div class="manage-ops">
-        <button type="button" class="secondary" data-op="edit">改</button>
-        <button type="button" class="danger" data-op="del">删</button>
-      </div>
-    </div>`);
-    row.querySelector('[data-op="edit"]').addEventListener('click', () => openScheduleSlotModal(s));
-    row.querySelector('[data-op="del"]').addEventListener('click', async () => {
-      const ok = await confirmDialog({
-        title: '删除课表时段',
-        lead: `删除「${s.project_name} ${WEEKDAY_LABELS[s.weekday]} ${s.start_time}-${s.end_time}」?`,
-        okText: '删除',
-        danger: true,
-      });
-      if (!ok) { openScheduleManager(); return; }
-      try {
-        await api('DELETE', `/schedule-slots/${s.id}`);
-        toast('已删除课表时段');
-        await loadWeekPlan();
-      } catch (e) {
-        toast('删除失败: ' + e.message);
-        openScheduleManager();
+    if (!byDay[s.weekday]) byDay[s.weekday] = [];
+    byDay[s.weekday].push(s);
+  });
+  Object.keys(byDay).forEach(k => {
+    const list = byDay[k].slice().sort((a, b) => (a.start_time < b.start_time ? -1 : 1));
+    list.forEach((s, i) => {
+      s.__off = 0;
+      for (let j = 0; j < i; j++) {
+        const a = hhmmToMinutes(list[j].start_time);
+        const b = hhmmToMinutes(list[j].end_time);
+        const c = hhmmToMinutes(s.start_time);
+        const d = hhmmToMinutes(s.end_time);
+        if (c < b && d > a) s.__off++;
       }
     });
-    list.appendChild(row);
   });
-  content.querySelector('#slot-add').addEventListener('click', () => openScheduleSlotModal(null));
+
+  // 撞车的 id: 后端已经在 days[].conflicts[].slot_ids 里给了
+  const conflictIds = new Set();
+  w.days.forEach(d => (d.conflicts || []).forEach(c => (c.slot_ids || []).forEach(id => conflictIds.add(id))));
+
+  w.slots.forEach(s => {
+    const a = hhmmToMinutes(s.start_time);
+    const b = hhmmToMinutes(s.end_time);
+    const r1 = Math.max(0, Math.floor((a - range.start) / 60));
+    const r2 = Math.min(rows, Math.ceil((b - range.start) / 60));
+    const off = (s.__off || 0) * 30;
+    const cls = conflictIds.has(s.id) ? ' is-conflict' : '';
+    const blk = el(`<button type="button" class="week-tl-blk${cls}" style="grid-column:${s.weekday + 2};grid-row:${r1 + 2}/${r2 + 2};margin-left:${off}%">
+      <strong>${escapeAttr(s.project_name)}</strong>
+      <small>${s.start_time}-${s.end_time}${s.note ? ' · ' + escapeAttr(s.note) : ''}</small>
+    </button>`);
+    blk.addEventListener('click', () => openScheduleSlotModal(s));
+    grid.appendChild(blk);
+  });
+
+  body.appendChild(grid);
+  sec.querySelector('#slot-add').addEventListener('click', () => openScheduleSlotModal(null));
+  return sec;
+}
+
+// 负荷卡里的「课表(分) · 管理」格子 (2026-11-02):
+// 之前这里开的是弹窗 —— 课表列表装在弹窗里, 要点开才看得见。
+// 现在列表是页面里的时间轴分区了, 再开弹窗等于把同一份内容弹两遍。
+// 改成定位到分区并短暂描边, 家长点完就知道去哪儿改。
+// 函数名保留 —— tests/test_m5_week_plan.py 钉着它。
+function openScheduleManager() {
+  const sec = document.getElementById('week-sched');
+  if (!sec) return;
+  sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  flashScheduleSection();
+}
+
+function flashScheduleSection() {
+  const sec = document.getElementById('week-sched');
+  if (!sec) return;
+  sec.classList.add('is-flash');
+  setTimeout(() => sec.classList.remove('is-flash'), 1600);
 }
 
 async function openScheduleSlotModal(slot) {

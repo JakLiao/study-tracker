@@ -3685,6 +3685,85 @@ body[data-view="week"] main { max-width: 1240px; }
   font-size: var(--fs-caption-sm);
 }
 
+/* ---- 课表时间轴分区 (2026-11-02) ----
+   课表从「弹窗里的平铺列表」搬到了页面里, 变成一张真正的课表纸:
+   左边时间刻度, 7 天是 7 列, 课按时段画成色块。 */
+.week-sched {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.week-sched.is-flash {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.week-sched-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.week-sched-head .card-title { margin: 0; }
+.week-sched-body { overflow-x: auto; }
+
+.week-tl {
+  display: grid;
+  grid-template-columns: 46px repeat(7, minmax(120px, 1fr));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  min-width: 720px;
+}
+.week-tl-hd {
+  grid-row: 1;
+  text-align: center;
+  font-weight: 700;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.week-tl-hd.is-today { color: var(--accent); }
+.week-tl-tick {
+  grid-column: 1;
+  font-size: var(--fs-caption-sm);
+  color: var(--text-3);
+  text-align: right;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+.week-tl-cell {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.week-tl-blk {
+  border: none;
+  border-left: 3px solid var(--c-training);
+  border-radius: var(--radius-sm);
+  background: var(--c-training-soft);
+  color: #4B3272;
+  font-family: inherit;
+  text-align: left;
+  padding: 3px 5px;
+  margin: 2px 3px;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 2;
+}
+.week-tl-blk strong { display: block; font-size: var(--fs-caption-sm); }
+.week-tl-blk small { display: block; font-size: var(--fs-caption-sm); opacity: .75; }
+/* 撞车: 红色 —— 本项目里红色是冲突/逾期专用, 超载是琥珀色。 */
+.week-tl-blk.is-conflict {
+  background: var(--status-overdue-soft);
+  color: var(--status-overdue);
+  border: 1px dashed var(--status-overdue);
+  border-left: 3px solid var(--status-overdue);
+}
+.week-tl-blk:hover { filter: brightness(0.97); }
+
 /* ---- 课表 / 计划项管理弹窗 ---- */
 /* 列表给一个上限再滚动: 课表可能十几条, 弹窗不能长到把"新增"按钮
    顶出屏幕。 */
