@@ -246,11 +246,12 @@ def test_frontend_and_backend_speak_the_same_format():
     body = js.split("function durationParts(minutes) {")[1].split("\nfunction ")[0]
     # 分界点与后端一样: 60 分钟以下不换算。
     assert "m < 60" in body
-    # 整小时不带 0 分钟, 且中间不加空格 (后端 f"{hours}小时{rest}分钟")。
-    assert "`小时${rest}分钟`" in body
-    assert "'小时'" in body
-    # 不足一小时就是分钟数本身。
-    assert "unit: '分钟'" in body
+    # 前端拆成两半: "49小时" 大 + "16分钟" 小 (用户要求小时大、分钟小),
+    # 拼回去还是后端那句 "49小时16分钟"。
+    assert "`${h}小时`" in body
+    assert "small: rest ? `${rest}分钟` : ''" in body
+    # 不足一小时就是分钟数本身 (大数字 45, 小字「分钟」)。
+    assert "small: '分钟'" in body
 
 
 def test_month_highlight_uses_duration_format():

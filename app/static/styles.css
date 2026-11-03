@@ -2438,6 +2438,8 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 .wt-unit { font-size: var(--fs-body-s); color: var(--text-2); }
+/* 同上: 整小时时小单位那半是空的, 要藏掉。 */
+.wt-unit[hidden] { display: none; }
 .wt-unit-sm { font-size: var(--fs-caption); color: var(--text-2); }
 .wt-head-side { text-align: right; }
 .wt-side-num {
@@ -2787,6 +2789,9 @@ footer {
   font-size: var(--fs-cap);
   color: var(--text-3);
 }
+/* 整小时 (50 小时) 时小字那半是空的 —— 得真的藏掉, 不能留个空标签
+   把大数字顶偏。 */
+.wt-share-center span[hidden] { display: none; }
 /* 两个环的差额。一句话说清, 不用家长自己对着两张图减。 */
 .wt-share-delta {
   margin-top: var(--space-1);

@@ -1215,8 +1215,11 @@ def test_cumulative_minutes_are_rendered_as_duration():
     # 环图中心: 大数字 + 小单位 (环心的位置放不下整句)。
     share = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
     assert "durationParts(total)" in share, "环心要用换算后的主数字"
-    assert "centerBox.querySelector('span').textContent = dur.unit;" in share, \
+    assert "unitEl.textContent = dur.small;" in share, \
         "环心的小单位要跟着换算走"
+    # 小时并进大数字、分钟留在小字 (2026-11-03 用户要求)。
+    assert "unitEl.hidden = !dur.small;" in share, \
+        "整小时时小字那半要藏掉"
 
     # 图例里各科的累计分钟。
     legend = code.split("function subjectShareLegendHtml(subs, mins, pcts) {")[1].split("\nfunction ")[0]
@@ -1234,7 +1237,7 @@ def test_per_day_and_avg_keep_minutes():
     """
     code = _code(_app_js())
     buckets = code.split("function renderBuckets(r, withWeekend) {")[1].split("\nfunction ")[0]
-    assert "isMonth ? { big: String(head), unit: '分钟' } : durationParts(head)" in buckets, \
+    assert "isMonth ? { big: String(head), small: '分钟' } : durationParts(head)" in buckets, \
         "月视图的主角是日均, 必须保持分钟"
     # 单科一次时长 (chips) 保持分钟。
     assert "${b.avg[s]}分" in buckets, "单科 chips 保持分钟"

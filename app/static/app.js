@@ -3555,26 +3555,27 @@ function isMonthPeriod(period) {
 // 只给**累计值**用: 单日、单科的一次时长、日均那些几十分钟的数, 换算成
 // "0小时45分钟" 反而更难读 —— 保持分钟。
 //
-// 分两部分返回 (主数字 / 单位), 是因为环图中心那种"大数字 + 小单位"的
-// 版式不用改 CSS 就能用上; 需要一整句的地方用 formatDuration。
+// 拆成**大数字 + 小单位**两半: "49小时" 大、"6分钟" 小 (用户要求:
+// 小时的字体大, 分钟的字体小)。环图中心那种"大数字 + 小单位"的版式
+// 直接套; 需要一整句的地方用 formatDuration 把两半拼回去。
 function durationParts(minutes) {
   const m = Math.max(0, Number(minutes) || 0);
   if (m < 60) {
     // 日均这类值可能是小数 (62.5), 保留一位小数, 别显示成 62.50000001。
     const v = Number.isInteger(m) ? m : Math.round(m * 10) / 10;
-    return { big: String(v), unit: '分钟' };
+    return { big: String(v), small: '分钟' };
   }
   const total = Math.round(m);
   const h = Math.floor(total / 60);
   const rest = total % 60;
-  // 整小时 (50 小时) 不拖一个 "0分钟"。
-  return { big: String(h), unit: rest ? `小时${rest}分钟` : '小时' };
+  // 整小时 (50 小时) 不拖一个 "0分钟" —— 小字那半直接空着。
+  return { big: `${h}小时`, small: rest ? `${rest}分钟` : '' };
 }
 
 // 一行版: 「49小时16分钟」/「45分钟」
 function formatDuration(minutes) {
   const p = durationParts(minutes);
-  return `${p.big}${p.unit}`;
+  return `${p.big}${p.small}`;
 }
 
 // 卡片里显示一个累计用时。
@@ -4607,11 +4608,13 @@ function renderSubjectShare(r) {
     const mins = subs.map(s => src2.by_subject[s] || 0);
     const pcts = sharePercents(mins);
     legendEl.innerHTML = subjectShareLegendHtml(subs, mins, pcts);
-    // 中心是这张卡的**大标题** —— 四位数家长读不出分量, 换成
-    // "49" + "小时16分钟" (大数字 + 小单位, 环心的位置放不下整句)。
+    // 中心是这张卡的**大标题** —— 四位数家长读不出分量。小时并进大数字、
+    // 分钟留在小字 (2026-11-03 用户要求: 小时的字体大, 分钟的字体小)。
     const dur = durationParts(total);
     totalEl.textContent = dur.big;
-    centerBox.querySelector('span').textContent = dur.unit;
+    const unitEl = centerBox.querySelector('span');
+    unitEl.textContent = dur.small;
+    unitEl.hidden = !dur.small;
     canvasBox.setAttribute('aria-label',
       mode === 'est' ? '各科预计时间占比环图' : '各科实际时间占比环图');
     if (!canvasOk) {
@@ -4840,7 +4843,7 @@ function renderBuckets(r, withWeekend) {
     // "1小时3分钟" 反而不像日均); 周视图当主角的是**这一档的合计**
     // (动辄几百分钟, 换成小时+分钟才有分量)。
     const head = isMonth ? (b.avg ?? 0) : b.total;
-    const hp = isMonth ? { big: String(head), unit: '分钟' } : durationParts(head);
+    const hp = isMonth ? { big: String(head), small: '分钟' } : durationParts(head);
     const note = isMonth
       ? `${b.days} 天 · 合计 ${formatDuration(b.total)}`
       : (b.avg != null ? `日均 ${b.avg} 分 · ${b.days} 天` : `${b.days} 天`);
@@ -4849,7 +4852,7 @@ function renderBuckets(r, withWeekend) {
         <div class="wt-bucket-title">${b.title}</div>
         <div class="wt-bucket-sub">${b.sub}</div>
       </div>
-      <div class="wt-bucket-num"><strong>${hp.big}</strong><span class="wt-unit">${hp.unit}</span></div>
+      <div class="wt-bucket-num"><strong>${hp.big}</strong><span class="wt-unit"${hp.small ? '' : ' hidden'}>${hp.small}</span></div>
       <div class="muted">${note}</div>
       ${bar}
       ${chips}
