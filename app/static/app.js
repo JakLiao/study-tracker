@@ -3551,7 +3551,52 @@ function isMonthPeriod(period) {
 // 但画的是「本周」)。
 let _reviewPeriod = 'current';
 
-// 复盘页当前这一轮加载到的**原始**数据 (后端返回的 days 本来就含周末,
+// ====== 复盘页的加载遮罩 (2026-11-03) ======
+//
+// 为什么要有: 切周期 (本周/上周/本月/上月) 时旧实现是"清空 -> 等请求 ->
+// 内容一次性冒出来", 中间是块空白, 数据又"崩出来", 看着毛躁
+// (2026-11-03 用户反馈)。遮罩盖在内容区上, 至少有个"正在算"的交代。
+//
+// 遮罩是 #review-content 的**兄弟**节点 (index.html 的 .review-body):
+// 容器被 innerHTML='' 清空时它不受影响, 也就不会被 appendChild 顶不掉、
+// 永久残留 —— 旧回归 (test_load_review_has_no_stuck_loading_placeholder)
+// 守的正是这件事, 实现换了但那条底线没变。
+//
+// 最短显示时间: 数据要是 30ms 就回来了, 遮罩闪一下比不显示还闹;
+// 压到 250ms 让它像一次有意的过渡, 而不是抽搐。
+const REVIEW_LOADING_MIN_MS = 250;
+
+// 遮罩的"当前轮次"标记。旧的一轮在撤遮罩前要等满最短显示时间, 那段时间里
+// 家长可能又点了别的周期 —— 那一轮已经盖上了新遮罩, 旧的这轮就不能再撤
+// (撤了就等于在新数据还没到时露出空白, 又回到"内容崩出来")。
+let _reviewLoadingToken = 0;
+
+function showReviewLoading() {
+  const mask = document.getElementById('review-loading');
+  const root = document.getElementById('review-content');
+  if (!mask) return null;
+  const token = ++_reviewLoadingToken;
+  mask.hidden = false;
+  if (root) root.setAttribute('aria-busy', 'true');
+  const t0 = Date.now();
+  return {
+    // 数据在遮罩底下就位之后再撤 —— 撤的瞬间看到的是**已经画好**的内容,
+    // 不会露出半张页面。走 finally: 渲染抛了异常也必须撤, 否则页面
+    // 永远停在"加载中"。
+    done: () => new Promise(resolve => {
+      const wait = Math.max(0, REVIEW_LOADING_MIN_MS - (Date.now() - t0));
+      setTimeout(() => {
+        if (token === _reviewLoadingToken) {
+          mask.hidden = true;
+          if (root) root.removeAttribute('aria-busy');
+        }
+        resolve();
+      }, wait);
+    }),
+  };
+}
+
+// ====== 复盘页当前这一轮加载到的**原始**数据 (后端返回的 days 本来就含周末,
 // 周末的过滤在前端做, 见 reviewWeekendView)。
 //
 // 留着它是为了切「显示周末」时能**就地重画**: 同一批数据换个看法而已,
@@ -3797,6 +3842,9 @@ async function loadReview(period) {
   // 十个实例。见 charts.js 的 ChartRegistry。
   if (typeof disposeCharts === 'function') disposeCharts(ChartRegistry);
   root.innerHTML = '';
+  // 加载遮罩: 数据回来之前先盖住内容区。旧实现是"清空 -> 等 -> 内容一次性
+  // 冒出来", 中间是块空白, 数据又崩出来 (2026-11-03 用户反馈)。
+  const loading = showReviewLoading();
   // 孩子端是另一页东西: 我的成绩单 (勋章墙 + 成长报告), 家长端的
   // 环形图/折线/偏差表对他没有意义。
   //
@@ -3814,8 +3862,13 @@ async function loadReview(period) {
       await new Promise(resolve =>
         document.addEventListener('dual-ready', resolve, { once: true }));
     }
-    if (typeof renderKidReport === 'function') {
-      await renderKidReport(root, period);
+    try {
+      if (typeof renderKidReport === 'function') {
+        await renderKidReport(root, period);
+      }
+    } finally {
+      // 遮罩必须撤 —— 成绩单画挂了也不能永远停在"加载中"。
+      if (loading) await loading.done();
     }
     return;
   }
@@ -3844,59 +3897,83 @@ async function loadReview(period) {
       d => ({ ok: true, data: d }),
       e => ({ ok: false, error: e.message }))
     : Promise.resolve({ ok: false, skipped: true });
-  const [report, time, dev, month] = await Promise.all([reportP, timeP, devP, monthP]);
+  let report, time, dev, month;
+  try {
+    [report, time, dev, month] = await Promise.all([reportP, timeP, devP, monthP]);
+  } catch (e) {
+    // 四条接口各自都带兜底 (timeP/monthP 收成 {ok,error}, dev/week 内部
+    // catch), 理论上不会到这里; 万一真炸了, 也不能让遮罩留在屏幕上。
+    // 撤完再把错误抛出去 —— 语义跟以前一样, 只是不留下一块死遮罩。
+    if (loading) await loading.done();
+    throw e;
+  }
   // 期间用户又切了周期 —— 这一轮的结果已经过时, 整段丢掉, 让新一轮画。
+  // (新一轮已经把自己的遮罩盖上了, 这里绝不能去动它。)
   if (seq !== _reviewSeq) return;
-  if (report) root.appendChild(report);
-  // 周末过滤只做一次, 图表与统计块共用同一个 view ——
-  // 之前两处各拿一份, 一处过滤一处没过滤, 于是"已剔除"里会冒出周末。
-  const view = time.ok ? reviewWeekendView(time.data) : null;
-  if (view) {
-    root.appendChild(renderReviewTimeBlock(view, period));
-  } else {
-    root.appendChild(el(`<div class="error-banner">用时统计加载失败: ${time.error}</div>`));
-  }
-  root.appendChild(dev.node);
+  let extras = null;
+  // view 提到 try 外面: 薄弱项卡那块 (在 finally 之后)还要用。
+  let view = null;
+  try {
+    if (report) root.appendChild(report);
+    // 周末过滤只做一次, 图表与统计块共用同一个 view ——
+    // 之前两处各拿一份, 一处过滤一处没过滤, 于是"已剔除"里会冒出周末。
+    view = time.ok ? reviewWeekendView(time.data) : null;
+    if (view) {
+      root.appendChild(renderReviewTimeBlock(view, period));
+    } else {
+      root.appendChild(el(`<div class="error-banner">用时统计加载失败: ${time.error}</div>`));
+    }
+    root.appendChild(dev.node);
 
-  // ===== 结论区: 两张图 + 薄弱项 (+ 本月周期的月报与按周对比) =====
-  //
-  // 放在最前面而不是追加在末尾: 周报块内容很长 (负荷表 / 偏差表 / 口径说明
-  // 都在里面), 追加的话这两张图要滚过三屏才看得到, 家长根本等不到。
-  // 「先看结论再看明细」和用户在复盘页的诉求是一致的 —— 图就是结论。
-  //
-  // 2026-11-02 去重: 这里原来有 4 张图 (堆叠柱 + 双饼 + 环图 + 折线),
-  // 但只有 2 份独立数据 (环图 = 实际占比饼, 折线 = 柱状图的数据)。
-  // 现在只剩两张: 每日用时柱状 + 学科占比环 (可切预估/实际)。
-  const extras = el('<div class="p-review-extras"></div>');
-  // 记住这一轮的原始数据 + 两张图的重画入口:
-  // 切「显示周末」时靠它们就地重画 (不重新请求、不重建卡片)。
-  _reviewData = time.ok ? { period, time: time.data } : null;
-  _reviewChartRepaints = [];
-  if (view) {
-    // 整段没有用时就不画图 —— 空坐标系对家长没有任何信息, 而下面统计块里
-    // 已经有一句"该区间没有已完成的作业, 暂无用时数据"说明白了。
-    // (环图有自己的零值判断, 这里管的是柱状图。)
-    if (view.days.some(d => (d.total_minutes || 0) > 0)) {
-      const chartCard = renderTimeChart(view);
-      extras.appendChild(chartCard);
-      // 同一个实例换数据, 不重建卡片 (重建 = 画布被摘掉再插, 中间那帧是空的)。
-      _reviewChartRepaints.push(next => paintTimeChart(chartCard, next));
+    // ===== 结论区: 两张图 + 薄弱项 (+ 本月周期的月报与按周对比) =====
+    //
+    // 放在最前面而不是追加在末尾: 周报块内容很长 (负荷表 / 偏差表 / 口径说明
+    // 都在里面), 追加的话这两张图要滚过三屏才看得到, 家长根本等不到。
+    // 「先看结论再看明细」和用户在复盘页的诉求是一致的 —— 图就是结论。
+    //
+    // 2026-11-02 去重: 这里原来有 4 张图 (堆叠柱 + 双饼 + 环图 + 折线),
+    // 但只有 2 份独立数据 (环图 = 实际占比饼, 折线 = 柱状图的数据)。
+    // 现在只剩两张: 每日用时柱状 + 学科占比环 (可切预估/实际)。
+    extras = el('<div class="p-review-extras"></div>');
+    // 记住这一轮的原始数据 + 两张图的重画入口:
+    // 切「显示周末」时靠它们就地重画 (不重新请求、不重建卡片)。
+    _reviewData = time.ok ? { period, time: time.data } : null;
+    _reviewChartRepaints = [];
+    if (view) {
+      // 整段没有用时就不画图 —— 空坐标系对家长没有任何信息, 而下面统计块里
+      // 已经有一句"该区间没有已完成的作业, 暂无用时数据"说明白了。
+      // (环图有自己的零值判断, 这里管的是柱状图。)
+      if (view.days.some(d => (d.total_minutes || 0) > 0)) {
+        const chartCard = renderTimeChart(view);
+        extras.appendChild(chartCard);
+        // 同一个实例换数据, 不重建卡片 (重建 = 画布被摘掉再插, 中间那帧是空的)。
+        _reviewChartRepaints.push(next => paintTimeChart(chartCard, next));
+      }
+      const share = renderSubjectShare(view);
+      if (share) extras.appendChild(share);
+      // 占比环的重画入口 (切「显示周末」时换数据, 不重建卡片)。
+      if (share && typeof share.__repaintShare === 'function') {
+        _reviewChartRepaints.push(next => share.__repaintShare(next));
+      }
     }
-    const share = renderSubjectShare(view);
-    if (share) extras.appendChild(share);
-    // 占比环的重画入口 (切「显示周末」时换数据, 不重建卡片)。
-    if (share && typeof share.__repaintShare === 'function') {
-      _reviewChartRepaints.push(next => share.__repaintShare(next));
+    // 月视图周期: 月报卡 + 月内按周对比。
+    if (month.ok) {
+      extras.appendChild(renderMonthReport(month.data));
+      const weeks = renderMonthWeeksChart(month.data);
+      if (weeks) extras.appendChild(weeks);
+    } else if (month.error) {
+      extras.appendChild(el(`<div class="error-banner">月报加载失败: ${escapeAttr(month.error)}</div>`));
     }
+    // 结论区先挂上去: 撤遮罩的那一刻看到的是**已经画好**的内容,
+    // 不会露出半张页面。
+    root.insertBefore(extras, root.firstChild);
+  } catch (e) {
+    root.appendChild(el(`<div class="error-banner">复盘渲染失败: ${escapeAttr(e.message)}</div>`));
+  } finally {
+    // 遮罩必须撤 —— 渲染出错也撤, 否则页面永远停在"加载中"。
+    if (loading) { try { await loading.done(); } catch (e) { /* 撤不掉就算了 */ } }
   }
-  // 月视图周期: 月报卡 + 月内按周对比。
-  if (month.ok) {
-    extras.appendChild(renderMonthReport(month.data));
-    const weeks = renderMonthWeeksChart(month.data);
-    if (weeks) extras.appendChild(weeks);
-  } else if (month.error) {
-    extras.appendChild(el(`<div class="error-banner">月报加载失败: ${escapeAttr(month.error)}</div>`));
-  }
+
   // 薄弱项卡在 dual.js 里 —— 它要读晚间小结的标签 (家长端的措辞)。
   //
   // 「上月」周期传月份: 薄弱项要读**那个月**的晚间小结, 不是"最近 31 天"。
@@ -3904,14 +3981,20 @@ async function loadReview(period) {
   // 空月份直接不画: 薄弱项的标签来自晚间小结, 而 collectReflectionTags
   // 是"一天一个请求" —— 一个空月份就是三十来个必然落空的请求, 换来的
   // 只是一张空卡。空态由上面的月报卡说明白了 ("该月还没有作业记录")。
+  //
+  // 它**最后**补: 要读晚间小结的标签, 一个月就是三十来个请求。干等它
+  // 会让家长盯着遮罩发呆 —— 结论区先给, 薄弱项随后到。
   const monthHasData = !!view && view.days.some(d => (d.total_minutes || 0) > 0);
   const skipWeak = period === 'last_month' && !monthHasData
     && !((dev.data && dev.data.sample_size) > 0);
-  if (typeof renderParentReviewExtras === 'function' && !skipWeak) {
-    const weak = await renderParentReviewExtras(period, { deviation: dev.data, month: monthParam });
-    if (weak) extras.appendChild(weak);
+  if (extras && typeof renderParentReviewExtras === 'function' && !skipWeak) {
+    try {
+      const weak = await renderParentReviewExtras(period, { deviation: dev.data, month: monthParam });
+      if (weak) extras.appendChild(weak);
+    } catch (e) {
+      // 薄弱项卡挂掉不该把整页带走 (结论区已经挂在页面上了, 只是少一张卡)。
+    }
   }
-  root.insertBefore(extras, root.firstChild);
 }
 
 // ====== 本周课后周报 (M6) ======

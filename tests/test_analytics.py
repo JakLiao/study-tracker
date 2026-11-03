@@ -761,16 +761,42 @@ def test_load_review_clears_container_before_append():
 
 
 def test_load_review_has_no_stuck_loading_placeholder():
-    """不要用 innerHTML 塞「加载中…」占位。
+    """加载遮罩不能变成"永远留着的一行加载中"。
 
     回归: 两块内容都用 appendChild 追加, appendChild 顶不掉先放进去的
     占位节点, 于是页面上会永远留着一行"加载中…"。
 
+    2026-11-03 有了真正的加载遮罩 (切周期时盖住内容区), 但它与旧的
+    "innerHTML 塞一行加载中…" 是两回事, 两条底线没变:
+      1. 遮罩**不在 #review-content 里面** —— 容器被 innerHTML='' 清空时
+         它不受影响, 也就不会被 appendChild 顶不掉、永久残留;
+      2. 撤遮罩是**显式**的 (hidden = true), 而且走 finally —— 渲染抛了
+         异常也撤, 否则页面永远停在"加载中"。
+
     必须先剥注释 —— 这条断言本身就得在注释里解释"为什么不能写加载中",
     不剥的话它会匹配到自己。
     """
-    body = _code(_app_js()).split("async function loadReview(period) {")[1].split("\n}")[0]
+    js = _app_js()
+    body = _code(js).split("async function loadReview(period) {")[1].split("\n}")[0]
+    # 旧做法: 往内容容器里塞一行"加载中…"
     assert "加载中" not in body, "占位不会被 appendChild 顶掉, 会永久残留"
+
+    # 遮罩是兄弟节点, 不在内容容器里。
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "app/static/index.html").read_text(encoding="utf-8")
+    m = re.search(r'<div class="review-body">(.*?)</div>\s*</section>', html, re.S)
+    assert m, "缺少 .review-body 容器"
+    inner = m.group(1)
+    assert 'id="review-content"' in inner and 'id="review-loading"' in inner
+    # 顺序: 容器在前, 遮罩在后 (遮罩靠 CSS 绝对定位盖在上面)
+    assert inner.index('id="review-content"') < inner.index('id="review-loading"')
+
+    # 撤遮罩是显式的, 且走 finally。
+    assert "mask.hidden = false" in js, "遮罩要显式显示"
+    assert "mask.hidden = true" in js, "遮罩要显式撤"
+    assert "finally" in body, "撤遮罩必须走 finally —— 渲染出错也要撤"
+    assert "loading.done()" in body, "loadReview 必须撤遮罩"
 
 
 def test_deviation_table_still_renders():

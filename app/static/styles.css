@@ -2485,6 +2485,47 @@ footer {
 /* 勾上后文字变深: 让"当前开着"一眼看得出来, 不必去数方框里那点对勾 */
 .weekend-toggle.is-on { color: var(--text-1); }
 
+/* --- 21c. 复盘页: 加载遮罩 (2026-11-03) ---
+   切周期时旧实现是"清空 -> 等请求 -> 内容一次性冒出来": 中间是块空白,
+   数据又"崩出来", 看着毛躁 (用户反馈)。遮罩盖在内容区上, 数据在底下
+   就位之后再撤 —— 撤的瞬间看到的是**已经画好**的内容, 不会露出半张页。
+
+   遮罩是 #review-content 的兄弟节点, 所以容器被 innerHTML='' 清空时
+   它不受影响 (旧回归守的正是"别留一行永远不消失的加载中")。
+
+   .review-body 给个最小高度: 加载时内容区是空的, 没这个高度遮罩就没
+   东西可盖, 页面会先塌下去再弹开。 */
+.review-body {
+  position: relative;
+  min-height: 320px;
+}
+.review-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-body-s);
+  z-index: 2;
+}
+/* 作者样式里的 display:flex 会盖掉浏览器对 [hidden] 的 display:none ——
+   遮罩就永远撤不掉了 (同 .review-month-nav[hidden] / .quick-row[hidden])。 */
+.review-loading[hidden] { display: none; }
+/* 转圈用当前角色的主色 (家长端靛蓝 / 孩子端蜡笔黄), 不用 .spinner 的红 ——
+   红色在 loading 语境里像"出错了"。 */
+.review-loading__spin {
+  width: 22px;
+  height: 22px;
+  border-width: 3px;
+  margin-right: 0;
+  border-color: var(--border);
+  border-top-color: var(--accent);
+}
+
 /* --- 21b. 复盘页: 月份步进器 (2026-11-03) ---
    只在「上月」周期出现 (JS 控制 hidden)。它回答的是"现在看的是哪个月",
    所以月份名要显眼 —— 周期按钮那一排写的是"上月", 而内容可能已经是 8 月,

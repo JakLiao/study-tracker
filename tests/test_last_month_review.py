@@ -366,6 +366,55 @@ def test_empty_month_does_not_show_zero_completion_rate():
     assert "(c.total || 0) === 0 ? '—'" in code
 
 
+# ====== 加载遮罩 (2026-11-03) ======
+
+def test_loading_mask_is_sibling_of_content():
+    """遮罩不能放在 #review-content 里面。
+
+    容器被 innerHTML='' 清空时, 里面的东西会被一起清掉 —— 而遮罩是要
+    **活过**这次清空、盖在新内容上面的。放在容器里就等于没做遮罩。
+    """
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    m = re.search(r'<div class="review-body">(.*?)</div>\s*</section>', html, re.S)
+    assert m, "缺少 .review-body 容器"
+    inner = m.group(1)
+    assert 'id="review-loading"' in inner
+    # 遮罩与内容容器是**兄弟** —— 容器自己不能包着遮罩
+    assert re.search(
+        r'<div id="review-content"></div>\s*<div class="review-loading"', inner), \
+        "遮罩要跟内容容器平级, 不能塞在容器里面"
+
+
+def test_loading_mask_is_hidden_by_default():
+    """遮罩默认是藏着的 —— 不然每次进页面都先盖一层。"""
+    html = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+    m = re.search(r'<div class="review-loading"[^>]*>', html)
+    assert m
+    assert "hidden" in m.group(0), "遮罩默认必须 hidden"
+
+
+def test_loading_mask_has_hidden_css_rule():
+    """作者样式里的 display:flex 会盖掉浏览器对 [hidden] 的规则。
+
+    没有这条, 遮罩撤不掉 —— 页面永远停在"加载中"。同 .review-month-nav[hidden]
+    踩过的坑 (2026-11-03 浏览器实测)。
+    """
+    css = (ROOT / "app/static/styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.review-loading\[hidden\]\s*\{\s*display:\s*none", css), \
+        "遮罩必须有 .review-loading[hidden] { display: none }"
+
+
+def test_loading_mask_minimum_duration():
+    """遮罩至少显示一小会儿。
+
+    数据 30ms 就回来时, 遮罩闪一下比不显示还闹 —— 压到一个短但确定的
+    时长, 让它像一次有意的过渡, 而不是抽搐。
+    """
+    code = _code(_app_js())
+    assert "REVIEW_LOADING_MIN_MS" in code
+    assert re.search(r"const REVIEW_LOADING_MIN_MS = \d+;", code)
+
+
 def test_weak_card_uses_selected_month():
     """薄弱项读的晚间小结必须是**那个月**的, 不是"最近 31 天"。"""
     dual = (ROOT / "app/static/dual.js").read_text(encoding="utf-8")

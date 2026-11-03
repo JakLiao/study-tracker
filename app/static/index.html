@@ -418,7 +418,19 @@
                 aria-label="下一个月">›</button>
         <button type="button" class="ghost review-month-back" id="review-month-back">回到上月</button>
       </div>
-      <div id="review-content"></div>
+      <!-- 加载遮罩 (2026-11-03)。
+           切周期 (本周/上周/本月/上月) 时旧实现是"清空 -> 等请求 -> 内容
+           一次性冒出来", 中间是块空白, 数据又"崩出来", 看着毛躁。
+           遮罩是 #review-content 的**兄弟**节点 —— 容器被 innerHTML=''
+           清空时它不受影响, 也就不会被 appendChild 顶不掉、永久残留。
+           撤遮罩由 app.js 显式做 (走 finally, 渲染出错也撤)。 -->
+      <div class="review-body">
+        <div id="review-content"></div>
+        <div class="review-loading" id="review-loading" hidden role="status" aria-live="polite">
+          <span class="spinner review-loading__spin" aria-hidden="true"></span>
+          <span class="review-loading__text">加载中…</span>
+        </div>
+      </div>
     </section>
 
     <!-- ====== 设置 ====== -->
