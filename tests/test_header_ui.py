@@ -265,6 +265,90 @@ def test_entry_cta_does_not_pin_min_height(styles_css):
         "min-height 交给全局触控目标规则, 别在 .cta-entry 里写死"
 
 
+# ====== 1c. 家长专属入口的首帧防闪 (2026-11-03) ======
+#
+# 用户反馈: 「登记作业」的按键, 有时候刷新页面会闪现。
+#
+# 根因: 家长专属入口 (.view-parent-only) 的可见性**只由 JS 决定** ——
+# app.js 的 applyRoleNav() 要等脚本执行完才写 style.display='none';
+# 而 app.js 是 <body> 末尾的普通 <script> (289KB), 浏览器会在它下载期间
+# 先画一帧已解析的 DOM。孩子端于是先看到一帧家长专属入口, 脚本一跑就消失。
+#
+# 「有时候」= 闪现时长取决于 app.js 的下载速度:
+#   命中缓存时 ~38ms (看不出来) / 弱网冷加载时 20 秒以上 (刺眼)。
+# 2026-11-02 把入口从 .ghost (透明底) 改成实心药丸键之后, 这个一直存在的
+# 隐患才第一次肉眼可见。
+#
+# 修法: 可见性改由 CSS 按 [data-role] 决定 —— <head> 里的内联脚本在 body
+# 解析**之前**就把 data-role 落到 <html> 上, 所以规则从第一帧起就生效。
+#
+# 这组测试钉的是「**CSS 必须自己就能藏住**」: 只靠 applyRoleNav() 的话,
+# 谁把那条 JS 删了/挪晚了, 闪现就会回来, 而这类 bug 没有单测能兜住。
+
+
+def _kid_hide_rule(css: str) -> str:
+    """取出 [data-role="kid"] 下隐藏家长专属入口的那条规则。
+
+    选择器是逗号分组的 (一条规则同时管 .view-parent-only 和
+    .role-menu-wrap), 所以不能用上面那个只认 "SEL {" 的 _rule()。
+
+    先剥掉注释: 文件开头的令牌说明里也出现过 [data-role="kid"],
+    不剥会匹配到注释而不是规则 (注释里没有 " {", 但上面的 _rule()
+    同理会踩到 .flatpickr-theme.css 的续行选择器)。
+    """
+    stripped = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for m in re.finditer(r'([^{}]*\[data-role="kid"\][^{}]*)\{', stripped):
+        sel = m.group(1)
+        if ".view-parent-only" in sel or ".role-menu-wrap" in sel:
+            end = stripped.find("\n}", m.start())
+            return stripped[m.start():end] if end != -1 else ""
+    return ""
+
+
+def test_parent_only_entries_hidden_by_css_not_only_by_js(styles_css):
+    """孩子端必须在第一帧就藏住家长专属入口, 不能等 JS 跑完。"""
+    rule = _kid_hide_rule(styles_css)
+    assert rule, "缺少 [data-role=\"kid\"] 下隐藏家长专属入口的 CSS 规则"
+    assert "display" in rule and "none" in rule, \
+        f"该规则必须设 display:none: {rule}"
+    assert ".view-parent-only" in rule, \
+        f"规则必须覆盖 .view-parent-only (今日页「＋ 登记作业」等): {rule}"
+    assert ".role-menu-wrap" in rule, \
+        f"规则必须覆盖 .role-menu-wrap (右上角头像菜单): {rule}"
+
+
+def test_kid_hide_rule_beats_the_component_display_rules(styles_css):
+    """隐藏规则必须压得住组件自己的 display。
+
+    .cta-entry / .view-switch / .role-menu-wrap 都是 (0,1,0);
+    [data-role="kid"] .view-parent-only 是 (0,2,0) —— 特异度更高,
+    所以同一层里谁写在前面不重要, 这条规则照样赢。
+    这里把「特异度更高」这件事钉住, 免得将来有人把选择器改简单了
+    (比如写成 .view-parent-only { display:none }), 那就变成**两个角色
+    都不显示**。
+    """
+    rule = _kid_hide_rule(styles_css)
+    assert rule, "缺少 [data-role=\"kid\"] 隐藏规则"
+    assert re.search(r'\[data-role="kid"\]\s+\.view-parent-only', rule), \
+        f"必须用 [data-role=\"kid\"] .view-parent-only 组合选择器: {rule}"
+
+
+def test_head_script_sets_role_before_body_is_parsed(index_html):
+    """data-role 必须在 <body> 解析之前就落到 <html> 上。
+
+    CSS 规则要能从第一帧生效, 前提是 data-role 在首帧之前就已就位 ——
+    这正是 <head> 里那段内联脚本的职责 (app.js 那时还没加载)。
+    """
+    head = index_html.split("<body>", 1)[0]
+    assert "st.role" in head, \
+        "首帧防闪脚本不在 <head> 里 —— data-role 会晚于第一帧"
+    assert 'dataset.role' in head, "首帧脚本没有写 data-role"
+    # 脚本必须在 body 之前
+    assert index_html.index("st.role") < index_html.index("<body>"), \
+        "首帧脚本位置错了: 必须排在 <body> 之前"
+
+
+
 def test_role_switch_control_exists(index_html):
     """角色切换按钮 (家长端「切到孩子」/ 孩子端「家长」)。"""
     assert 'class="role-switch"' in index_html

@@ -289,6 +289,20 @@
                    var(--font-emoji), serif;
 }
 
+/* ===== 家长专属入口的首帧可见性 (2026-11-03) =====
+   .view-parent-only (今日页「＋ 登记作业」、日历页/周计划页的视图切换器)
+   与 .role-menu-wrap (头像菜单) 的可见性, 过去只由 app.js 的 applyRoleNav()
+   在**脚本执行后**才写 display:none —— 而 app.js 是 <body> 末尾的普通
+   <script> (289KB), 浏览器会在它下载期间先画一帧已解析的 DOM。孩子端于是
+   先看到一帧家长专属入口, app.js 一跑就消失 (FOUC 闪现)。
+
+   可见性改由 CSS 按 [data-role] 决定: <head> 里的内联脚本在 body 解析**之前**
+   就把 data-role 落到 <html> 上, 所以这条规则从第一帧起就生效, 不必等脚本。 */
+[data-role="kid"] .view-parent-only,
+[data-role="kid"] .role-menu-wrap {
+  display: none;
+}
+
 /* 孩子端底纹: 方格纸 (规范 §2.3) —— 横竖双向, 22px 一格, 线色 = --grid。 */
 [data-role="kid"] body {
   background-color: var(--paper);
