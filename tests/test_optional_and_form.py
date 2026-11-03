@@ -206,12 +206,27 @@ def _manual_form_html(app_js: str) -> str:
     编辑弹窗(openEditAssignmentModal)也用同一套网格, 且定义在前面,
     全文首个匹配会落到编辑表单上, 于是这里断言的其实是另一个弹窗 ——
     手动添加真丢了字段也不会被发现。
+
+    .form-grid 内部按 div 配对截取, 不能用"第一个 </div>": 2026-11-03 起
+    弹窗里的自绘下拉浮层本身就是 <div class="dd-panel">, 撞上它的 </div>
+    就收尾的话, 表单会被截掉一半, 后面的字段全看不见。
     """
     m = re.search(r"function openManualAddModal\(\) \{(.*?)\n\}", app_js, re.S)
     assert m, "未找到 openManualAddModal"
-    grid = re.search(r'<div class="form-grid">(.*?)</div>', m.group(1), re.S)
-    assert grid, "openManualAddModal 内未找到 .form-grid 表单"
-    return grid.group(1)
+    src = m.group(1)
+    tag = '<div class="form-grid">'
+    assert tag in src, "openManualAddModal 内未找到 .form-grid 表单"
+    start = src.index(tag) + len(tag)
+    depth = 1
+    i = start
+    while depth:
+        d = re.compile(r"<div\b|</div>").search(src, i)
+        assert d, ".form-grid 未闭合"
+        depth += -1 if d.group(0) == "</div>" else 1
+        i = d.end()
+        if depth == 0:
+            return src[start:d.start()]
+    raise AssertionError(".form-grid 未闭合")
 
 
 def test_manual_form_labels_marked(app_js):
@@ -227,10 +242,14 @@ def test_manual_form_all_fields_present(app_js):
     作业类型现在是自绘下拉, 它的 input 仍然叫 m-type: 提交时
     getElementById('m-type') 要能取到值, 改名会静默变成 undefined,
     存进去的 task_type 永远是 null。
+
+    科目与任务来源自 2026-11-03 起也是自绘下拉, id 写在 selectHtml() 的
+    第一个参数里 —— 两种写法都算"这个字段还在"。
     """
     html = _manual_form_html(app_js)
     for fid in ("m-due", "m-subject", "m-name", "m-est", "m-opt", "m-dl"):
-        assert f'id="{fid}"' in html, f"{fid} 丢失, 提交会取不到值"
+        assert f'id="{fid}"' in html or f"selectHtml('{fid}'" in html, \
+            f"{fid} 丢失, 提交会取不到值"
     # 作业类型的 input 由 taskTypeComboHtml 生成, 不在 .form-grid 的字面量里,
     # 因此这条断言要落到 app.js 整体上。
     assert "taskTypeComboHtml('m-type'" in app_js, "m-type 下拉缺失"

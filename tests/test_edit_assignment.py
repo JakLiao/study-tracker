@@ -431,10 +431,33 @@ def test_edit_uses_patch_endpoint(app_js):
     assert "api('PATCH', `/assignments/${item.id}`" in block
 
 
+def _grid_html(src: str) -> str:
+    """取出 <div class="form-grid"> ... </div> 的内容。
+
+    按 div 配对截取, 不能用"第一个 </div>" —— 2026-11-03 起弹窗里的自绘
+    下拉浮层本身就是 <div class="dd-panel">, 撞上它的 </div> 就收尾的话,
+    表单会被截掉一半, 后面的字段全看不见, 断言会对着半截 HTML 空转。
+    """
+    tag = '<div class="form-grid">'
+    start = src.index(tag) + len(tag)
+    depth = 1
+    i = start
+    while depth:
+        m = re.compile(r"<div\b|</div>").search(src, i)
+        assert m, ".form-grid 未闭合"
+        depth += -1 if m.group(0) == "</div>" else 1
+        i = m.end()
+        if depth == 0:
+            return src[start:m.start()]
+    raise AssertionError(".form-grid 未闭合")
+
+
 def test_edit_modal_has_all_fields(app_js):
     block = app_js.split("function openEditAssignmentModal(")[1].split("\n}")[0]
     for fid in ("ed-subject", "ed-name", "ed-est", "ed-due", "ed-dl", "ed-opt"):
-        assert f'id="{fid}"' in block, f"{fid} 缺失"
+        # 自绘下拉的 id 写在 selectHtml() 的第一个参数里 (2026-11-03 起
+        # 科目/任务来源不再是原生 <select>), 两种写法都算"这个字段还在"。
+        assert f'id="{fid}"' in block or f"selectHtml('{fid}'" in block, f"{fid} 缺失"
     # 作业类型改成自绘下拉后, input 由 taskTypeComboHtml 渲染, 不在这段字面量里
     assert "taskTypeComboHtml('ed-type'" in block, "ed-type 下拉缺失"
 
@@ -447,12 +470,11 @@ def test_edit_form_hints_are_inline_not_stray_paragraph(app_js):
     弹窗里改)。拆成字段旁的说明后, 底部不再有任何游离文字。
     """
     block = app_js.split("function openEditAssignmentModal(")[1].split("\n}")[0]
-    grid = re.search(r'<div class="form-grid">(.*?)</div>', block, re.S)
-    assert grid, "未找到 .form-grid"
+    grid_html = _grid_html(block)
     # 三个需要解释的字段各自带 .form-hint
     for label in ("截止时间", "作业类型", "是否选做"):
         seg = re.search(
-            rf'<span class="form-label">{label}</span>(.*?)</label>', grid.group(1), re.S)
+            rf'<span class="form-label">{label}</span>(.*?)</label>', grid_html, re.S)
         assert seg, f"{label} 字段不存在"
         assert 'class="form-field"' in seg.group(1), f"{label} 未与说明裹进 form-field"
         assert 'class="form-hint"' in seg.group(1), f"{label} 旁缺就地说明"
@@ -491,8 +513,7 @@ def test_edit_field_order_matches_spec(app_js):
     与「手动添加」弹窗保持同一顺序。
     """
     block = app_js.split("function openEditAssignmentModal(")[1].split("\n}")[0]
-    grid = re.search(r'<div class="form-grid">(.*?)</div>', block, re.S).group(1)
-    got = re.findall(r'<span class="form-label">([^<]+)</span>', grid)
+    got = re.findall(r'<span class="form-label">([^<]+)</span>', _grid_html(block))
     assert got == ["归属日", "任务来源", "科目", "项目", "作业项", "作业类型", "预计用时", "是否选做", "截止时间"], \
         f"字段顺序与设计不符: {got}"
 
@@ -557,23 +578,26 @@ def test_combo_is_built_with_a11y_roles(app_js):
 
 
 def test_combo_supports_keyboard_navigation(app_js):
-    """上下键移动高亮、回车选中、Esc 关闭 —— 键盘用户不能被排除。"""
+    """上下键移动高亮、回车选中、Esc 关闭 —— 键盘用户不能被排除。
+
+    2026-11-03 起键盘处理住在共享内核 bindDropdown 里: 三种下拉各写一份
+    必然分叉 (Esc 行为、方向键顺序任何一处改了另外两处都要跟着改), 所以
+    断言也跟着指向内核 —— 语义没变, 只是换了个地方。
+    """
     code = _code(app_js)
-    fn = code.split("function bindCombo(")[1].split("\nfunction ")[0]
+    fn = code.split("function bindDropdown(")[1].split("\nfunction ")[0]
     for key in ("ArrowDown", "ArrowUp", "Enter", "Escape"):
         assert f"'{key}'" in fn, f"下拉未处理 {key}"
-    assert "aria-selected" in fn, "高亮项应同步 aria-selected"
+    assert "aria-activedescendant" in fn, "高亮项应同步给读屏软件"
     assert "preventDefault" in fn, "方向键/回车需 preventDefault, 否则会同时移动光标或提交表单"
 
 
 def test_combo_closes_on_outside_click(app_js):
     """点浮层外部要收起, 否则弹窗里会留一块"关不掉"的候选面板。"""
     code = _code(app_js)
-    fn = code.split("function bindCombo(")[1].split("\nfunction ")[0]
-    assert "pointerdown" in fn
-    assert "!root.contains(e.target)" in fn, "外部点击未做 contains 判断"
+    assert "!d.root.contains(e.target)" in code, "外部点击未做 contains 判断"
     # 用 capture 阶段: 选项自己的 click 在冒泡, 冒泡里判断会误关
-    assert "true)" in fn.split("document.addEventListener")[1][:120], \
+    assert re.search(r"document\.addEventListener\('pointerdown'.*?\}, true\);", code, re.S), \
         "外部点击监听应在 capture 阶段注册"
 
 
@@ -585,11 +609,13 @@ def test_combo_selection_does_not_reopen(app_js):
     却像没点上"。所以 suppressOpen 闸门必须覆盖这两步。
     """
     code = _code(app_js)
-    fn = code.split("const pick = (value)")[1].split("};")[0]
+    # 闸门逻辑住在 bindCombo 的 onPick 回调里 (2026-11-03: 选中动作由下拉
+    # 内核统一派发, .combo 只负责"选中之后要做什么")。
+    fn = code.split("onPick: (value) => {")[1].split("\n    },")[0]
     assert "suppressOpen = true" in fn
     assert "suppressOpen = false" in fn
     # 闸门必须先于 onPick / focus 就位
-    assert fn.index("suppressOpen = true") < fn.index("onPick")
+    assert fn.index("suppressOpen = true") < fn.index("onPick(value)")
     assert fn.index("suppressOpen = false") > fn.index("input.focus()")
 
 
@@ -599,8 +625,11 @@ def test_combo_styles_use_theme_tokens(styles_css):
     这条直接对应"要跟系统配色搭配"那句反馈: 面板底色/文字/高亮都要走
     --surface / --text-1 / --accent-soft 这一套, 换成写死的 #333 之类
     就又变回系统默认观感了。
+
+    2026-11-03 起浮层与选项行走共享词汇 (.dd-panel / .dd-option), 三种
+    下拉共用这一份规则 —— 所以断言也跟着指向共享类。
     """
-    block = re.search(r"\.combo \.combo-menu \{(.*?)\}", styles_css, re.S)
+    block = re.search(r"\.dd-panel \{(.*?)\}", styles_css, re.S)
     assert block, "候选浮层缺少样式"
     css = block.group(1)
     assert "var(--surface)" in css, "浮层底色未用主题表面色"
@@ -608,9 +637,11 @@ def test_combo_styles_use_theme_tokens(styles_css):
     # 绝不能出现系统默认深色(如 #333 / black / rgb(0,0,0))
     assert not re.search(r"#(?:000|333|222)\b|black\b|rgba?\(\s*0\s*,\s*0\s*,\s*0", css), \
         "浮层里出现写死的系统深色, 会退回系统默认观感"
-    # 选项高亮
-    opt = re.search(r"\.combo \.combo-option:hover,\s*\.combo \.combo-option\.is-active \{(.*?)\}", styles_css, re.S)
+    # 选项高亮: 鼠标悬停走弱一档的表面色, 键盘高亮走主色柔光。
+    opt = re.search(r"\.dd-option:hover \{(.*?)\}", styles_css, re.S)
     assert opt and "var(--surface-2)" in opt.group(1), "高亮底色未用主题色"
+    act = re.search(r"\.dd-option\.is-active \{(.*?)\}", styles_css, re.S)
+    assert act and "var(--accent-soft)" in act.group(1), "键盘高亮底色未用主色柔光"
 
 
 def test_accent_soft_token_defined(styles_css):
@@ -1068,18 +1099,18 @@ const open = () => !modal.classList.contains('hidden');
   doc.querySelector('#m-type').closest('[data-combo]').querySelector('.combo-toggle')
     .dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
   // 候选与菜单都挂在 [data-combo] 容器下, 与 #m-type(input) 是兄弟,
-  // 不能写成 #m-type .combo-option —— 那样一个都选不到。
+  // 不能写成 #m-type .dd-option —— 那样一个都选不到。
   const comboBox = doc.querySelector('#m-type').closest('[data-combo]');
-  out.comboOptions = [...comboBox.querySelectorAll('.combo-option')]
+  out.comboOptions = [...comboBox.querySelectorAll('.dd-option')]
     .map(o => o.getAttribute('data-value'));
   out.comboMenuClosedAfterPick = (() => {
     // 选一个候选后浮层应保持收起 (suppressOpen 闸门的作用)
-    const opt = comboBox.querySelector('.combo-option');
+    const opt = comboBox.querySelector('.dd-option');
     if (!opt) return null;
     opt.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
     return {
       value: type.value,
-      hidden: comboBox.querySelector('.combo-menu').hidden,
+      hidden: comboBox.querySelector('.dd-panel').hidden,
     };
   })();
   // 家长手输过 -> 改类型不得覆盖。
@@ -1246,11 +1277,15 @@ def test_estimate_not_hardcoded_to_15(live):
     根本不存在, 恒定落到 15), 于是"空才填"的规则永远不成立, 家长在
     设置页配的类型基线永远不生效 —— 那正是 2026-09-29 报障的形态。
 
-    打开时应当按当前科目给出基线(此处语文=20), 而不是硬编码值。
+    2026-11-03 起科目一律不预选, 于是"打开时按科目基线预填"已经不成立
+    —— 没有科目就没有基线。这时正确的做法是**留空**, 而不是猜一个数字
+    出来: 框里躺着个数字, 家长就会以为系统已经替他估好了。选完科目或
+    类型之后, 再按基线填 (下面两条分别锁类型基线与科目基线)。
     """
-    assert live["manualStartsEmpty"] is False, "打开时应按科目基线预填, 而不是留空"
-    assert live["estOnOpen"] == "20", \
-        f"打开时应按科目基线(语文=20)预填, 实际 {live['estOnOpen']}"
+    assert live["manualStartsEmpty"] is True, \
+        "科目与类型都没选时不该猜一个数字出来"
+    assert live["estOnOpen"] == "", \
+        f"打开时不该预填, 实际 {live['estOnOpen']}"
 
 
 @needs_jsdom

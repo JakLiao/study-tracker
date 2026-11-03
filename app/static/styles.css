@@ -1747,6 +1747,151 @@ button.primary.modal-danger:hover:not(:disabled) {
 }
 .form-grid .form-check input { margin: 0; }
 
+/* ===== 下拉共享词汇 (2026-11-03) =====
+ *
+ * 项目里此刻有三种下拉: .combo (作业类型, 可自由输入)、.sel (定值列表,
+ * 本轮新增)、.picker (项目, 可就地新建)。它们的触发键与候选来源各不相
+ * 同, 但**用户看到的那一层 —— 浮层与选项行 —— 是同一件事**。
+ *
+ * 所以统一落在这一层: 三种形态共用 .dd-panel / .dd-list / .dd-option,
+ * 一条规则画给三种形态看。三处各写一份必然分叉 —— 面板底色、圆角、阴影、
+ * 高亮色各改各的, 改一处另外两处就落下了。
+ *
+ * 形态特有的部分保留自己的名字: .combo-input (自由输入框)、.combo-toggle
+ * (作业类型那枚可点的箭头按钮 —— 它的触发键是 input 自己, 按钮只负责开合,
+ * 语义与 .picker 的整块触发键不同)、.dd-create* / .picker-create* (新建区)。
+ */
+.dd {
+  position: relative;          /* 浮层定位基准 */
+  display: block;
+  min-width: 0;
+}
+/* 浮层: 白底 + 奶油边框 + 卡片阴影, 与项目其它浮层一致。 */
+.dd-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+.dd-panel[hidden] { display: none; }
+/* 浮层贴着视口底边放不下时向上翻 —— 默认在触发键下方, 靠底时会跑出屏幕。 */
+.dd.is-up .dd-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+/* 候选项容器。滚动条也要用主题色 —— 系统默认的灰条在这个配色里
+   像贴错了别的应用。 */
+.dd-list {
+  display: block;
+  max-height: 220px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.dd-list::-webkit-scrollbar { width: 8px; }
+.dd-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+.dd-list::-webkit-scrollbar-track { background: transparent; }
+/* 选项行。 */
+.dd-option {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dd-option:hover { background: var(--surface-2); }
+/* 键盘高亮: 主色柔光底 + 左侧一条主色条 —— 比纯灰底更容易看出"光标在哪"。 */
+.dd-option.is-active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* 选中的那一项要看得出来, 不然家长不知道当前挂的是哪个。 */
+.dd-option.is-selected {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+/* 选中项右侧带一个勾 —— 只靠底色区分, 在浅色主题下不够明确。 */
+.dd-option.is-selected::after {
+  content: "✓";
+  float: right;
+  margin-left: var(--space-2);
+  color: var(--accent-ink);
+}
+/* 无候选时的提示: 弱一级, 说明"可以直接输入"而不是阻断。 */
+.dd-empty {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  cursor: default;
+}
+/* 按钮形态的触发键 (定值列表与项目选择器都用它)。 */
+.dd-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--fs-body-s);
+  color: var(--text-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.dd-trigger:hover { background: var(--surface-2); }
+.dd.is-open .dd-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+/* 触发键上的当前值。空状态不是错误, 用弱色说明"还没选", 不做成红色警告。 */
+.dd-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dd-value.is-empty { color: var(--text-3); }
+/* 三角箭头: 纯 CSS 拼的, 三种形态从此是同一条规则画出来的。 */
+.dd-caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 2px solid var(--text-2);
+  border-bottom: 2px solid var(--text-2);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .15s;
+}
+.dd.is-open .dd-caret { transform: rotate(225deg) translateY(-2px); }
+/* 定值列表下拉 (.sel): 与同一行的输入框同宽同高。 */
+.form-grid .sel { width: 100%; min-width: 0; }
+.quick-row > .sel { flex: 1 1 140px; min-width: 0; }
+
 /* ===== 弹窗表单里的自绘下拉 (作业类型 · 2026-10-02) =====
  *
  * 起因: 原来用 <input list> + <datalist>, 候选面板由操作系统绘制, CSS
@@ -1806,47 +1951,16 @@ button.primary.modal-danger:hover:not(:disabled) {
 .combo.is-open .combo-toggle::before { transform: rotate(225deg); }
 .combo .combo-toggle:hover::before { border-color: var(--text-1); }
 
-/* 候选浮层: 白底 + 奶油边框 + 卡片阴影, 与项目其它浮层一致。 */
-.combo .combo-menu {
+/* 作业类型的浮层与选项行走共享词汇 (.dd-panel / .dd-list / .dd-option),
+   这里只留它特有的两处: 箭头按钮里的三角怎么摆。 */
+.combo .combo-toggle .dd-caret {
   position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  max-height: 220px;
-  overflow-y: auto;
+  top: 6px;
+  left: 4px;
   margin: 0;
-  padding: var(--space-1);
-  list-style: none;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
+  transform: rotate(45deg);
 }
-.combo .combo-menu[hidden] { display: none; }
-.combo .combo-option {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--fs-body-s);
-  color: var(--text-1);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.combo .combo-option:hover,
-.combo .combo-option.is-active {
-  /* 高亮用主色的浅底而不是纯灰, 和"选中"这个语义更贴。 */
-  background: var(--surface-2);
-  color: var(--text-1);
-}
-.combo .combo-option.is-active {
-  background: var(--accent-soft);
-}
-/* 无匹配时的提示: 弱一级, 说明"可以直接输入"而不是阻断。 */
-.combo .combo-empty {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  cursor: default;
-}
+.combo.is-open .combo-toggle .dd-caret { transform: rotate(225deg); }
 
 /* ===== 17d. 自绘项目下拉 (2026-10-30) =====
    原生 <select> 展开后的候选面板由操作系统绘制, CSS 一处也改不动:
@@ -1876,102 +1990,17 @@ button.primary.modal-danger:hover:not(:disabled) {
   min-width: 0;
   display: block;
 }
-.picker-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 0 var(--space-2) 0 var(--space-3);
-  text-align: left;
-  font-family: inherit;
-  font-size: var(--fs-body-s);
-  color: var(--text-1);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-.picker-trigger:hover { background: var(--surface-2); }
-.picker.is-open .picker-trigger {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-.picker-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 空状态不是错误, 用弱色说明"还没建", 不做成红色警告的样子。 */
-.picker-value.is-empty { color: var(--text-3); }
-/* 三角箭头: 纯 CSS 拼的, 与 .combo-toggle 同一套做法。 */
-.picker-caret {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-right: 3px;
-  border-right: 2px solid var(--text-2);
-  border-bottom: 2px solid var(--text-2);
-  transform: rotate(45deg) translateY(-2px);
-  transition: transform .15s;
-}
-.picker.is-open .picker-caret { transform: rotate(225deg) translateY(-2px); }
+/* 项目选择器的触发键与选项行走共享词汇 (.dd-trigger / .dd-value /
+   .dd-caret / .dd-list / .dd-option), 这里只留它特有的两处: 新建区,
+   以及"浮层要比触发键宽一点"。 */
 .picker-new {
   flex: none;
   font-size: var(--fs-caption);
   white-space: nowrap;
 }
-.picker-panel {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  /* 浮层比触发键宽一点: 触发键在窄屏上被「＋新建项目」挤得只剩百来像素,
-     浮层跟着一样窄的话, 里面的输入框连项目名都显示不全。 */
-  min-width: 220px;
-  padding: var(--space-1);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-card);
-}
-.picker-list {
-  display: block;
-  max-height: 200px;
-  overflow-y: auto;
-}
-.picker-list[hidden] { display: none; }
-.picker-option {
-  display: block;
-  width: 100%;
-  padding: var(--space-1) var(--space-2);
-  text-align: left;
-  font-family: inherit;
-  font-size: var(--fs-body-s);
-  color: var(--text-1);
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.picker-option:hover,
-.picker-option.is-active { background: var(--surface-2); }
-.picker-option.is-active { background: var(--accent-soft); }
-/* 选中的那一项要看得出来, 不然家长不知道当前挂在哪个项目下。 */
-.picker-option.is-selected {
-  background: var(--accent-soft);
-  font-weight: 600;
-}
-.picker-empty {
-  display: block;
-  padding: var(--space-2);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
+/* 浮层比触发键宽一点: 触发键在窄屏上被「＋新建项目」挤得只剩百来像素,
+   浮层跟着一样窄的话, 里面的输入框连项目名都显示不全。 */
+.picker .dd-panel { min-width: 220px; }
 .picker-create {
   display: flex;
   flex-wrap: wrap;          /* 放不下时输入框独占一行, 不被压成一条缝 */
@@ -2012,13 +2041,36 @@ button.primary.modal-danger:hover:not(:disabled) {
 .preview-table { table-layout: fixed; width: 100%; }
 .preview-table input, .preview-table select { width: 100%; min-width: 0; }
 
-/* 表内下拉框单独收窄左右内边距。
-   基础样式给所有控件 12px 左右内边距, 在固定列宽布局里会被逐级扣掉:
-   科目列 78px 扣掉单元格自己的 12px*2 只剩 54px, 扣掉控件的 12px*2
-   只剩 30px —— 装不下"语文"两个字加右侧下拉箭头, 实际渲染成一个"语"字,
-   家长根本看不出这条是语文还是数学。日期列是原生控件有固有最小宽度,
-   不能这么收, 所以只收 select。 */
-.preview-table select { padding-left: 4px; padding-right: 4px; }
+/* 预览表科目列: 三段按钮, 全出血贴住单元格两侧。
+   原生下拉在这里装不下 —— 科目列 78px 扣掉单元格自己的 12px*2 只剩 54px,
+   扣掉控件自己的内边距只剩 30px, "语文"两个字加下拉箭头实际渲染成一个
+   "语"字, 家长根本分不清这条是语文还是数学。改成分段按钮后该格内边距
+   归零, 78px 全给按钮, 每段 26px 刚好装下两个字 (设计 §五)。 */
+.preview-table td.col-subject { padding-left: 0; padding-right: 0; }
+.preview-table .seg {
+  display: flex;
+  width: 100%;
+}
+.preview-table .seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--fs-caption-sm);
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-right-width: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.preview-table .seg-btn:last-child { border-right-width: 1px; }
+.preview-table .seg-btn.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
 
 /* 表内复选框: 桌面端必须显式给尺寸, 否则点不准。
    上面那条 `.preview-table input { width: 100% }` 是无差别命中的 ——
