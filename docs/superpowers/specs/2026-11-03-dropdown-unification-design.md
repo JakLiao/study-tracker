@@ -1,7 +1,7 @@
 # 全项目下拉统一（自绘 select 内核 + 项目/科目取消自动默认）
 
 日期：2026-11-03
-状态：已与用户确认（范围 / 视觉方向 / 窄列方案 / 默认值覆盖层 四项均已拍板），待实现
+状态：已实现（2026-11-03 落地，实机验收通过；与本文的三处偏差见 §十）
 配套：`docs/02-页面设计.md`（视觉契约）、`docs/08-重构约束与测试基线.md`（红线清单）
 
 ---
@@ -465,3 +465,70 @@ AI 解析出的科目必是三选一（`ParseItem.subject: Subject` 是 Literal�
 8. 预览表科目列为三段按钮，行高与任务名列宽**与改动前一致**
 9. 键盘可达：Tab 聚焦 → ↓ 移动 → Enter 选中 → Esc 收起，全程可见焦点环
 10. `pytest tests/` 与 `npm run test:js` 全绿
+
+---
+
+## 十、实现说明（落地后补记 · 2026-11-03）
+
+实现过程中有三处与上文写法不同, 原因都写在这里 —— 后面谁再读这份设计,
+别照着 §三/§四 的旧写法去改。
+
+### 10.1 选项元素从 `<li>` 改成 `<button>`
+
+§4.2 的 DOM 示例用 `<ul class="dd-list">` + `<li class="dd-option">`。实现时
+改成了 `<span class="dd-list">` + `<button class="dd-option">`。
+
+原因: 选项住在 `<label>` 里(表单网格是"标签 + 控件"两列), 而 **label 的激活
+行为会把点击转发给"被标记的那个控件"** —— 也就是表单里第一个可标记元素,
+恰好是 `.dd-trigger` 按钮。转发过来的第二次 click 会把刚收起的浮层又打开,
+表现为「点了选项却像没点上」。
+
+实测(jsdom 不实现 label 激活行为, 只有真浏览器里才复现):
+
+```
+点「数学」→ hidden 值变成数学 ✓ → 但浮层又弹回来了 ✗
+```
+
+- `e.preventDefault()` **挡不住**这条转发 —— label 的激活行为不受事件
+  canceled 标志影响。
+- 真正的解法是让选项成为**可交互内容**: label 对可交互内容后代的目标
+  不做任何转发。而 `<button>` 就是可交互内容 —— 项目选择器一直用的是
+  button, 现在三种形态统一到 button。
+- `preventDefault()` 仍然保留, 断掉另一件事: `<button>` 落在 form 里时
+  默认动作是提交表单。
+
+### 10.2 「预计用时」在科目与类型都没选时留空
+
+§2.1 定了「科目一律不预选」。连带后果: 弹窗刚打开时没有"当前科目"可以拿
+基线, 原先那句「打开时按科目基线预填(语文=20)」已经不成立。
+
+改法: `bindEstAutofill` 里类型与科目都没选时 **留空**(而不是猜一个 15)。
+框里躺着个数字, 家长就会以为系统已经替他估好了; 留空则与输入框自己的
+提示「按作业类型自动预填」一致。家长选完科目或类型, 再按基线填 ——
+这条链路没变。
+
+提交路径不受影响: 留空时 `estDefault({task_type, subject})` 兜到 15。
+
+### 10.3 既有测试的同步点比 §7.2 多一处
+
+§7.2 列了 `test_edit_assignment.py` 与 `test_project_picker.py` 两个文件,
+实际还多一处:
+
+- `tests/test_preview_table.py::test_subject_select_not_squeezed_to_one_char`
+  —— 它断言的是「表内 select 的左右内边距要收窄到 4px」。科目列换成三段
+  按钮后这条规则没了, 断言改成「科目列仍是 78px + 该格内边距归零 + 分段
+  按钮用次级字号」—— 语义不变(这一列必须装得下"语文"两个字), 判据换了。
+- 另外两处是**测试自身太脆**, 与本设计无关: 弹窗模板里现在有嵌套的
+  `<div class="dd-panel">`, 而 `re.search(r'<div class="form-grid">(.*?)</div>')`
+  会撞上它的 `</div>` 把表单截断。已改成按 div 配对截取。
+
+### 10.4 落地时的最终形态
+
+| 形态 | 触发键 | 浮层 | 候选项 |
+|---|---|---|---|
+| `.sel` 定值列表 | `<button class="dd-trigger">` | `<span class="dd-panel">` | `<button class="dd-option">` |
+| `.combo` 作业类型 | `<input class="combo-input">` | `<span class="dd-panel">` | `<button class="dd-option">` |
+| `.picker` 项目 | `<button class="dd-trigger">` | `<span class="dd-panel">` | `<button class="dd-option">` |
+
+三种形态的浮层与候选项完全同构, 只差触发键与候选来源 —— 这正是 §三.3
+那张配置表的落地形态。

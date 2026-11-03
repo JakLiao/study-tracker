@@ -243,35 +243,38 @@ def test_action_column_header_and_width(styles, app_js):
     assert int(w) >= 52, f"第 9 列(操作) 宽度 {w}px 放不下两字表头"
 
 
-def test_subject_select_not_squeezed_to_one_char(styles):
-    """科目列里装的是 select, 列宽之外还得给控件自己的内边距留位置。
+def test_subject_column_fits_two_chars(styles):
+    """科目列里装的是三段按钮, 78px 的列必须真的装得下两个字。
 
-    78px 的列扣掉单元格左右各 12px 只剩 54px; select 再扣掉基础样式
-    的左右各 12px, 内容区只剩 30px —— 放不下"语文"两个字加右侧下拉
-    箭头, 浏览器实际只渲染出一个"语"字, 家长分不清语文还是数学。
-    这就是只锁列宽不够、必须同时收窄表内 select 内边距的原因。
+    原来是原生 select: 78px 的列扣掉单元格左右各 12px 只剩 54px; select
+    再扣掉基础样式的左右各 12px, 内容区只剩 30px —— 放不下"语文"两个字
+    加右侧下拉箭头, 浏览器实际只渲染出一个"语"字, 家长分不清语文还是
+    数学。
+
+    2026-11-03 起科目列换成三段按钮 (全出血贴住单元格两侧), 于是这条
+    断言从"select 的内边距要收窄"改成"该格内边距要归零 + 按钮字号要够
+    小到 26px 一段装得下两个字"。列宽本身不许变 —— 变了就意味着从任务名
+    列抢走了宽度, 而任务名正是家长核对 AI 解析结果的依据。
     """
     widths = _col_widths(styles)
     raw = re.sub(r"px$", "", widths[2])
     assert raw.isdigit(), f"第 2 列(科目) 宽度应为固定像素: {widths[2]}"
     col = int(raw)
+    assert col == 78, f"科目列宽变成 {col}px —— 列宽没有余量, 加宽就是从任务名列抢的"
 
-    # 注意要匹配"只以 .preview-table select 开头"的那条规则。
-    # 上面还有一条 `.preview-table input, .preview-table select { width:100% }`,
-    # 用 `\.preview-table select \{` 会先撞上它, 拿到的是没有 padding 的宽度规则。
-    m = re.search(r"^\.preview-table select \{([^}]*)\}", styles, re.M)
-    assert m, "预览表内未找到针对 select 的样式"
-    rule = m.group(1)
-    pads = re.findall(r"padding-(?:left|right):\s*(\d+)px", rule)
-    assert len(pads) == 2, f"应同时收窄 select 的左右内边距: {rule.strip()}"
-    pad = max(int(p) for p in pads)
+    # 该格左右内边距归零: 三段按钮要吃满整列。
+    cell = _block(styles, ".preview-table td.col-subject")
+    assert cell, "预览表内未找到针对科目单元格的样式"
+    tight = cell.replace(" ", "")
+    for side in ("left", "right"):
+        assert f"padding-{side}:0" in tight, \
+            f"科目格 padding-{side} 未归零, 三段按钮吃不满整列"
 
-    # 单元格左右 12px + select 左右 pad, 再留 46px 给"语文"+箭头
-    content = col - 24 - 2 * pad
-    assert content >= 46, (
-        f"科目列 {col}px 扣掉单元格与 select 内边距后只剩 {content}px, "
-        f"装不下两字科目加下拉箭头 (select padding-left/right={pads})"
-    )
+    # 每段 78/3 = 26px, 字号得够小才放得下两个字。
+    btn = _block(styles, ".preview-table .seg-btn")
+    assert btn, "预览表内未找到分段按钮样式"
+    assert "var(--fs-caption-sm)" in btn, "分段按钮字号必须是次级字号, 否则一段放不下两个字"
+    assert re.search(r"flex:\s*1\s+1\s+0", btn), "三段按钮应等分整列宽度"
 
 
 # ====== 3b. 「预估分」->「预计用时」(2026-09-28) ======

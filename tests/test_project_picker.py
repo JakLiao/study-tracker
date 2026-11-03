@@ -263,7 +263,7 @@ async function openEdit(taskName) {
   await wait(200);
   const wrap = doc.getElementById('ed-project-wrap');
   const picker = wrap && wrap.querySelector('.picker');
-  const label = wrap && wrap.querySelector('.picker-value');
+  const label = wrap && wrap.querySelector('.dd-value');
   return {
     opened: open(),
     kind: val('ed-kind'),

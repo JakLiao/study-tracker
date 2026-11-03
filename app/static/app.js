@@ -14,6 +14,22 @@ const MAX_TEXT_LEN = 10000;
 // 任何一处 init 调用它时这个数组已经建好。
 const _projectPickers = [];
 
+// 已挂载的下拉 (三种形态共用同一个内核)。点浮层外面收起靠它遍历 ——
+// 每个下拉各挂一个 document 监听的话, 弹窗开合几次就会攒下一堆闭包。
+// 声明同样放文件顶部: initQuickAdd() 在文件末尾就执行了, 声明写在后面
+// 会撞上 const 的暂时性死区 (TDZ)。
+const _dropdowns = [];
+
+// 选项 id 计数器 (aria-activedescendant 要指到具体选项上)。
+let _ddSeq = 0;
+
+// 科目与任务来源的候选。写死一份给各弹窗共用 —— 免得一处加了科目
+// 另一处没有, 家长在某个弹窗里选不到。
+// 声明放文件顶部: initQuickAdd() 在文件末尾就执行了, 声明写在后面
+// 会撞上 const 的暂时性死区 (TDZ)。
+const SUBJECTS = [['语文', '语文'], ['数学', '数学'], ['英语', '英语']];
+const TASK_KINDS = [['subject', '学科作业'], ['training', '培训'], ['habit', '习惯']];
+
 // ====== 工具 ======
 async function api(method, path, body) {
   const opts = { method, headers: {} };
@@ -1683,17 +1699,11 @@ function openEditAssignmentModal(item, onSaved) {
       </label>
       <label>
         <span class="form-label">任务来源</span>
-        <select id="ed-kind">
-          ${[['subject', '学科作业'], ['training', '培训'], ['habit', '习惯']]
-            .map(([k, label]) => `<option value="${k}" ${k === edKind ? 'selected' : ''}>${label}</option>`).join('')}
-        </select>
+        ${selectHtml('ed-kind', TASK_KINDS, edKind, '选择任务来源', '任务来源')}
       </label>
       <label id="ed-subject-wrap" ${isSubject ? '' : 'hidden'}>
         <span class="form-label">科目</span>
-        <select id="ed-subject">
-          ${['语文', '数学', '英语']
-            .map(s => `<option ${s === item.subject ? 'selected' : ''}>${s}</option>`).join('')}
-        </select>
+        ${selectHtml('ed-subject', SUBJECTS, item.subject, '未选择科目', '科目')}
       </label>
       <label id="ed-project-wrap" ${isSubject ? 'hidden' : ''}>
         <span class="form-label">项目</span>
@@ -1744,6 +1754,8 @@ function openEditAssignmentModal(item, onSaved) {
   });
   initDatePickersIn(document.getElementById('modal-content'));
   initCombos(document.getElementById('modal-content'));
+  // 定值列表下拉 (任务来源/科目): 自绘控件, 候选面板与项目选择器同一套。
+  initSels(document.getElementById('modal-content'));
   // 项目下拉: 自绘控件。当前项目可能已归档 (不在 GET /projects 的默认列表里),
   // 兜底项由 projectOptionList 补上, 否则下拉会默认选中第一个项目, 保存时
   // 把这条任务悄悄挪到别的项目上。
@@ -1769,6 +1781,14 @@ function openEditAssignmentModal(item, onSaved) {
         toast('截止时间不能早于归属日');
         return;
       }
+      // 科目一律不预选 (分类断言猜不得), 所以"学科作业却没选科目"是家常
+      // 便饭。前端拦一次, 提示与后端同一句 —— 只让家长看到一句"入库失败"
+      // 却不知道是哪个框的问题, 那是最难查的一种报错。
+      const kind = document.getElementById('ed-kind').value;
+      if (kind === 'subject' && !document.getElementById('ed-subject').value) {
+        toast('学科作业必须选择科目');
+        return;
+      }
       const okBtn = document.getElementById('modal-ok');
       okBtn.disabled = true;                            // 请求锁: 防连点提交两次
       try {
@@ -1784,7 +1804,6 @@ function openEditAssignmentModal(item, onSaved) {
         // 比较基准取"库里的有效值": 老数据可能没有 task_kind (视为
         // subject)、project_id 可能是 undefined —— 直接和 null 比会让
         // 一次原样保存也发出 PATCH (后端记为 edited)。
-        const kind = document.getElementById('ed-kind').value;
         const subjectKind = kind === 'subject';
         const pidRaw = document.getElementById('ed-project').value;
         const newSubject = subjectKind ? document.getElementById('ed-subject').value : null;
@@ -2132,6 +2151,12 @@ async function quickAddFromForm() {
   if (!name) { toast('先填任务名'); return; }
   const est = parseInt(document.getElementById('qa-est').value, 10);
   if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
+  // 科目一律不预选, 所以"学科作业却没选科目"必须在前端拦一次 ——
+  // 提示与后端同一句, 家长与日志看到的是同一套话。
+  if (_qaKind === 'subject' && !document.getElementById('qa-subject').value) {
+    toast('学科作业必须选择科目');
+    return;
+  }
   const payload = { task_name: name, est_minutes: est };
   if (_qaKind === 'subject') {
     payload.task_kind = 'subject';
@@ -2167,6 +2192,15 @@ function initQuickAdd() {
     // 新建流程: 没选就落在第一个项目上, 家长只想加一条培训任务时省一次点击。
     host.innerHTML = projectPickerHtml('qa-project', null, null, { defaultFirst: true });
     initProjectPickers(host);
+  }
+  // 科目下拉: 自绘控件, 与项目选择器共用同一套内核。
+  // 科目一律不预选 —— 语文/数学/英语三选一, 预选「语文」是一次纯猜测:
+  // 家长加一条数学作业, 科目静默落在语文下, 看板上就归错了类, 而界面上
+  // 没有任何一处会提示。
+  const subjectHost = document.getElementById('qa-subject-row');
+  if (subjectHost) {
+    subjectHost.innerHTML = selectHtml('qa-subject', SUBJECTS, null, '未选择科目', '科目');
+    initSels(subjectHost);
   }
   setQuickKind('subject');
   refreshQuickAddData();
@@ -2364,6 +2398,232 @@ function taskTypeOptions() {
   return keys.length ? keys : ['订正', '背诵', '预习', '阅读', '计算', '抄写'];
 }
 
+// ====== 下拉内核 + 定值列表下拉 (2026-11-03) ======
+//
+// 项目里此刻有三种下拉形态, 触发键与候选来源各不相同, 但开合 / 键盘 /
+// 高亮 / 收起这几件事完全一样:
+//
+//   .combo  作业类型  触发键=input(可自由输入)  候选=设置里的类型基线
+//   .sel    定值列表  触发键=button             候选=调用方给的固定列表
+//   .picker 项目      触发键=button             候选=项目列表(可就地新建)
+//
+// 三处各写一份必然分叉 —— 面板样式、Esc 行为、方向键顺序任何一处改了
+// 另外两处都要跟着改。所以内核只写一份, 三种形态各自传配置。
+//
+// 用户看到的"下拉选项 UI"就落在浮层与选项行那一层, 所以类名也统一成
+// .dd-panel / .dd-list / .dd-option (见 styles.css §下拉共享词汇)。
+
+// 科目与任务来源的候选见文件顶部 (SUBJECTS / TASK_KINDS)。
+
+// 已挂载的下拉。点浮层外面收起只注册一次 document 级监听, 遍历所有打开的
+// 下拉 —— 每个下拉各挂一个监听的话, 弹窗开合几次就会攒下一堆闭包。
+// (声明在文件顶部, 见 _dropdowns。)
+
+// 选项 id 计数器 (aria-activedescendant 要指到具体选项上)。
+// (声明在文件顶部, 见 _ddSeq。)
+
+// 下拉内核: 三种形态共用的开合、键盘导航、高亮与外部点击收起。
+//
+// @param root  根容器(.dd 家族)
+// @param cfg   { trigger, panel, listEl, renderOptions, onPick, onOpen, onClose }
+function bindDropdown(root, cfg) {
+  if (!root) return null;
+  const trigger = cfg.trigger || root.querySelector('.dd-trigger');
+  const panel = cfg.panel || root.querySelector('.dd-panel');
+  const listEl = cfg.listEl || root.querySelector('.dd-list');
+  if (!panel || !listEl) return null;
+
+  let active = -1;                   // 键盘高亮项下标, -1 = 无
+
+  const options = () => [...listEl.querySelectorAll('.dd-option')];
+
+  const close = () => {
+    panel.hidden = true;
+    root.classList.remove('is-open', 'is-up');
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    active = -1;
+    if (cfg.onClose) cfg.onClose();
+  };
+
+  const open = () => {
+    if (cfg.renderOptions) cfg.renderOptions();
+    panel.hidden = false;
+    root.classList.add('is-open');
+    if (trigger) trigger.setAttribute('aria-expanded', 'true');
+    active = -1;
+    // 浮层贴着视口底边时向上翻: 默认在触发键下方, 靠底会跑出屏幕。
+    const box = panel.getBoundingClientRect();
+    if (box.bottom > window.innerHeight && box.top > box.height) root.classList.add('is-up');
+    if (cfg.onOpen) cfg.onOpen();
+  };
+
+  // 高亮项。scroll=false 用于鼠标悬停 —— 悬停时滚动会让列表跟着抖。
+  const highlight = (next, scroll = true) => {
+    const items = options();
+    if (!items.length) return;
+    active = (next + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle('is-active', i === active));
+    const cur = items[active];
+    if (!cur) return;
+    // 高亮项要通过 aria-activedescendant 告诉读屏软件"光标在哪", 否则
+    // 读屏只报得出"列表框", 报不出当前项。
+    if (!cur.id) cur.id = `dd-opt-${++_ddSeq}`;
+    if (trigger) trigger.setAttribute('aria-activedescendant', cur.id);
+    // scrollIntoView 在真实浏览器里滚动浮层, 但 jsdom 没实现它, 调了会抛
+    // TypeError 并中断整个 keydown —— 键盘导航会随之失灵。防御性跳过。
+    if (scroll && typeof cur.scrollIntoView === 'function') {
+      cur.scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  const pick = (value, label, el) => {
+    close();
+    if (cfg.onPick) cfg.onPick(value, label, el);
+  };
+
+  listEl.addEventListener('click', (e) => {
+    const opt = e.target.closest('.dd-option');
+    if (!opt) return;
+    // preventDefault 断掉两件事: 一是 label 的激活行为会把点击转发给
+    // "被标记的那个控件"(表单里第一个可标记元素, 也就是 .dd-trigger),
+    // 转发过来的第二次 click 会把刚收起的浮层又打开, 表现为"点了选项却像
+    // 没点上"(选项改用 button 之后这条转发本就不该发生, 但取消默认动作
+    // 更稳); 二是选项是 <button>, 落在 form 里时默认动作是提交表单。
+    e.preventDefault();
+    pick(opt.dataset.value, opt.textContent.trim(), opt);
+  });
+  listEl.addEventListener('pointerover', (e) => {
+    const opt = e.target.closest('.dd-option');
+    if (!opt) return;
+    const i = options().indexOf(opt);
+    if (i >= 0) highlight(i, false);
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      // 只收浮层, 不能连带把整个弹窗关掉 (弹窗的 Esc 监听在 document 上)。
+      if (!panel.hidden) { e.stopPropagation(); close(); }
+      return;
+    }
+    if (e.key === 'Tab') { close(); return; }   // 切走时收起, 别把浮层留在别的框下面
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (panel.hidden) { open(); highlight(0); return; }
+      highlight(active + (e.key === 'ArrowDown' ? 1 : -1));
+      return;
+    }
+    if (e.key === 'Home' || e.key === 'End') {
+      if (panel.hidden) return;
+      e.preventDefault();
+      highlight(e.key === 'Home' ? 0 : options().length - 1);
+      return;
+    }
+    if (e.key === 'Enter') {
+      // 展开且有高亮项时, Enter 是"选中"; 否则让表单正常提交。
+      if (panel.hidden || active < 0) return;
+      e.preventDefault();
+      const opt = options()[active];
+      if (opt) pick(opt.dataset.value, opt.textContent.trim(), opt);
+    }
+  });
+
+  const api = {
+    open,
+    close,
+    toggle: () => (panel.hidden ? open() : close()),
+    isOpen: () => !panel.hidden,
+  };
+  // 按钮形态的触发键点一下就开合; 输入框形态 (.combo) 不用 —— 它的开合
+  // 由 focus/input 驱动, 点一下会连开两次。
+  if (trigger && trigger.tagName !== 'INPUT') {
+    trigger.addEventListener('click', () => api.toggle());
+  }
+  _dropdowns.push({ root, close });
+  return api;
+}
+
+// 点浮层外面收起。用 capture 阶段的 document 监听, 因为选项自身的 click
+// 处理器也在冒泡阶段, 若在冒泡里判断 contains 会因为顺序问题误关。
+document.addEventListener('pointerdown', (e) => {
+  for (let i = _dropdowns.length - 1; i >= 0; i--) {
+    const d = _dropdowns[i];
+    // 弹窗内容每次打开都是新 DOM, 旧的 root 已经脱离文档, 顺手清掉。
+    if (!d.root.isConnected) { _dropdowns.splice(i, 1); continue; }
+    if (!d.root.contains(e.target)) d.close();
+  }
+}, true);
+
+// 定值列表下拉 (自绘, 不用原生 <select>)。
+//
+// 为什么不用原生: 展开后的候选面板由操作系统绘制, CSS 一处也改不动 ——
+// 落在奶油糖果配色里像贴错了别的应用。与 .combo / .picker 同一类原因。
+//
+// 选中值放在一个 hidden input 里 —— id 与原来的 <select> 相同, 于是各弹窗里
+// getElementById('xx').value 的读取代码一行都不用改。
+//
+// @param id        hidden input 的 id —— 与原 <select> 同 id, 读取代码不改
+// @param options   [[value, label], ...]
+// @param value     当前值; 传 null 表示"还没选" (显示 emptyText)
+// @param emptyText 空态文案, 默认「未选择」
+// @param label     候选项的无障碍标签 (给读屏软件念)
+//
+// 选项用 <button> 而不是 <li>: 选项住在 <label> 里, 而 label 的激活行为
+// 会把点击转发给"被标记的那个控件"(表单里第一个可标记元素, 也就是
+// .dd-trigger) —— 转发过来的第二次 click 会把刚收起的浮层又打开, 表现为
+// "点了选项却像没点上"。可交互内容(button)不受这条转发影响, 项目选择器
+// 一直用的是 button, 这里与它对齐。
+function selectHtml(id, options, value, emptyText, label) {
+  const opts = options || [];
+  const cur = value == null ? '' : String(value);
+  const hit = opts.find(o => String(o[0]) === cur);
+  const text = cur ? (hit ? hit[1] : cur) : (emptyText || '未选择');
+  const empty = !cur;
+  return `<span class="dd sel" data-sel>
+    <input type="hidden" id="${escapeAttr(id)}" value="${escapeAttr(cur)}" />
+    <button type="button" class="dd-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span class="dd-value${empty ? ' is-empty' : ''}">${escapeAttr(text)}</span>
+      <span class="dd-caret" aria-hidden="true"></span>
+    </button>
+    <span class="dd-panel" hidden>
+      <span class="dd-list" role="listbox" aria-label="${escapeAttr(label || '选项')}">
+        ${opts.map(o => {
+          const on = String(o[0]) === cur;
+          return `<button type="button" class="dd-option${on ? ' is-selected' : ''}" role="option" aria-selected="${on ? 'true' : 'false'}" data-value="${escapeAttr(o[0])}">${escapeAttr(o[1])}</button>`;
+        }).join('')}
+      </span>
+    </span>
+  </span>`;
+}
+
+// 绑定一个定值列表下拉。调用前 innerHTML 必须已经写好。
+function bindSel(root) {
+  if (!root || root.dataset.bound === '1') return;
+  root.dataset.bound = '1';
+  const hidden = root.querySelector('input[type="hidden"]');
+  const valueEl = root.querySelector('.dd-value');
+  if (!hidden || !valueEl) return;
+  bindDropdown(root, {
+    onPick: (value, label) => {
+      valueEl.textContent = label;
+      valueEl.classList.remove('is-empty');
+      root.querySelectorAll('.dd-option').forEach(o => {
+        const on = o.dataset.value === value;
+        o.classList.toggle('is-selected', on);
+        o.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      hidden.value = value;
+      // 派发在 hidden input 上 (不是 trigger 按钮上) —— 监听者读的是
+      // getElementById('xx').value, 事件目标必须与它一致。
+      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+  });
+}
+
+// 一次性把弹窗里的定值列表下拉都接上。必须在 innerHTML 写入之后调用。
+function initSels(scope) {
+  (scope || document).querySelectorAll('[data-sel]').forEach(bindSel);
+}
+
 // 作业类型下拉的 HTML 骨架 (自绘, 不用 <datalist>)。
 //
 // 为什么不用 datalist: 它的候选面板由操作系统绘制, **无法用 CSS 改任何一处**
@@ -2372,17 +2632,19 @@ function taskTypeOptions() {
 // 段落)。datalist 是同一类问题: 在 Windows Chrome 上它是一块近黑底浅色字的
 // 系统面板, 落在奶油糖果配色里像贴错了别的应用的截图。
 //
-// 结构: 一个真 input (仍可自由输入, 不只是选) + 一个 .combo-menu 浮层。
+// 结构: 一个真 input (仍可自由输入, 不只是选) + 一个 .dd-panel 浮层。
 // 保留自由输入很重要: 家长可能想写一个设置里还没有的类型。
 function taskTypeComboHtml(id, value, placeholder) {
   return `
-    <span class="combo" data-combo>
+    <span class="combo dd" data-combo>
       <input id="${id}" class="combo-input" maxlength="50" autocomplete="off"
              placeholder="${escapeAttr(placeholder || '')}"
              value="${escapeAttr(value || '')}"
              role="combobox" aria-expanded="false" aria-autocomplete="list" aria-haspopup="listbox" />
-      <button type="button" class="combo-toggle" tabindex="-1" aria-label="展开作业类型候选"></button>
-      <ul class="combo-menu" role="listbox" hidden></ul>
+      <button type="button" class="combo-toggle" tabindex="-1" aria-label="展开作业类型候选"><span class="dd-caret" aria-hidden="true"></span></button>
+      <span class="dd-panel" hidden>
+        <span class="dd-list" role="listbox"></span>
+      </span>
     </span>`;
 }
 
@@ -2395,107 +2657,47 @@ function bindCombo(root, onPick) {
   if (!root) return;
   const input = root.querySelector('.combo-input');
   const toggle = root.querySelector('.combo-toggle');
-  const menu = root.querySelector('.combo-menu');
-  if (!input || !menu) return;
+  const listEl = root.querySelector('.dd-list');
+  if (!input || !listEl) return;
 
-  let options = taskTypeOptions();   // 当前候选(每次展开时从设置重取)
-  let active = -1;                   // 键盘高亮项下标, -1 = 无
   let suppressOpen = false;          // 选中候选后短暂阻止 focus 重新展开
-
-  const close = () => {
-    menu.hidden = true;
-    root.classList.remove('is-open');
-    input.setAttribute('aria-expanded', 'false');
-    active = -1;
-  };
 
   const render = () => {
     const q = input.value.trim();
     // 输入框已有内容时用它过滤: 家长打到"背"只应看到"背诵"。
     // 全部匹配则显示全部候选, 免得"输了字反而候选变少"的反直觉。
+    const all = taskTypeOptions();   // 当前候选(每次展开时从设置重取)
     const list = q
-      ? options.filter(o => o.includes(q))
-      : options;
-    menu.innerHTML = list.length
-      ? list.map((o, i) => `<li class="combo-option" role="option" data-value="${escapeAttr(o)}"
-             aria-selected="false">${escapeAttr(o)}</li>`).join('')
-      : `<li class="combo-empty" role="presentation">没有匹配的候选, 可直接输入</li>`;
-    active = -1;
-    menu.hidden = false;
-    root.classList.add('is-open');
-    input.setAttribute('aria-expanded', 'true');
+      ? all.filter(o => o.includes(q))
+      : all;
+    listEl.innerHTML = list.length
+      ? list.map((o) => `<button type="button" class="dd-option" role="option" data-value="${escapeAttr(o)}"
+             aria-selected="false">${escapeAttr(o)}</button>`).join('')
+      : `<span class="dd-empty" role="presentation">没有匹配的候选, 可直接输入</span>`;
   };
 
-  const open = () => { options = taskTypeOptions(); render(); };
-
-  const pick = (value) => {
-    // 先关闸门再干活: onPick 会派发 input 事件、input.focus() 又会触发
-    // focus 监听, 两者都会调 open() 把浮层弹回来。顺序上必须让
-    // suppressOpen 先就位, 否则"选中后浮层立刻重新展开", 看起来像
-    // 点不中选项。
-    suppressOpen = true;
-    input.value = value;
-    close();
-    // 手动赋值不会触发 input 事件, 预填链路要显式通知一次。
-    if (onPick) onPick(value);
-    input.focus();
-    suppressOpen = false;
-  };
-
-  const highlight = (next) => {
-    const items = [...menu.querySelectorAll('.combo-option')];
-    if (!items.length) return;
-    active = (next + items.length) % items.length;
-    items.forEach((el, i) => {
-      el.classList.toggle('is-active', i === active);
-      el.setAttribute('aria-selected', i === active ? 'true' : 'false');
-    });
-    // scrollIntoView 在真实浏览器里滚动浮层, 但 jsdom 没实现它, 调了会抛
-    // TypeError 并中断整个 keydown 处理 —— 键盘导航会随之失灵。防御性跳过。
-    if (typeof items[active].scrollIntoView === 'function') {
-      items[active].scrollIntoView({ block: 'nearest' });
-    }
-  };
-
-  // 点外面关闭。用 capture 阶段的 document 监听, 因为选项自身的 click
-  // 处理器也在冒泡阶段, 若在冒泡里判断 contains 会因为顺序问题误关。
-  document.addEventListener('pointerdown', (e) => {
-    if (!root.contains(e.target)) close();
-  }, true);
-
-  toggle.addEventListener('click', () => {
-    menu.hidden ? open() : close();
+  const dd = bindDropdown(root, {
+    trigger: input,
+    renderOptions: render,
+    onPick: (value) => {
+      // 先关闸门再干活: onPick 会派发 input 事件、input.focus() 又会触发
+      // focus 监听, 两者都会调 open() 把浮层弹回来。顺序上必须让
+      // suppressOpen 先就位, 否则"选中后浮层立刻重新展开", 看起来像
+      // 点不中选项。
+      suppressOpen = true;
+      input.value = value;
+      // 手动赋值不会触发 input 事件, 预填链路要显式通知一次。
+      if (onPick) onPick(value);
+      input.focus();
+      suppressOpen = false;
+    },
   });
-  input.addEventListener('focus', () => { if (!suppressOpen) open(); });
+
+  toggle.addEventListener('click', () => dd.toggle());
+  input.addEventListener('focus', () => { if (!suppressOpen) dd.open(); });
   // input 也要看闸门: pick() 内部会派发 input 通知预填, 那时不该顺带
   // 把浮层重新撑开(否则"选完就又弹回来", 家长要点两下才能收起)。
-  input.addEventListener('input', () => { if (!suppressOpen) open(); });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { close(); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); menu.hidden ? open() : highlight(active + 1); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active - 1); return; }
-    if (e.key === 'Enter') {
-      // 展开且有高亮项时, Enter 是"选中"; 否则让表单正常提交。
-      if (!menu.hidden && active >= 0) {
-        e.preventDefault();
-        const el = menu.querySelectorAll('.combo-option')[active];
-        if (el) pick(el.dataset.value);
-      }
-      return;
-    }
-    if (e.key === 'Tab') close();   // 切走时收起, 别把浮层留在别的框下面
-  });
-  menu.addEventListener('click', (e) => {
-    const li = e.target.closest('.combo-option');
-    if (li) pick(li.dataset.value);
-  });
-  menu.addEventListener('pointerover', (e) => {
-    const li = e.target.closest('.combo-option');
-    if (!li) return;
-    const items = [...menu.querySelectorAll('.combo-option')];
-    active = items.indexOf(li);
-    items.forEach((el, i) => el.classList.toggle('is-active', i === active));
-  });
+  input.addEventListener('input', () => { if (!suppressOpen) dd.open(); });
 }
 
 // 一次性把弹窗里的作业类型下拉都接上。必须在 innerHTML 写入之后调用。
@@ -2561,16 +2763,16 @@ function projectPickerHtml(id, selectedId, selectedName, opts) {
   // 两种"空"要分清: 一个项目都没有叫「还没有项目」(去建一个),
   // 有项目但没选叫「未选择项目」(去挑一个)。
   const emptyText = list.length ? '未选择项目' : '还没有项目';
-  return `<span class="picker" data-picker data-default="${policy}" data-selected="${escapeAttr(value)}" data-name="${escapeAttr(label)}">
+  return `<span class="picker dd" data-picker data-default="${policy}" data-selected="${escapeAttr(value)}" data-name="${escapeAttr(label)}">
     <input type="hidden" id="${id}" value="${escapeAttr(value)}" />
     <span class="picker-row">
       <span class="picker-slot">
-        <button type="button" class="picker-trigger" aria-haspopup="listbox" aria-expanded="false">
-          <span class="picker-value${empty ? ' is-empty' : ''}">${escapeAttr(empty ? emptyText : label)}</span>
-          <span class="picker-caret" aria-hidden="true"></span>
+        <button type="button" class="dd-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="dd-value${empty ? ' is-empty' : ''}">${escapeAttr(empty ? emptyText : label)}</span>
+          <span class="dd-caret" aria-hidden="true"></span>
         </button>
-        <span class="picker-panel" hidden>
-          <span class="picker-list" role="listbox" aria-label="项目"></span>
+        <span class="dd-panel" hidden>
+          <span class="dd-list" role="listbox" aria-label="项目"></span>
           <span class="picker-create" hidden>
             <input class="picker-create-input" type="text" maxlength="40" placeholder="新项目名, 如 钢琴" aria-label="新项目名" />
             <button type="button" class="secondary picker-create-ok">建好</button>
@@ -2587,15 +2789,14 @@ function bindProjectPicker(root) {
   if (!root || root.dataset.bound === '1') return;
   root.dataset.bound = '1';
   const hidden = root.querySelector('input[type="hidden"]');
-  const trigger = root.querySelector('.picker-trigger');
-  const valueEl = root.querySelector('.picker-value');
-  const panel = root.querySelector('.picker-panel');
-  const listEl = root.querySelector('.picker-list');
+  const trigger = root.querySelector('.dd-trigger');
+  const valueEl = root.querySelector('.dd-value');
+  const listEl = root.querySelector('.dd-list');
   const newBtn = root.querySelector('.picker-new');
   const createBox = root.querySelector('.picker-create');
   const createInput = root.querySelector('.picker-create-input');
   const createOk = root.querySelector('.picker-create-ok');
-  if (!hidden || !trigger || !valueEl || !panel || !listEl) return;
+  if (!hidden || !trigger || !valueEl || !listEl) return;
 
   const origId = root.dataset.selected || '';
   const origName = root.dataset.name || '';
@@ -2611,8 +2812,8 @@ function bindProjectPicker(root) {
   const renderList = () => {
     const opts = options();
     listEl.innerHTML = opts.length
-      ? opts.map(o => `<button type="button" class="picker-option${o.value === current ? ' is-selected' : ''}" role="option" aria-selected="${o.value === current}" data-value="${escapeAttr(o.value)}">${escapeAttr(o.label)}</button>`).join('')
-      : '<span class="picker-empty">还没有项目 —— 在下面建一个</span>';
+      ? opts.map(o => `<button type="button" class="dd-option${o.value === current ? ' is-selected' : ''}" role="option" aria-selected="${o.value === current}" data-value="${escapeAttr(o.value)}">${escapeAttr(o.label)}</button>`).join('')
+      : '<span class="dd-empty">还没有项目 —— 在下面建一个</span>';
   };
 
   const renderLabel = () => {
@@ -2644,21 +2845,6 @@ function bindProjectPicker(root) {
     renderList();
   };
 
-  const close = () => {
-    panel.hidden = true;
-    root.classList.remove('is-open');
-    trigger.setAttribute('aria-expanded', 'false');
-    showList();
-  };
-  const open = () => {
-    renderList();
-    panel.hidden = false;
-    root.classList.add('is-open');
-    trigger.setAttribute('aria-expanded', 'true');
-    // 一个项目都没有时直接进新建态 —— 让家长先看一个空列表再点"新建",
-    // 是白白多一次点击。
-    if (!listEl.querySelector('.picker-option')) startCreate();
-  };
   // 新建态: 浮层里换成输入框, 候选列表让位。
   const showList = () => {
     listEl.hidden = false;
@@ -2670,14 +2856,23 @@ function bindProjectPicker(root) {
     createInput.value = '';
     createInput.focus();
   };
-  const pick = (value, label) => {
-    current = value;
-    hidden.value = value;
-    valueEl.textContent = label;
-    valueEl.classList.remove('is-empty');
-    close();
-    trigger.focus();
-  };
+
+  const dd = bindDropdown(root, {
+    renderOptions: renderList,
+    onOpen: () => {
+      // 一个项目都没有时直接进新建态 —— 让家长先看一个空列表再点"新建",
+      // 是白白多一次点击。
+      if (!listEl.querySelector('.dd-option')) startCreate();
+    },
+    onClose: () => showList(),
+    onPick: (value, label) => {
+      current = value;
+      hidden.value = value;
+      valueEl.textContent = label;
+      valueEl.classList.remove('is-empty');
+      trigger.focus();
+    },
+  });
 
   const create = async () => {
     const name = createInput.value.trim();
@@ -2693,7 +2888,7 @@ function bindProjectPicker(root) {
       // 刷新项目列表: 新项目要出现在候选里, 别的选择器也要跟着更新。
       await refreshQuickAddData();
       renderList();
-      close();
+      dd.close();
       toast(`已创建项目「${p.name}」`);
     } catch (e) {
       toast('创建失败: ' + e.message);
@@ -2702,43 +2897,19 @@ function bindProjectPicker(root) {
     }
   };
 
-  trigger.addEventListener('click', () => { panel.hidden ? open() : close(); });
   newBtn.addEventListener('click', () => {
-    if (panel.hidden) {
-      renderList();
-      panel.hidden = false;
-      root.classList.add('is-open');
-      trigger.setAttribute('aria-expanded', 'true');
-    }
+    dd.open();
     startCreate();
-  });
-  listEl.addEventListener('click', (e) => {
-    const opt = e.target.closest('.picker-option');
-    if (opt) pick(opt.dataset.value, opt.textContent);
   });
   createOk.addEventListener('click', create);
   createInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); create(); }
-  });
-  root.addEventListener('keydown', (e) => {
-    // Esc 只收起浮层, 不能连带把整个弹窗关掉 (弹窗的 Esc 监听在 document 上)。
-    if (e.key === 'Escape' && !panel.hidden) { e.stopPropagation(); close(); trigger.focus(); return; }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    e.preventDefault();
-    if (panel.hidden) {
-      open();
-      const first = listEl.querySelector('.picker-option');
-      if (first) first.focus();
-      return;
-    }
-    const opts = [...listEl.querySelectorAll('.picker-option')];
-    const i = opts.indexOf(document.activeElement);
-    const next = opts[Math.min(Math.max(i + (e.key === 'ArrowDown' ? 1 : -1), 0), opts.length - 1)];
-    if (next) next.focus();
+    // stopPropagation: 回车是"建好这个项目", 不能被下拉内核当成
+    // "选中当前高亮项"给抢走。
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); create(); }
   });
 
   sync();
-  _projectPickers.push({ root, sync, close });
+  _projectPickers.push({ root, sync, close: dd.close });
 }
 
 // 一次性把弹窗里的项目选择器都接上。必须在 innerHTML 写入之后调用。
@@ -2755,14 +2926,6 @@ function refreshProjectPickers() {
     p.sync();
   }
 }
-
-// 点浮层外面收起。只注册一次 document 级监听, 遍历所有打开的选择器 ——
-// 每个选择器各挂一个监听的话, 弹窗开合几次就会攒下一堆闭包。
-document.addEventListener('pointerdown', (e) => {
-  _projectPickers.forEach((p) => {
-    if (p.root.isConnected && !p.root.contains(e.target)) p.close();
-  });
-}, true);
 
 // 「预计用时」随作业类型自动预填 (2026-10-02 用户需求)。
 //
@@ -2794,6 +2957,10 @@ function bindEstAutofill(estInput, typeInput, subjectInput) {
     if (touched) return;              // 家长敲过非空值, 绝不覆盖
     const type = typeInput.value.trim();
     const subject = subjectInput ? subjectInput.value : '';
+    // 类型与科目都没选时**留空**。2026-11-03 起科目一律不预选, 于是刚打开
+    // 弹窗时根本没有"当前科目"可以拿基线 —— 猜一个 15 出来糊弄, 框里躺着
+    // 个数字, 家长就会以为系统已经替他估好了。选完任一项再按基线填。
+    if (!type && !subject) { estInput.value = ''; return; }
     // estDefault 内部就是「类型基线 > 科目基线 > 15」的优先级, 与后端
     // _resolve_est_minutes 同口径, 不在这里另写一套。
     const v = estDefault({ task_type: type, subject });
@@ -2869,12 +3036,11 @@ function renderPreviewTable(items, batchId) {
     // 桌面端不读这个属性, 所以对宽屏零影响。
     tr.innerHTML = `
       <td data-label="入库"><input data-field="checked" type="checkbox" ${checkedDefault ? 'checked' : ''} /></td>
-      <td data-label="科目">
-        <select data-field="subject">
-          <option ${it.subject==='语文'?'selected':''}>语文</option>
-          <option ${it.subject==='数学'?'selected':''}>数学</option>
-          <option ${it.subject==='英语'?'selected':''}>英语</option>
-        </select>
+      <td data-label="科目" class="col-subject">
+        <input type="hidden" data-field="subject" value="${escapeAttr(it.subject || '')}" />
+        <div class="seg" role="group" aria-label="科目">
+          ${SUBJECTS.map(([v, text]) => `<button type="button" class="seg-btn${it.subject === v ? ' is-on' : ''}" data-value="${escapeAttr(v)}" aria-pressed="${it.subject === v ? 'true' : 'false'}">${escapeAttr(text)}</button>`).join('')}
+        </div>
       </td>
       <td data-label="任务"><input data-field="task_name" value="${escapeAttr(it.task_name)}" /></td>
       <td data-label="归属日">
@@ -2897,6 +3063,22 @@ function renderPreviewTable(items, batchId) {
       <td class="col-del"><button class="ghost row-del" aria-label="删除这一行">删</button></td>
     `;
     tr.querySelector('.row-del').addEventListener('click', () => tr.remove());
+    // 科目列是三段按钮: 78px 的列装不下下拉箭头 (设计 §五), 换成分段按钮
+    // 贴住单元格两侧。值落在 hidden input 里 —— collectRows() 读的还是
+    // [data-field="subject"], 一行都不用改。
+    const seg = tr.querySelector('.seg');
+    if (seg) {
+      seg.addEventListener('click', (e) => {
+        const btn = e.target.closest('.seg-btn');
+        if (!btn) return;
+        seg.querySelectorAll('.seg-btn').forEach(b => {
+          const on = b === btn;
+          b.classList.toggle('is-on', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        tr.querySelector('[data-field="subject"]').value = btn.dataset.value;
+      });
+    }
     tbody.appendChild(tr);
   });
   // 预览表是动态生成的, 必须在这时才绑定 flatpickr ——
@@ -3007,15 +3189,11 @@ function openManualAddModal() {
       </label>
       <label>
         <span class="form-label">任务来源</span>
-        <select id="m-kind">
-          <option value="subject">学科作业</option>
-          <option value="training">培训</option>
-          <option value="habit">习惯</option>
-        </select>
+        ${selectHtml('m-kind', TASK_KINDS, 'subject', '选择任务来源', '任务来源')}
       </label>
       <label id="m-subject-wrap">
         <span class="form-label">科目</span>
-        <select id="m-subject"><option>语文</option><option>数学</option><option>英语</option></select>
+        ${selectHtml('m-subject', SUBJECTS, null, '未选择科目', '科目')}
       </label>
       <label id="m-project-wrap" hidden>
         <span class="form-label">项目</span>
@@ -3071,6 +3249,8 @@ function openManualAddModal() {
   // 作业类型下拉要在 DOM 建好之后接上, 并排在 bindEstAutofill 之前 ——
   // initCombos 只挂交互, 但顺序上让"先有候选、再有预填"读起来更顺。
   initCombos(document.getElementById('modal-content'));
+  // 定值列表下拉 (任务来源/科目): 自绘控件。
+  initSels(document.getElementById('modal-content'));
   // 项目下拉: 自绘控件, 候选与「新建项目」都在浮层里。
   initProjectPickers(document.getElementById('modal-content'));
   // 预计用时留空, 由作业类型自动预填 (2026-10-02 用户需求)。
@@ -3121,6 +3301,9 @@ function openManualAddModal() {
       if (!items[0].task_name) { toast('作业项必填'); return; }
       if (!items[0].due_date) { toast('归属日必填'); return; }
       if (!(est >= 1 && est <= 180)) { toast('预计用时需在 1~180 分钟'); return; }
+      // 科目一律不预选 (分类断言猜不得), 所以新建学科作业时必须自己挑一个。
+      // 前端拦一次, 提示与后端同一句 —— 家长与日志看到的是同一套话。
+      if (isSubject && !subject) { toast('学科作业必须选择科目'); return; }
       try {
         await api('POST', '/assignments/batch', { batch_id: null, items });
         m.classList.add('hidden');
@@ -4914,6 +5097,8 @@ function renderDeviationTable(box, r) {
 // 一页回答三个问题: 这周哪天最满、有没有时间段撞车、固定节奏有没有
 // 落到任务池里。它不是"再看一遍作业" —— 作业在「看板」, 这里只合成。
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+// 星期下拉的候选。值仍是 0~6 的下标 —— 存进库里的就是它, 别改成字符串日期。
+const WEEKDAY_OPTIONS = WEEKDAY_LABELS.map((label, i) => [String(i), label]);
 const WEEKDAY_CHARS = '一二三四五六日';
 
 // 显示中的那一周以哪个日期为锚。null = 本周 (由后端按今天算)。
@@ -5312,9 +5497,7 @@ async function openScheduleSlotModal(slot) {
     </label>
     <label>
       <span class="form-label">星期</span>
-      <select id="slot-weekday">
-        ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${i === weekday ? 'selected' : ''}>${label}</option>`).join('')}
-      </select>
+      ${selectHtml('slot-weekday', WEEKDAY_OPTIONS, String(weekday), '选择星期', '星期')}
     </label>
     <label>
       <span class="form-label">开始</span>
@@ -5333,6 +5516,7 @@ async function openScheduleSlotModal(slot) {
     </label>
   </div>
   ${slot ? '<div class="row"><button type="button" class="danger" id="slot-del">删除这个时段</button></div>' : ''}`;
+  initSels(content);
   initProjectPickers(content);
   // 删除按钮 (2026-11-02): 课表列表从弹窗搬进页面后, 列表里原来的
   // 「删」按钮没有了 —— 删除跟着这条时段一起走, 进到编辑弹窗里。
@@ -5465,16 +5649,11 @@ async function openPlanItemModal(item) {
   content.innerHTML = `<div class="form-grid">
     <label>
       <span class="form-label">任务来源</span>
-      <select id="pi-kind">
-        ${[['subject', '学科作业'], ['training', '培训'], ['habit', '习惯']]
-          .map(([k, label]) => `<option value="${k}" ${k === kind ? 'selected' : ''}>${label}</option>`).join('')}
-      </select>
+      ${selectHtml('pi-kind', TASK_KINDS, kind, '选择任务来源', '任务来源')}
     </label>
     <label id="pi-subject-wrap" ${isSubject ? '' : 'hidden'}>
       <span class="form-label">科目</span>
-      <select id="pi-subject">
-        ${['语文', '数学', '英语'].map(s => `<option ${item && s === item.subject ? 'selected' : ''}>${s}</option>`).join('')}
-      </select>
+      ${selectHtml('pi-subject', SUBJECTS, item && item.subject, '未选择科目', '科目')}
     </label>
     <label id="pi-project-wrap" ${isSubject ? 'hidden' : ''}>
       <span class="form-label">项目</span>
@@ -5500,6 +5679,7 @@ async function openPlanItemModal(item) {
       </span>
     </label>
   </div>`;
+  initSels(content);
   initProjectPickers(content);
   m.classList.remove('hidden');
   m.classList.remove('confirm-modal');
@@ -5525,6 +5705,11 @@ async function openPlanItemModal(item) {
       if (!checkedDays.length) { toast('至少选择一天'); return; }
       const kindVal = document.getElementById('pi-kind').value;
       const isSubj = kindVal === 'subject';
+      // 科目一律不预选 —— 学科任务却没选科目, 前端拦一次, 提示与后端同一句。
+      if (isSubj && !document.getElementById('pi-subject').value) {
+        toast('学科作业必须选择科目');
+        return;
+      }
       const pid = parseInt(document.getElementById('pi-project').value, 10);
       const body = {
         task_kind: kindVal,

@@ -265,11 +265,9 @@
           <button type="button" class="qa-kind" data-kind="training">培训</button>
           <button type="button" class="qa-kind" data-kind="habit">习惯</button>
         </div>
-        <div class="quick-row" id="qa-subject-row">
-          <select id="qa-subject" aria-label="科目">
-            <option>语文</option><option>数学</option><option>英语</option>
-          </select>
-        </div>
+        <!-- 科目下拉由 initQuickAdd() 挂上 (.sel 自绘控件): 原生 select
+             展开后的候选面板由操作系统绘制, CSS 一处也改不动。 -->
+        <div class="quick-row" id="qa-subject-row"></div>
         <div class="quick-row" id="qa-project-row" hidden></div>
         <div class="quick-row">
           <input id="qa-name" placeholder="任务名, 如 曲目练习" aria-label="任务名" />
