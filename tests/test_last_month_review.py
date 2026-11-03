@@ -504,7 +504,7 @@ function monthReport(monthKey) {
                   total_minutes: 400, avg_daily_minutes: 80, school_days: 5, done: 28, rate: 70 },
     prev_month_basis: isCur ? 'same_period' : 'full_month',
     delta: { minutes: 105, minutes_pct: 26.3, rate: 4, avg_daily_minutes: 21 },
-    highlights: [label + '作业用时 505 分钟, 上学日日均 101.0 分钟'],
+    highlights: [label + '作业用时 8小时25分钟, 上学日日均 101.0 分钟'],
     suggestions: [label + '节奏平稳, 保持这个安排就好'],
   };
 }

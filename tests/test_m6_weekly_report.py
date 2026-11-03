@@ -255,7 +255,9 @@ def test_training_aggregates_by_project(app_client):
     assert tr["by_project"][0]["logs"] == 2
     assert tr["by_project"][0]["last_segment"] == "第二段"
     coach = _report(app_client)["coach_note"]
-    assert "70 分钟" in coach and "第二段" in coach
+    # 累计时长按「小时+分钟」写 (2026-11-03): 70 分钟 -> 1小时10分钟。
+    # 断言的**意图**没变: 教练语里要说出累计时长与最近练到的段落。
+    assert "1小时10分钟" in coach and "第二段" in coach
 
 
 # ====== 7. 负荷 / 趋势 ======

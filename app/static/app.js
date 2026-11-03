@@ -3546,6 +3546,48 @@ function isMonthPeriod(period) {
   return period === 'month' || period === 'last_month';
 }
 
+// ====== 时长格式化: 分钟 → 「49小时16分钟」 (2026-11-03) ======
+//
+// 为什么: 「作业分钟 2956」这种四位数家长读不出分量 —— 2956 到底是多
+// 少? 「49小时16分钟」才是能感觉到重量的说法 (快 50 小时了)。
+// (2026-11-03 用户要求: "应该显示 xx 小时 xx 分钟")
+//
+// 只给**累计值**用: 单日、单科的一次时长、日均那些几十分钟的数, 换算成
+// "0小时45分钟" 反而更难读 —— 保持分钟。
+//
+// 分两部分返回 (主数字 / 单位), 是因为环图中心那种"大数字 + 小单位"的
+// 版式不用改 CSS 就能用上; 需要一整句的地方用 formatDuration。
+function durationParts(minutes) {
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m < 60) {
+    // 日均这类值可能是小数 (62.5), 保留一位小数, 别显示成 62.50000001。
+    const v = Number.isInteger(m) ? m : Math.round(m * 10) / 10;
+    return { big: String(v), unit: '分钟' };
+  }
+  const total = Math.round(m);
+  const h = Math.floor(total / 60);
+  const rest = total % 60;
+  // 整小时 (50 小时) 不拖一个 "0分钟"。
+  return { big: String(h), unit: rest ? `小时${rest}分钟` : '小时' };
+}
+
+// 一行版: 「49小时16分钟」/「45分钟」
+function formatDuration(minutes) {
+  const p = durationParts(minutes);
+  return `${p.big}${p.unit}`;
+}
+
+// 卡片里显示一个累计用时。
+//
+// 「49小时16分钟」比单个数字长一截, 只有这种才降一档字号 —— 否则一周
+// 才 45 分钟时, 那个数字会比同行别的字小一号, 看着像"就一点点"。
+function durationStatHtml(minutes) {
+  const s = formatDuration(minutes);
+  return s.indexOf('小时') >= 0
+    ? `<strong class="is-dur">${s}</strong>`
+    : `<strong>${s}</strong>`;
+}
+
 // 当前选中的周期。切走再切回时要用同一个周期重画, 否则高亮的按钮
 // 与画出来的数据对不上 (点「本月」-> 去看板 -> 回来, 按钮还亮着「本月」,
 // 但画的是「本周」)。
@@ -4031,7 +4073,7 @@ function renderWeeklyReport(r) {
       <div class="report-stats">
         <div class="report-stat"><strong>${c.rate}%</strong><span>完成率</span></div>
         <div class="report-stat"><strong>${c.settled}/${c.required}</strong><span>必做收尾</span></div>
-        <div class="report-stat"><strong>${t.total_minutes}</strong><span>作业分钟</span></div>
+        <div class="report-stat">${durationStatHtml(t.total_minutes)}<span>作业用时</span></div>
         <div class="report-stat"><strong>${t.avg_daily_minutes}</strong><span>上学日日均</span></div>
       </div>
     </div>
@@ -4057,7 +4099,7 @@ function renderWeeklyReport(r) {
   const subjects = orderedSubjects(t.by_subject);
   if (subjects.length) {
     const block = el(`<div class="report-block">
-      <div class="report-block-title">时间花在哪 <span class="muted">共 ${t.total_minutes} 分钟</span></div>
+      <div class="report-block-title">时间花在哪 <span class="muted">共 ${formatDuration(t.total_minutes)}</span></div>
     </div>`);
     subjects.forEach(s => {
       const pct = t.subject_share[s] || 0;
@@ -4497,7 +4539,7 @@ function subjectShareLegendHtml(subs, mins, pcts) {
   return subs.map((name, i) => `<li>
       <i style="background:${subjectColor(name)}"></i>
       <span class="wt-pie-name">${escapeAttr(name)}</span>
-      <b>${mins[i]} 分</b>
+      <b>${formatDuration(mins[i])}</b>
       <em>${pcts[i]}%</em>
     </li>`).join('');
 }
@@ -4565,8 +4607,11 @@ function renderSubjectShare(r) {
     const mins = subs.map(s => src2.by_subject[s] || 0);
     const pcts = sharePercents(mins);
     legendEl.innerHTML = subjectShareLegendHtml(subs, mins, pcts);
-    totalEl.textContent = String(total);
-    centerBox.querySelector('span').textContent = '分钟';
+    // 中心是这张卡的**大标题** —— 四位数家长读不出分量, 换成
+    // "49" + "小时16分钟" (大数字 + 小单位, 环心的位置放不下整句)。
+    const dur = durationParts(total);
+    totalEl.textContent = dur.big;
+    centerBox.querySelector('span').textContent = dur.unit;
     canvasBox.setAttribute('aria-label',
       mode === 'est' ? '各科预计时间占比环图' : '各科实际时间占比环图');
     if (!canvasOk) {
@@ -4653,7 +4698,8 @@ function renderMonthReport(month) {
     if (delta.minutes === 0) return `与${baseline}相比用时持平`;
     const dir = delta.minutes > 0 ? '多用了' : '少用了';
     const sign = delta.minutes > 0 ? `+${delta.minutes_pct}` : `${delta.minutes_pct}`;
-    return `与${baseline}相比${dir} ${Math.abs(delta.minutes)} 分钟 (${sign}%)`;
+    // 差值动辄几千分钟, 说"多用了 37小时48分钟"才有分量 (2026-11-03)。
+    return `与${baseline}相比${dir} ${formatDuration(Math.abs(delta.minutes))} (${sign}%)`;
   })();
 
   // 建议的抬头: 「本月」说"下个月"没歧义 (就是接下来那个月);
@@ -4690,7 +4736,7 @@ function renderMonthReport(month) {
     </div>
     <div class="report-stats">
       <div class="report-stat"><strong>${(c.total || 0) === 0 ? '—' : (c.rate != null ? c.rate + '%' : '—')}</strong><span>必做收尾率</span></div>
-      <div class="report-stat"><strong>${t.total_minutes || 0}</strong><span>作业分钟</span></div>
+      <div class="report-stat">${durationStatHtml(t.total_minutes || 0)}<span>作业用时</span></div>
       <div class="report-stat"><strong>${t.avg_daily_minutes != null ? t.avg_daily_minutes : 0}</strong><span>上学日日均</span></div>
       <div class="report-stat"><strong>${weeks.length}</strong><span>${escapeAttr(label)}周数</span></div>
     </div>
@@ -4790,16 +4836,20 @@ function renderBuckets(r, withWeekend) {
       ? `<div class="wt-chips">${subs.map(s =>
           `<span class="wt-chip"><i style="background:${subjectColor(s)}"></i>${escapeAttr(s)} ${b.avg[s]}分</span>`).join('')}</div>`
       : '';
+    // 月视图当主角的是**日均** (几十分钟, 保持分钟数 —— 62.5 分钟写成
+    // "1小时3分钟" 反而不像日均); 周视图当主角的是**这一档的合计**
+    // (动辄几百分钟, 换成小时+分钟才有分量)。
     const head = isMonth ? (b.avg ?? 0) : b.total;
+    const hp = isMonth ? { big: String(head), unit: '分钟' } : durationParts(head);
     const note = isMonth
-      ? `${b.days} 天 · 合计 ${b.total} 分`
+      ? `${b.days} 天 · 合计 ${formatDuration(b.total)}`
       : (b.avg != null ? `日均 ${b.avg} 分 · ${b.days} 天` : `${b.days} 天`);
     return el(`<div class="wt-bucket ${b.cls}">
       <div class="wt-bucket-head">
         <div class="wt-bucket-title">${b.title}</div>
         <div class="wt-bucket-sub">${b.sub}</div>
       </div>
-      <div class="wt-bucket-num"><strong>${head}</strong><span class="wt-unit">分钟</span></div>
+      <div class="wt-bucket-num"><strong>${hp.big}</strong><span class="wt-unit">${hp.unit}</span></div>
       <div class="muted">${note}</div>
       ${bar}
       ${chips}

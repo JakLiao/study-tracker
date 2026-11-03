@@ -4067,6 +4067,9 @@ body[data-view="week"] main { max-width: 1240px; }
   background: var(--surface-2);
 }
 .report-stat strong { font-size: var(--fs-h2); }
+/* 累计用时写成「49小时16分钟」时比单个数字长一截 —— 降一档字号, 保证在
+   1/4 宽的格子里不换行、不溢出 (2026-11-03)。 */
+.report-stat strong.is-dur { font-size: var(--fs-body-s); }
 .report-stat span { font-size: var(--fs-caption-sm); color: var(--text-2); }
 
 .report-block { margin-top: var(--space-3); }

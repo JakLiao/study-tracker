@@ -1179,3 +1179,72 @@ def test_health_response_shape(app_client):
     data = r.json()
     for k in ("status", "ai_reachable", "ai_model", "db_ok"):
         assert k in data
+
+# ====== 时长格式化 (2026-11-03) ======
+#
+# 用户看到月报卡上的「作业分钟 2956」, 提的要求是"应该显示 xx 小时 xx
+# 分钟" —— 四位数读不出分量, 换成小时+分钟才知道那快 50 小时了。
+#
+# 换算只给**累计值**: 单日、单科的一次时长、日均那些几十分钟的数,
+# 换算成 "0小时45分钟" 反而更难读 (分档卡月视图的主角就是日均)。
+
+def test_duration_helpers_exist():
+    """三个助手必须在: 分开的两部分 / 一整句 / 卡片里的字号。"""
+    js = _app_js()
+    for fn in ("durationParts", "formatDuration", "durationStatHtml"):
+        assert f"function {fn}(" in js, f"缺 {fn}"
+    # 换算的分界: 60 分钟以下不换算。
+    body = _code(js).split("function durationParts(minutes) {")[1].split("\nfunction ")[0]
+    assert "m < 60" in body, "不足一小时必须保持分钟数"
+
+
+def test_cumulative_minutes_are_rendered_as_duration():
+    """复盘页上的**累计**用时必须走时长换算, 不能直接吐四位分钟数。"""
+    js = _app_js()
+    code = _code(js)
+
+    # 月报卡: 「作业分钟」这个标签改成「作业用时」(标签也得跟着改,
+    # 写着"作业分钟"却显示"49小时16分钟"是自相矛盾)。
+    assert "作业用时" in code, "月报卡/周报卡的标签要改成「作业用时」"
+    assert "作业分钟" not in code, "不该再出现「作业分钟」这个标签"
+
+    # 月报卡与周报卡都用同一个渲染入口。
+    assert code.count("${durationStatHtml(t.total_minutes") == 2, \
+        "月报卡与周报卡的作业用时都要走 durationStatHtml"
+
+    # 环图中心: 大数字 + 小单位 (环心的位置放不下整句)。
+    share = code.split("function renderSubjectShare(r) {")[1].split("\nfunction ")[0]
+    assert "durationParts(total)" in share, "环心要用换算后的主数字"
+    assert "centerBox.querySelector('span').textContent = dur.unit;" in share, \
+        "环心的小单位要跟着换算走"
+
+    # 图例里各科的累计分钟。
+    legend = code.split("function subjectShareLegendHtml(subs, mins, pcts) {")[1].split("\nfunction ")[0]
+    assert "${formatDuration(mins[i])}" in legend, "图例的各科累计要走换算"
+
+    # 环比差值 (动辄几千分钟)。
+    assert "formatDuration(Math.abs(delta.minutes))" in code, "环比差值要走换算"
+
+
+def test_per_day_and_avg_keep_minutes():
+    """别过度换算: 单日、单科一次时长、日均保持分钟数。
+
+    日均 62.5 分钟写成 "1小时3分钟" 反而不像日均 —— 分档卡月视图的主角
+    就是日均, 它必须留在分钟。
+    """
+    code = _code(_app_js())
+    buckets = code.split("function renderBuckets(r, withWeekend) {")[1].split("\nfunction ")[0]
+    assert "isMonth ? { big: String(head), unit: '分钟' } : durationParts(head)" in buckets, \
+        "月视图的主角是日均, 必须保持分钟"
+    # 单科一次时长 (chips) 保持分钟。
+    assert "${b.avg[s]}分" in buckets, "单科 chips 保持分钟"
+    # 每日柱状图的坐标轴单位是分钟, 不动。
+    assert "分钟" in code
+
+
+def test_duration_stat_has_smaller_font():
+    """「49小时16分钟」比单个数字长 —— 卡片里要降一档字号, 否则溢出。"""
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[1] / "app/static/styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.report-stat strong\.is-dur\s*\{[^}]*font-size", css), \
+        "缺 .report-stat strong.is-dur 的字号规则"

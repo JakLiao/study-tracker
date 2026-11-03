@@ -29,6 +29,24 @@ from .tenant import default_child_id, default_family_id
 STATUS_LABELS = {"todo": "待完成", "doing": "进行中", "done": "完成", "skipped": "跳过"}
 TASK_KIND_LABELS = {"subject": "学科", "training": "培训", "habit": "习惯"}
 
+
+def format_duration(minutes) -> str:
+    """分钟 → 「49小时16分钟」 (2026-11-03)。
+
+    与前端 app.js 的 durationParts / formatDuration **逐字一致** —— 前后端
+    必须说同一句话: 月报卡上写「作业用时 49小时16分钟」, 下面那条重点就
+    不能还写「作业用时 2956 分钟」, 同一屏两套写法看着像两个数。
+
+    不足一小时保持分钟 (「45分钟」比「0小时45分钟」好读); 整小时不带
+    一个 "0分钟"。只给**累计值**用 —— 单项实际用时、日均、负荷上限
+    那些几十分钟的数保持分钟。
+    """
+    m = max(0, int(round(minutes or 0)))
+    if m < 60:
+        return f"{m}分钟"
+    hours, rest = divmod(m, 60)
+    return f"{hours}小时{rest}分钟" if rest else f"{hours}小时"
+
 # 实际用时达到预估的这个倍数, 才算"卡住的慢任务" —— 1.5 倍以下
 # 属于正常波动, 列出来只会让每周清单都一样长。
 SLOW_RATIO = 1.5
@@ -343,11 +361,11 @@ def _praise(completion: dict, time_stats: dict, training: dict, trend: dict, mod
     if time_stats["active_days"] >= 5:
         out.append(f"这周有 {time_stats['active_days']} 天完成了作业")
     if training["logs"] > 0:
-        out.append(f"训练打卡 {training['logs']} 次, 累计 {training['total_minutes']} 分钟")
+        out.append(f"训练打卡 {training['logs']} 次, 累计 {format_duration(training['total_minutes'])}")
     if completion["required"] > 0 and completion["settled"] >= completion["required"]:
         out.append("本周必做全部收尾")
     if trend["minutes_delta"] < 0 and time_stats["total_minutes"] > 0:
-        out.append(f"总用时比上周少了 {abs(trend['minutes_delta'])} 分钟")
+        out.append(f"总用时比上周少了 {format_duration(abs(trend['minutes_delta']))}")
     return out[:2 if mode == "lite" else 3]
 
 
@@ -386,7 +404,7 @@ def _coach_note(training: dict) -> str | None:
     """给教练的一句话: 只陈述频次与最近进度, 不做效果判断."""
     if not training["logs"]:
         return None
-    parts = [f"本周训练 {training['logs']} 次, 共 {training['total_minutes']} 分钟"]
+    parts = [f"本周训练 {training['logs']} 次, 共 {format_duration(training['total_minutes'])}"]
     top = training["by_project"][0]
     if top["last_segment"]:
         parts.append(f"{top['project_name'] or '训练'}最近练到「{top['last_segment']}」")
@@ -485,7 +503,7 @@ def _month_highlights(analytics: dict, mode: str) -> list[str]:
     if time_stats["total_minutes"] > 0:
         # 月没过完才叫"至今" —— 已经过去的整月说"至今"是错的。
         prefix = f"{label}至今" if analytics["is_partial"] else label
-        out.append(f"{prefix}作业用时 {time_stats['total_minutes']} 分钟, "
+        out.append(f"{prefix}作业用时 {format_duration(time_stats['total_minutes'])}, "
                    f"上学日日均 {time_stats['avg_daily_minutes']} 分钟")
     if completion["required"] > 0:
         out.append(f"必做收尾率 {completion['rate']}% ({completion['settled']}/"
@@ -498,10 +516,10 @@ def _month_highlights(analytics: dict, mode: str) -> list[str]:
         if delta["minutes"] == 0:
             out.append(head + f"与{baseline}相比用时持平")
         elif delta["minutes"] > 0:
-            out.append(head + f"与{baseline}相比多用了 {delta['minutes']} 分钟 "
+            out.append(head + f"与{baseline}相比多用了 {format_duration(delta['minutes'])} "
                        f"(+{delta['minutes_pct']}%)")
         else:
-            out.append(head + f"与{baseline}相比少用了 {abs(delta['minutes'])} 分钟 "
+            out.append(head + f"与{baseline}相比少用了 {format_duration(abs(delta['minutes']))} "
                        f"({delta['minutes_pct']}%)")
     return out[:2 if mode == "lite" else 3]
 

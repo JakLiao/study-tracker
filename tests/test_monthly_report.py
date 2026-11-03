@@ -210,3 +210,57 @@ def test_month_totals_match_review_time_endpoint(app_client):
     assert daily["subject_share"]["actual"]["total_minutes"] == \
         month["time"]["total_minutes"]
     assert daily["subject_share"]["actual"]["by_subject"] == month["time"]["by_subject"]
+
+
+# ====== 时长格式化 (2026-11-03) ======
+#
+# 用户看到月报卡上的「作业分钟 2956」, 提的要求是"应该显示 xx 小时 xx
+# 分钟"。同一屏上「作业用时」这个数出现两次: 一次在前端渲染的卡片里,
+# 一次在后端生成的「重点」里 —— 两边写法必须逐字一致, 否则看着像两个数。
+
+def test_report_format_duration():
+    """后端的时长换算。"""
+    from app.services.report_service import format_duration
+    assert format_duration(2956) == "49小时16分钟"
+    assert format_duration(505) == "8小时25分钟"
+    assert format_duration(3000) == "50小时"
+    assert format_duration(59) == "59分钟"
+    assert format_duration(45) == "45分钟"
+    assert format_duration(0) == "0分钟"
+    assert format_duration(None) == "0分钟"
+    assert format_duration(-5) == "0分钟"
+
+
+def test_frontend_and_backend_speak_the_same_format():
+    """前端 app.js 的 formatDuration 与后端 report_service.format_duration
+    必须给出同一批字符串。
+
+    两边各写一份换算是这类改动的典型翻车点: 改了前端忘了后端, 同一屏
+    上就出现「49小时16分钟」与「2956 分钟」两种写法。所以这里直接比对
+    前端源码里的形状, 而不是只测一边。
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "app/static/app.js").read_text(encoding="utf-8")
+    body = js.split("function durationParts(minutes) {")[1].split("\nfunction ")[0]
+    # 分界点与后端一样: 60 分钟以下不换算。
+    assert "m < 60" in body
+    # 整小时不带 0 分钟, 且中间不加空格 (后端 f"{hours}小时{rest}分钟")。
+    assert "`小时${rest}分钟`" in body
+    assert "'小时'" in body
+    # 不足一小时就是分钟数本身。
+    assert "unit: '分钟'" in body
+
+
+def test_month_highlight_uses_duration_format():
+    """月报「重点」里的累计用时必须换算 —— 不能再吐 2956 这种四位数。"""
+    from app.services import report_service
+    src = (report_service.__file__)
+    from pathlib import Path
+
+    text = Path(src).read_text(encoding="utf-8")
+    assert "作业用时 {format_duration(time_stats['total_minutes'])}" in text, \
+        "月报重点里的作业用时必须换算成小时+分钟"
+    assert "作业用时 {time_stats['total_minutes']} 分钟" not in text, \
+        "不该再出现原样的四位数分钟"
