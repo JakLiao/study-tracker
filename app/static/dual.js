@@ -19,13 +19,25 @@
 
 // ====== 孩子端文案 (规范 §6.1) ======
 //
+// 孩子端文案里的"今天 / 这天"。
+//
+// 看板能翻历史日期 —— 点「昨天」时说"今天"是错的, 孩子会以为根本没翻页。
+// 口径与家长端一致 (app.js 的 boardHint): isToday ? '今天' : '这天'。
+// (2026-11-03 用户反馈)
+function kidDayWord(isToday = true) {
+  return isToday ? '今天' : '这天';
+}
+
 // 鼓励语按"还剩几项"分四档。写死一句不如分档: 剩 1 项时喊"加油"是
 // 催, 剩 8 项时喊"就差最后一项"是骗人。
-function kidHint(remaining) {
-  if (remaining <= 0) return '今天的作业全部完成啦！';
+//
+// isToday 决定"今天 / 这天"这两个字 (翻历史日期时不能说"今天")。
+function kidHint(remaining, isToday = true) {
+  const day = kidDayWord(isToday);
+  if (remaining <= 0) return `${day}的作业全部完成啦！`;
   if (remaining <= 2) return `还差 ${remaining} 项就全部完成啦`;
-  if (remaining <= 5) return '今天作业有点多哦，慢慢来';
-  return '今天有点多，先做最想先做的那项';
+  if (remaining <= 5) return `${day}作业有点多哦，慢慢来`;
+  return `${day}有点多，先做最想先做的那项`;
 }
 
 // 孩子端的"任务类型"说法。培训打卡 → 练习打卡 (规范 §6.1)。
@@ -49,9 +61,13 @@ function kidSubjectClass(item) {
 // 所以这里必须能扛住"后端还没上线": 拉取失败就让罐子空着, 页面照常渲染。
 let _kidStars = null;
 
-async function loadKidStars() {
+// date: 看哪一天就取哪天的星星 (后端 /kid/stars?date= 返回的是那一天
+// 的 today_earned / jar / 连续天数)。不传 = 今天 (成绩单页用的是这个)。
+// 字段名 today_earned 是接口约定, 值按请求的日期算 —— 别被名字骗了。
+async function loadKidStars(date) {
   try {
-    const r = await api('GET', '/kid/stars');
+    const q = date ? `?date=${encodeURIComponent(date)}` : '';
+    const r = await api('GET', `/kid/stars${q}`);
     _kidStars = r && typeof r === 'object' ? r : null;
   } catch (e) {
     _kidStars = null;          // 接口没上线: 空罐, 不报错
@@ -102,15 +118,20 @@ function renderJarStars(count) {
 }
 
 // 星星罐 hero (规范 §4.1 的结构)。
-function renderKidHero({ remaining, stars, doneCount }) {
-  const todayStars = stars ? (stars.today_earned || 0) : 0;
+//
+// isToday 决定文案里的"今天 / 这天"; stars 是按**看板看的那一天**取来的
+// (loadKidStars(date)), 所以翻到历史日期时, 罐子画的是那天的星星,
+// 连续天数也截止那天 (后端 /kid/stars?date= 就是这么算的)。
+function renderKidHero({ remaining, stars, doneCount, isToday = true }) {
+  const dayStars = stars ? (stars.today_earned || 0) : 0;
   const balance = stars ? (stars.balance || 0) : 0;
-  const jarStars = Math.min(todayStars, JAR_CAP);
-  const overflow = todayStars - jarStars;
+  const jarStars = Math.min(dayStars, JAR_CAP);
+  const overflow = dayStars - jarStars;
   const streak = stars && stars.streak ? stars.streak.current : 0;
+  const day = kidDayWord(isToday);
   const hero = el(`
     <div class="kid-hero">
-      <div class="jar${todayStars >= JAR_CAP ? ' is-full' : ''}" aria-hidden="true">
+      <div class="jar${dayStars >= JAR_CAP ? ' is-full' : ''}" aria-hidden="true">
         <svg class="jar-svg" viewBox="0 0 120 140" focusable="false">
           <path class="jar-neck" d="M44 12h32v14H44z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
           <path class="jar-glass" d="M40 26h40c4 0 7 3 7 7v78c0 9-7 16-16 16H49c-9 0-16-7-16-16V33c0-4 3-7 7-7z"
@@ -121,14 +142,14 @@ function renderKidHero({ remaining, stars, doneCount }) {
         ${overflow > 0 ? `<span class="jar-over">+${overflow}</span>` : ''}
       </div>
       <div class="kid-hero__text">
-        <p class="kid-hero__line">${escapeAttr(kidHint(remaining))}</p>
-        <p class="kid-hero__sub">今天拿到 <b>${todayStars}</b> 颗星 · 罐里有 <b>${balance}</b> 颗</p>
+        <p class="kid-hero__line">${escapeAttr(kidHint(remaining, isToday))}</p>
+        <p class="kid-hero__sub">${day}拿到 <b>${dayStars}</b> 颗星 · 罐里有 <b>${balance}</b> 颗</p>
         <p class="kid-hero__streak">${streak > 0 ? `已经连续 ${streak} 天啦` : ''}</p>
       </div>
     </div>
   `);
   hero.setAttribute('aria-label',
-    `${kidHint(remaining)} 今天拿到 ${todayStars} 颗星, 罐里有 ${balance} 颗, 完成 ${doneCount} 项`);
+    `${kidHint(remaining, isToday)} ${day}拿到 ${dayStars} 颗星, 罐里有 ${balance} 颗, 完成 ${doneCount} 项`);
   return hero;
 }
 
@@ -166,6 +187,55 @@ function flyStarToJar(fromEl) {
 //
 // 当天必做全部完成时弹全屏庆祝层。减动效时只留静态文案。
 let _celebratedFor = null;
+
+// 庆祝记录存在浏览器里 (2026-11-03 用户反馈: "这个框怎么经常弹出")。
+//
+// 原来只有内存变量 _celebratedFor, 一刷新就丢 —— 于是每次打开页面都会
+// 重新弹一遍; 加上翻日期时旧写法只按日期去重, 切一天就等于换一次
+// "新的一天", 于是点一次「昨天」又弹一次。
+//
+// 现在记两处: 内存(本次会话) + localStorage(这个浏览器)。
+// 一个日期只弹一次, 换个日期/刷新页面都不再弹。
+//
+// localStorage 可能不可用 (隐私模式 / 被禁用): 读取失败当作没记录过,
+// 写入失败靠内存那一层兜底 —— 宁可多弹一次, 也不能因为存不了就报错。
+const CELEBRATE_STORE_KEY = 'st.kid.celebrate';
+
+function readCelebrateRecord() {
+  try {
+    const raw = window.localStorage.getItem(CELEBRATE_STORE_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    return (rec && typeof rec === 'object' && typeof rec.date === 'string') ? rec : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeCelebrateRecord(date) {
+  try {
+    window.localStorage.setItem(CELEBRATE_STORE_KEY, JSON.stringify({ date, ts: Date.now() }));
+  } catch (e) { /* 存不了就算了, 内存里还有一层去重 */ }
+}
+
+// 今天该不该弹庆祝层。四个条件全过才弹:
+//
+//   1) 看的是**今天** —— 翻「昨天」/历史日期时不能弹「今天全部完成啦!」
+//      (2026-11-03 反馈: 弹窗文案写死"今天", 对着昨天的作业喊今天;
+//       星星数取的也是今天的 today_earned, 数字同样是错的)
+//   2) 今天的必做真的全做完了 —— 跳过的不算数
+//   3) 本次会话没弹过
+//   4) 这个浏览器今天没弹过 (localStorage)
+//
+// 纯函数: 时间戳与 localStorage 的读写都留在调用方, 这里只判该不该弹。
+// 这样断言不用起浏览器、不用起服务 (tests/test_celebrate_guard.js)。
+function shouldCelebrate({ isToday, allDone, date, celebratedDate, savedDate }) {
+  if (!isToday) return false;
+  if (!allDone) return false;
+  if (celebratedDate && celebratedDate === date) return false;
+  if (savedDate && savedDate === date) return false;
+  return true;
+}
 
 function showCelebrate(starsEarned) {
   const reduce = (function () {
@@ -214,6 +284,9 @@ function bindKidMenus() {
       m.style.display = 'none';
       const btn = wrap ? wrap.querySelector('.kid-more') : null;
       if (btn) btn.setAttribute('aria-expanded', 'false');
+      // 关掉菜单要把卡放回原位 —— 抬起来的卡不该继续压着同列的兄弟卡。
+      const host = m.closest('.kid-card');
+      if (host) host.classList.remove('is-menu-open');
     });
   });
 }
@@ -225,10 +298,12 @@ function bindKidMenus() {
 // (初版是三行堆叠 —— 学科行 / 任务名 / 按钮行, 一张卡占掉 140px, 一屏只
 // 看得下两三项, 反而像"大卡片"而不像"待办事项"。压成一行后一屏能扫到
 // 五六项, 孩子自己就能数出还剩几件事。)
-function renderKidCard(item, refresh) {
+function renderKidCard(item, refresh, isToday = true) {
   bindKidMenus();
   const done = item.status === 'done';
   const skipped = item.status === 'skipped';
+  const day = kidDayWord(isToday);
+  const skipText = `${day}不做`;
   const card = el(`<div class="kid-card ${done ? 'is-done' : ''} ${skipped ? 'is-skipped' : ''}" data-id="${item.id}">
     <span class="kid-card__bar subject-tag ${kidSubjectClass(item)}" aria-hidden="true"></span>
     <div class="kid-card__main">
@@ -245,7 +320,7 @@ function renderKidCard(item, refresh) {
   if (done) {
     acts.appendChild(el('<span class="kid-card__done">完成啦 ✓</span>'));
   } else if (skipped) {
-    acts.appendChild(el('<span class="kid-card__done is-skipped">今天不做</span>'));
+    acts.appendChild(el(`<span class="kid-card__done is-skipped">${skipText}</span>`));
   } else {
     const btn = el('<button type="button" class="kid-btn-done">完 成</button>');
     btn.addEventListener('click', async () => {
@@ -275,13 +350,47 @@ function renderKidCard(item, refresh) {
     menu.hidden = true;
     menu.style.display = 'none';
     moreBtn.setAttribute('aria-expanded', 'false');
+    card.classList.remove('is-menu-open');
   };
+
+  // 菜单往上开还是往下开。
+  //
+  // 移动端底栏固定在屏幕下沿 (nav#tabs, z-index 900), 往下开的菜单会被底栏
+  // 盖住 —— 菜单项一个都点不到 (2026-11-03 用户反馈)。所以量一下空间:
+  // 下面不够 (或者干脆比上面还小) 就往上翻, 与自绘下拉的 .dd.is-up 同一套路。
+  const placeMenu = () => {
+    menu.classList.remove('is-up');
+    const btnRect = moreBtn.getBoundingClientRect();
+    const menuH = menu.offsetHeight;
+    // 底部固定底栏的上沿才是真正能用的"屏幕下沿"; 桌面端 nav 在 header 里,
+    // 不是底栏, 那就用视口下沿。
+    const nav = document.querySelector('nav#tabs');
+    const navRect = nav ? nav.getBoundingClientRect() : null;
+    const isBottomBar = !!navRect && navRect.height > 0
+      && navRect.bottom >= window.innerHeight - 2;
+    const bottomLimit = isBottomBar ? navRect.top : window.innerHeight;
+    const spaceBelow = bottomLimit - btnRect.bottom;
+    const spaceAbove = btnRect.top;
+    if (spaceBelow < menuH + 4 && spaceAbove > spaceBelow) {
+      menu.classList.add('is-up');
+    }
+  };
+
   moreBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const open = menu.hidden;
-    menu.hidden = !open;
-    menu.style.display = open ? 'block' : 'none';
-    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // 关闭一律走 closeMenu(): 收起状态、aria 与"把卡放回原位"只写一处。
+    if (menu.hidden) {
+      menu.hidden = false;
+      menu.style.display = 'block';
+      moreBtn.setAttribute('aria-expanded', 'true');
+      placeMenu();
+      // 菜单开着时把这张卡抬到同列其它卡之上 (styles.css 的 .kid-card.is-menu-open)。
+      // 不抬的话, 完成卡上的 filter 会创建层叠上下文把菜单关在里面, 菜单
+      // 就被下一张卡盖住了 (2026-11-03 用户反馈)。
+      card.classList.add('is-menu-open');
+    } else {
+      closeMenu();
+    }
   });
 
   const addItem = (label, fn) => {
@@ -294,10 +403,10 @@ function renderKidCard(item, refresh) {
     menu.appendChild(b);
   };
   if (!done && !skipped) {
-    addItem('今天不做', async () => {
+    addItem(skipText, async () => {
       try {
         await api('PATCH', `/assignments/${item.id}/status`, { status: 'skipped' });
-        toast('好, 今天先不做');
+        toast(`好, ${day}先不做`);
         await refresh();
       } catch (e) { toast('操作失败: ' + e.message); }
     });
@@ -342,7 +451,16 @@ async function renderKidBoard(b, root) {
   const titleEl = document.getElementById('board-title');
   if (titleEl) titleEl.textContent = b.label === '今天' ? '今日' : (b.label || '今日');
 
-  const stars = await loadKidStars();
+  // 看板能翻历史日期 —— "今天"这两个字只在看今天时才能用, 文案与星星
+  // 都要跟着日期走 (2026-11-03 用户反馈: 点「昨天」, 满屏还是"今天")。
+  //
+  // 后端给了 is_today 就用它; 万一这个字段没了, 用本地日期兜底 ——
+  // 判断错的方向是"该说这天却说今天", 孩子会以为根本没翻页。
+  const isToday = (b.is_today !== undefined) ? !!b.is_today : (b.date === todayStr());
+
+  // 星星按**看板看的那一天**取: 翻到昨天, 罐子画的是昨天拿到的星星,
+  // 连续天数也截止昨天 (后端 /kid/stars?date= 就是这么算的)。
+  const stars = await loadKidStars(b.date);
 
   // 必做: 学科 + 培训 + 习惯都算今天的活。选做单算。
   const all = [];
@@ -356,11 +474,12 @@ async function renderKidBoard(b, root) {
     remaining: pending.length,
     stars: stars,
     doneCount: settled.filter(i => i.status === 'done').length,
+    isToday: isToday,
   }));
 
   if (!all.length && !optional.length) {
     root.appendChild(el(`<div class="kid-empty">
-      <p class="kid-empty__text">今天没有作业，好好休息一下</p>
+      <p class="kid-empty__text">${isToday ? '今天没有作业，好好休息一下' : '这天没有作业'}</p>
     </div>`));
     return;
   }
@@ -370,23 +489,36 @@ async function renderKidBoard(b, root) {
   if (all.length) {
     root.appendChild(el('<h3 class="kid-section">必须完成</h3>'));
     const list = el('<div class="kid-list"></div>');
-    pending.forEach(item => list.appendChild(renderKidCard(item, refresh)));
-    settled.forEach(item => list.appendChild(renderKidCard(item, refresh)));
+    pending.forEach(item => list.appendChild(renderKidCard(item, refresh, isToday)));
+    settled.forEach(item => list.appendChild(renderKidCard(item, refresh, isToday)));
     root.appendChild(list);
   }
 
   if (optional.length) {
     root.appendChild(el('<h3 class="kid-section">有空再做</h3>'));
     const list = el('<div class="kid-list"></div>');
-    optional.forEach(item => list.appendChild(renderKidCard(item, refresh)));
+    optional.forEach(item => list.appendChild(renderKidCard(item, refresh, isToday)));
     root.appendChild(list);
   }
 
-  // 当天必做全部完成 -> 庆祝层。一天只弹一次 (刷新页面不该再弹一遍)。
+  // 当天必做全部完成 -> 庆祝层。
+  //
+  // 三个约束 (2026-11-03 用户反馈):
+  //   - 只在"今天"弹: 翻「昨天」看历史不该收到"今天全部完成啦!"
+  //   - 真的全做完了才弹 (跳过的不算)
+  //   - 一个日期只弹一次 (浏览器记住, 刷新/切日期都不再弹)
   const doneAll = all.length > 0 && pending.length === 0
     && all.every(i => i.status === 'done');
-  if (doneAll && _celebratedFor !== b.date) {
+  const rec = readCelebrateRecord();
+  if (shouldCelebrate({
+    isToday: isToday,
+    allDone: doneAll,
+    date: b.date,
+    celebratedDate: _celebratedFor,
+    savedDate: rec ? rec.date : null,
+  })) {
     _celebratedFor = b.date;
+    writeCelebrateRecord(b.date);
     showCelebrate(stars ? (stars.today_earned || 3) : 3);
   }
 }

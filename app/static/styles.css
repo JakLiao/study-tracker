@@ -4561,6 +4561,17 @@ footer { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px))
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
 }
+/* 菜单打开时, 把这张卡抬到同列其它卡之上。
+   为什么抬卡而不是抬菜单: .kid-card.is-done 用了 filter: saturate(.55)
+   (完成卡降饱和), 而 filter 会**创建层叠上下文** —— 菜单的 z-index:30
+   被关在卡片自己那个上下文里, 抬到多少都没用, 照样被同列下一张卡
+   (position: relative, z-index: auto, 文档顺序更靠后) 盖住。
+   抬整张卡 = 菜单跟着一起上来, 且不动"完成卡降饱和"这个视觉设计。 */
+.kid-card.is-menu-open { z-index: 2; }
+/* 菜单往上翻: 移动端底栏固定在屏幕下沿 (nav#tabs, z-index 900), 往下开的
+   菜单会被底栏盖住, 菜单项一个都点不到 (2026-11-03 用户反馈)。
+   空间不够时改成往上开 (与自绘下拉 .dd.is-up 同一套路, 见 dual.js 的 placeMenu)。 */
+.kid-more-menu.is-up { top: auto; bottom: calc(100% + 2px); }
 .kid-more-menu__item {
   display: block;
   width: 100%;
