@@ -510,6 +510,40 @@ def test_collect_rows_has_fallback(app_js):
     assert ": 'medium'" in body
 
 
+def test_collect_rows_reads_est_via_helper(app_js):
+    """预计用时不能直接 parseInt(input.value)。
+
+    数字输入框会把浏览器不认的字符串 (全角数字 / 带空格 / 带单位) 静默消毒成
+    空串: 表格里每行都显示合法数字, collectRows 读回来却是 NaN, 整批就被
+    "预计用时必须在 1~180 分钟" 拦下 (2026-11-05 家长报障)。
+    必须走 readEstMinutes: 读不出值时回落到本行渲染时留存的 data-est。
+    """
+    code = _code(app_js)
+    body = code.split("function collectRows(")[1]
+    assert "readEstMinutes(get('est_minutes'), tr)" in body
+    assert "parseInt(get('est_minutes').value" not in body
+    assert "tr.dataset.est = String(estVal)" in code, \
+        "渲染时要把合法的预计用时留一份在 tr.dataset.est 上, 读不出值时才有得回落"
+    assert 'value="${estVal}"' in code
+
+
+def test_read_est_minutes_falls_back_and_normalizes(app_js):
+    code = _code(app_js)
+    body = code.split("function readEstMinutes(")[1].split("\n}")[0]
+    assert "parseEstInput(tr.dataset.est)" in body, "输入框读不出值时要回落 data-est"
+    assert "estDefault(" in body, "data-est 也没有时要按科目基线兜底"
+    # 中文输入法打出的全角数字在 number 输入框里同样是空值, 必须能转回半角
+    assert "String.fromCharCode(c.charCodeAt(0) - 0xFEE0)" in _code(app_js)
+
+
+def test_est_error_points_to_the_row(app_js):
+    """越界时要说清是哪一行, 否则家长只能在整张表里逐行找。"""
+    code = _code(app_js)
+    body = code.split("async function confirmBatch(")[1]
+    assert "预计用时必须在 1~180 分钟" in body
+    assert "${it.task_name}" in body
+
+
 def test_rows_have_named_classes(app_js):
     code = _code(app_js)
     for cls in ("col-conf", "col-src", "col-del"):

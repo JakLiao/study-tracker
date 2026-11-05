@@ -3031,6 +3031,12 @@ function renderPreviewTable(items, batchId) {
     // 「周四早读 8:20 听写」这类信息只有 AI 能提取出来, 家长在表里点不出来的。
     // 存到 data- 属性, collectRows 原样带进入库请求。
     tr.dataset.dl = it.deadline_time || '';
+    // 预计用时另存一份到 data-est: 数字输入框会把浏览器不认的字符串(全角数字 /
+    // 带空格 / 带单位)静默消毒成空串, 那时 collectRows 读回的就是空 —— 表格里
+    // 明明每行都有数字, 却整批被"预计用时必须在 1~180 分钟"拦下(2026-11-05 报障)。
+    // 渲染值本身是合法的, 留一份在 data- 上就能兜住"读不出来"这种情况。
+    const estVal = it.est_minutes || estDefault(it);
+    tr.dataset.est = String(estVal);
     // data-label 只给窄屏卡片布局用(见 styles.css §26c): 表格变成一张张
     // 卡片后表头就消失了, 每格必须自带标签才认得出是什么。
     // 桌面端不读这个属性, 所以对宽屏零影响。
@@ -3057,7 +3063,7 @@ function renderPreviewTable(items, batchId) {
         }
       </td>
       <td data-label="选做"><input data-field="is_optional" type="checkbox" ${it.is_optional ? 'checked' : ''} /></td>
-      <td data-label="预计(分)"><input data-field="est_minutes" type="number" min="1" max="180" value="${it.est_minutes || estDefault(it)}" /></td>
+      <td data-label="预计(分)"><input data-field="est_minutes" type="number" min="1" max="180" value="${estVal}" /></td>
       <td class="col-conf" data-label="置信">${confidenceDot(conf)}</td>
       <td class="col-src" data-label="原文"><small title="${escapeAttr(it.source_span || '')}">${escapeAttr(it.source_span || '')}</small></td>
       <td class="col-del"><button class="ghost row-del" aria-label="删除这一行">删</button></td>
@@ -3101,6 +3107,33 @@ function normalizeDeadline(v) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s) ? s + ':00' : s;
 }
 
+// 读预计用时的输入框。(2026-11-05 家长报障: 表里每行都显示合法数字, 点确认
+// 却被"预计用时必须在 1~180 分钟"拦下 —— 因为数字输入框会把浏览器不认的
+// 字符串消毒成空串, 中文输入法打出的全角数字 "２０" 就在其中, 显示看着是
+// 20, .value 却是 ''。)
+// 先把全角数字转成半角再 parse; 转不出数字返回 null, 由调用方兜底。
+function parseEstInput(raw) {
+  const s = String(raw == null ? '' : raw)
+    .replace(/[\uFF10-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .trim();
+  if (!s) return null;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+// 从一行里取预计用时。输入框读不出数(留空 / 被浏览器消毒成空串)时回落
+// 这一行渲染时的值(data-est), 再不行按科目基线兜底 —— 与手动添加弹窗
+// "留空按类型预填"的口径一致: 留空不该让整批入不了库。
+// 读得出数就原样返回, 越界仍交给 confirmBatch 报错并指到具体行。
+function readEstMinutes(input, tr) {
+  const typed = parseEstInput(input && input.value);
+  if (typed !== null) return typed;
+  const kept = parseEstInput(tr.dataset.est);
+  if (kept !== null) return kept;
+  const subject = tr.querySelector('[data-field="subject"]');
+  return estDefault({ subject: subject ? subject.value : '' });
+}
+
 function collectRows(result) {
   const rows = [...result.querySelectorAll('tbody tr')];
   return rows.map(tr => {
@@ -3128,7 +3161,7 @@ function collectRows(result) {
       due_date: due,
       deadline_time: normalizeDeadline(tr.dataset.dl),
       is_optional: get('is_optional').checked,
-      est_minutes: parseInt(get('est_minutes').value, 10),
+      est_minutes: readEstMinutes(get('est_minutes'), tr),
       source_span: (tr.querySelector('.col-src small') || {}).textContent || '',
       confidence: conf,
     };
@@ -3150,8 +3183,18 @@ async function confirmBatch(batchId, result) {
       if (emptyCell) openDatePicker(emptyCell);
       return;
     }
-    if (!it.est_minutes || it.est_minutes < 1 || it.est_minutes > 180) {
-      toast('预计用时必须在 1~180 分钟'); return;
+    if (!(it.est_minutes >= 1 && it.est_minutes <= 180)) {
+      // 明确指到具体行并聚焦那个输入框 —— 只丢一句通用提示, 家长只能
+      // 在整张表里逐行找, 正是 2026-11-05 报障时最难受的地方.
+      toast(`预计用时必须在 1~180 分钟: 「${it.task_name}」`);
+      const bad = [...result.querySelectorAll('[data-field="est_minutes"]')]
+        .find(inp => parseEstInput(inp.value) === it.est_minutes);
+      if (bad) {
+        bad.focus();
+        // jsdom 没有 scrollIntoView, 测试里的点击不能因此炸掉
+        if (bad.scrollIntoView) bad.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+      return;
     }
   }
   try {
