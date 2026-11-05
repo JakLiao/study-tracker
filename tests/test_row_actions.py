@@ -298,3 +298,30 @@ def test_est_label_styled(styles_css):
 
 def test_actual_tag_styled(styles_css):
     assert ".assignment-row .actual-tag" in styles_css
+
+
+def test_board_keeps_scroll_position_after_status_change(app_js):
+    """家长点「完成」后页面不能弹回顶部, 否则没法逐项往下核对。
+
+    看板是整页滚动 (body 纵向 flex, .view 没有 overflow), 真正的滚动
+    容器是文档本身。原来把位置记在 `root.closest('.view.active')` 上,
+    那个元素的 scrollTop 恒为 0, 于是每次重建 DOM 都从 0 还原 ——
+    表现就是"点一下完成, 刷新回顶部"。这里把滚动容器锁死。
+    """
+    code = _code(app_js)
+    assert "document.scrollingElement" in code, "必须把位置记在文档上"
+    assert "closest('.view" not in code, ".view 不是滚动容器, 不能用它的 scrollTop"
+
+
+def test_board_loading_does_not_collapse_content(app_js):
+    """加载中不能把已有内容换成一行"加载中…"。
+
+    内容一撤, 页面高度瞬间缩到一屏以内, 浏览器会把滚动位置夹到 0,
+    家长看到的就是"跳回顶部再被拉回来"。占位只允许用在首屏。
+    """
+    body = _code(app_js).split("async function loadBoard(")[1].split("\n}")[0]
+    m = re.search(r"innerHTML = '<p class=\"muted\">加载中…</p>'", body)
+    assert m, "首屏仍需要一行占位"
+    guard = body[: m.start()].rsplit("\n", 1)[-1]
+    assert "firstElementChild" in guard, "占位必须只在容器为空时才写"
+

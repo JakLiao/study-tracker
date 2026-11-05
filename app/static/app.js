@@ -496,8 +496,7 @@ function switchTab(name, opts) {
     // 回到看板时重置到最新一天, 否则家长会停在几天前的那天上,
     // 以为"今天的作业怎么不见了"。
     _boardDate = null;
-    _boardScroll = 0;
-    loadBoard();
+    loadBoard({ resetScroll: true });
   }
   // 日历与详情一起加载。保留 _calYear/_calMonth, 切走再切回时
   // 家长仍停在上次翻到的那个月, 而不是被强行弹回本月。
@@ -585,7 +584,12 @@ async function loadHealth() {
 // ====== 看板 ======
 // 全量重建 DOM 会把滚动位置弹回顶部, 家长点一下状态就得重新往下滚。
 // 重建前后记住 scrollTop 并还原。
-let _boardScroll = 0;
+// 2026-11-05 修正: 位置必须记在**文档**上。看板是整页滚动 (body 为纵向
+// flex, .view 没有 overflow), .view 的 scrollTop 恒为 0 —— 原来记在它
+// 上面, 等于每次都从 0 还原, 于是点「完成」必弹回顶部, 家长没法逐项核对。
+function boardScroller() {
+  return document.scrollingElement || document.documentElement;
+}
 // 当前看的是哪一天 (null = 最近一个有作业的日期, 由后端决定)。
 // 记录它是为了让"录入后跳回看板"仍然落在用户刚看的那一天上。
 let _boardDate = null;
@@ -613,8 +617,7 @@ async function loadBoardDateTabs() {
       b.addEventListener('click', () => {
         if (d.date === _boardDate) return;
         _boardDate = d.date;
-        _boardScroll = 0;      // 换日期后回到顶部, 否则会停在新日期的半截位置
-        loadBoard();
+        loadBoard({ resetScroll: true });  // 换日期后回到顶部, 否则会停在新日期的半截位置
       });
       box.appendChild(b);
     });
@@ -634,11 +637,14 @@ async function loadBoardDateTabs() {
   }
 }
 
-async function loadBoard() {
+async function loadBoard(opts) {
   const root = document.getElementById('board-content');
-  const scroller = root.closest('.view.active') || document.scrollingElement;
-  _boardScroll = scroller ? scroller.scrollTop : 0;
-  root.innerHTML = '<p class="muted">加载中…</p>';
+  const scroller = boardScroller();
+  const keepScroll = scroller.scrollTop;
+  // 加载中不把内容换成"加载中…": 内容一塌, 页面高度瞬间缩到一屏以内,
+  // 浏览器会把滚动位置夹到 0 —— 家长看到的就是"跳回顶部再被拉回来"。
+  // 只有首屏 (容器还是空的) 才需要这一行占位。
+  if (!root.firstElementChild) root.innerHTML = '<p class="muted">加载中…</p>';
   try {
     const b = await api('GET', _boardDate ? `/board?date=${_boardDate}` : '/board/today');
     // 首次进入时锁定到后端返回的实际日期, 避免重复请求同一天。
@@ -657,14 +663,16 @@ async function loadBoard() {
     // 双角色 (2026-11-01): 同一份数据两种读法。
     // 孩子端走 renderKidBoard (dual.js), 家长端走 renderParentBoard。
     if (isKidRole()) {
-      renderKidBoardWhenReady(b, root);
+      await renderKidBoardWhenReady(b, root);
     } else {
       renderParentBoard(b, root);
     }
   } catch (e) {
     root.innerHTML = `<div class="error-banner">看板加载失败: ${e.message}</div>`;
   }
-  if (scroller) scroller.scrollTop = _boardScroll;
+  // 必须等新内容真的进了 DOM 再还原, 否则页面高度还是塌的, 写进去会被夹小。
+  // 换日期/切回看板时调用方传 resetScroll, 明确要回到顶部。
+  scroller.scrollTop = (opts && opts.resetScroll) ? 0 : keepScroll;
 }
 
 // 孩子端看板的渲染函数在 dual.js 里。
@@ -674,14 +682,16 @@ async function loadBoard() {
 // 至少能保证 dual.js 执行完, 而不是静默把孩子的看板画成家长的。
 function renderKidBoardWhenReady(b, root) {
   const paint = () => {
-    if (typeof renderKidBoard === 'function') renderKidBoard(b, root);
-    else renderParentBoard(b, root);
+    if (typeof renderKidBoard === 'function') return renderKidBoard(b, root);
+    return renderParentBoard(b, root);
   };
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', paint, { once: true });
-  } else {
-    paint();
+    // 返回 Promise 而不是裸等: loadBoard 要等画面落定后再还原滚动位置。
+    return new Promise(resolve => {
+      document.addEventListener('DOMContentLoaded', () => resolve(paint()), { once: true });
+    });
   }
+  return Promise.resolve(paint());
 }
 
 // 家长端批改台 (2026-11-01 双角色改造)
@@ -828,7 +838,8 @@ function renderParentBoard(b, root) {    const titleEl = document.getElementById
       ).join('<br/>');
       const box = el(`<div class="deadline-warn overdue-warn"><strong>⚠ 已逾期 ${b.overdue_items.length} 项</strong>${items}</div>`);
       box.querySelectorAll('.overdue-link').forEach(link => {
-        const goto = () => { _boardDate = link.dataset.date; loadBoard(); };
+        // 跳到另一天后回到顶部, 否则会停在新日期的半截位置。
+        const goto = () => { _boardDate = link.dataset.date; loadBoard({ resetScroll: true }); };
         link.addEventListener('click', goto);
         link.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goto(); }
